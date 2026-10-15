@@ -24,7 +24,10 @@ async function record(name, options, role, script, position) {
     await login.close();
   }
   const page = await context.newPage();
-  await script(page, context);
+  // Logs when each step happens in the clip, to time the film's taps and cuts against it.
+  const began = Date.now();
+  const mark = label => console.log(`  ${name} ${((Date.now() - began) / 1000).toFixed(1)}s ${label}`);
+  await script(page, context, mark);
   const video = page.video();
   await context.close();
   const raw = await video.path();
@@ -40,29 +43,32 @@ const smoothScroll = (page, y, ms) => page.evaluate(([y, ms]) => new Promise(res
 }), [y, ms]);
 
 const top = (await (await fetch(`${base}/api/v1/incidents?hours=24&level=tinggi`)).json()).data;
-const incident = top.find(item => item.village && !item.firstVerifiedAt) ?? top[0];
+// The field check and village clips stay in the OKI pilot, where the demo volunteer works.
+const incident = top.find(item => item.village?.regency === 'Ogan Komering Ilir' && !item.firstVerifiedAt) ?? top.find(item => item.village && !item.firstVerifiedAt) ?? top[0];
 
 await record('peta', desktop, null, async page => {
   await page.goto(`${base}/`); await page.waitForTimeout(5500);
-  await page.getByText('Lahan gambut').first().click(); await page.waitForTimeout(2200);
-  await page.locator('.toplist button').first().click(); await page.waitForTimeout(3200);
+  await page.locator('.map-control', { hasText: 'Lapisan' }).click(); await page.waitForTimeout(700);
+  await page.locator('label.layer', { hasText: 'Lahan gambut' }).click(); await page.waitForTimeout(2000);
+  await page.locator('.map-control', { hasText: 'Lapisan' }).click(); await page.waitForTimeout(500);
+  await page.locator('.inc-row').first().click(); await page.waitForTimeout(3600);
 });
 await record('kartu', phone, 'mpa', async page => {
   await page.goto(`${base}/peringatan`); await page.waitForTimeout(3000);
   await smoothScroll(page, 560, 1600); await page.waitForTimeout(1800);
   await smoothScroll(page, 980, 1400); await page.waitForTimeout(1500);
 });
-await record('cek', phone, 'mpa', async (page, context) => {
+await record('cek', phone, 'mpa', async (page, context, mark) => {
   await page.goto(`${base}/kejadian/${incident.id}`); await page.waitForTimeout(1500);
   await page.goto(`${base}/kejadian/${incident.id}/cek`); await page.waitForTimeout(2000);
-  await context.setOffline(true); await page.waitForTimeout(1200);
-  await page.locator('label.status-asap_bara').click(); await page.waitForTimeout(900);
+  await context.setOffline(true); mark('offline'); await page.waitForTimeout(1200);
+  mark('status'); await page.locator('label.option', { hasText: 'Asap / bara' }).click(); await page.waitForTimeout(900);
   await smoothScroll(page, 700, 900); await page.waitForTimeout(400);
   await page.locator('textarea').pressSequentially('Asap tipis di tepi kanal.', { delay: 35 }); await page.waitForTimeout(500);
-  await page.getByRole('button', { name: /Simpan, kirim saat ada sinyal/ }).click(); await page.waitForTimeout(2600);
-  await context.setOffline(false); await page.waitForTimeout(2600);
-  await page.getByRole('link', { name: 'Lihat kejadian' }).click(); await page.waitForTimeout(3000);
-}, { latitude: incident.centroid[1] - 0.0035, longitude: incident.centroid[0] - 0.0028 });
+  mark('submit'); await page.getByRole('button', { name: /Simpan, kirim saat ada sinyal/ }).click(); await page.waitForTimeout(2600);
+  await context.setOffline(false); mark('online'); await page.waitForTimeout(2600);
+  mark('open incident'); await page.getByRole('link', { name: 'Lihat kejadian' }).click(); await page.waitForTimeout(3000);
+}, { latitude: incident.centroid[1] - 0.0035, longitude: incident.centroid[0] - 0.0028, accuracy: 12 });
 await record('dasbor', desktop, 'bpbd', async page => {
   await page.goto(`${base}/dasbor`); await page.waitForTimeout(4500);
   await smoothScroll(page, 380, 1800); await page.waitForTimeout(1500);
@@ -70,8 +76,10 @@ await record('dasbor', desktop, 'bpbd', async page => {
 });
 await record('desa', desktop, null, async page => {
   await page.goto(`${base}/desa/${incident.village.id}`); await page.waitForTimeout(6000);
-  await page.locator('.toggle.inline input').click(); await page.waitForTimeout(2500);
-  await page.locator('.toggle.inline input').click(); await page.waitForTimeout(2500);
+  await page.locator('.map-control', { hasText: 'Lapisan' }).click(); await page.waitForTimeout(800);
+  await page.locator('label.layer', { hasText: 'Alert gangguan hutan' }).click(); await page.waitForTimeout(2200);
+  await page.locator('label.layer', { hasText: 'Alert gangguan hutan' }).click(); await page.waitForTimeout(2200);
+  await page.locator('.map-control', { hasText: 'Lapisan' }).click(); await page.waitForTimeout(800);
 });
 await browser.close();
 await rm(work, { recursive: true, force: true });
