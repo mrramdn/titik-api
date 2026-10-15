@@ -25,7 +25,7 @@ export type Level = 'tinggi' | 'sedang' | 'rendah';
 export type Status = 'api_aktif' | 'asap_bara' | 'bakar_terkendali' | 'alarm_palsu' | 'tidak_terjangkau';
 export interface ScorePart { key: string; label: string; points: number }
 export interface Incident {
-  id: string; code: string; village: { id: string; name: string; district: string; center: [number, number] } | null;
+  id: string; code: string; village: { id: string; name: string; district: string; regency: string; province: string; center: [number, number] } | null;
   firstDetectedAt: string; lastDetectedAt: string; detectionCount: number; satellites: string[]; maxFrp: number | null;
   bestConfidence: 'low' | 'nominal' | 'high' | null; onPeat: boolean; nearStatic: boolean; centroid: [number, number];
   settlementMeters: number | null; score: number; scoreParts: ScorePart[]; level: Level; firstVerifiedAt: string | null;
@@ -36,6 +36,6 @@ export interface Verification { id: string; status: Status; falseAlarmKind: stri
 export interface IncidentDetail extends Incident { detections: Detection[]; verifications: Verification[] }
 export interface Alert { id: string; createdAt: string; updatedAt: string; readAt: string | null; sharedAt: string | null; village: { id: string; name: string }; card: string; incident: Incident }
 export interface User { id: string; name: string; email: string; role: 'mpa' | 'kades' | 'bpbd' | 'admin'; organization: string; demo: boolean }
-export interface VillageSummary { id: string; name: string; district: string; peatShare: number; areaHa: number; center: [number, number]; incidents24h: number; incidents7d: number; openHigh: number }
+export interface VillageSummary { id: string; name: string; district: string; regency: string; province: string; peatShare: number; areaHa: number; center: [number, number]; incidents24h: number; incidents7d: number; openHigh: number }
 export interface IngestStatus { runs: { id: number; finishedAt: string; source: string; feeds: { satellite: string; rows: number; inArea: number; latest: string | null; error: string | null }[]; inserted: number; error: string | null }[];
   satellites: { satellite: string; latestAcquisition: string; last24h: number }[]; intervalMinutes: number }

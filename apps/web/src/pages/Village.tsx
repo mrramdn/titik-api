@@ -1,62 +1,50 @@
-import { useState } from 'react';
-import { useParams } from 'react-router';
+import { useParams, useNavigate, Link } from 'react-router';
+import { ChevronLeft, Share2 } from 'lucide-react';
 import type { Incident } from '../api';
 import { Shell } from '../components/Shell';
-import { Banner, LevelBadge, StatusPill, shareCard, useApi } from '../components/ui';
+import { Banner, FlameTile, LevelBadge, StatusText, shareCard, useApi } from '../components/ui';
 import { MapView } from '../map/MapView';
-import { statusLabel, wib, wibDay } from '../format';
-import { useNavigate } from 'react-router';
+import { statusLabel, timeSpan } from '../format';
 
-interface VillageDetail { id: string; name: string; district: string; regency: string; province: string; peatShare: number; areaHa: number; center: [number, number]; centerSource: string;
-  geometry: GeoJSON.Geometry; incidents: Incident[]; daily: { day: string; detections: number }[] }
+interface VillageDetail { id: string; name: string; district: string; regency: string; province: string; peatShare: number; areaHa: number; center: [number, number]; geometry: GeoJSON.Geometry; incidents: Incident[]; daily: { day: string; detections: number }[] }
 
 export function VillagePage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const village = useApi<VillageDetail>(`/villages/${id}`);
-  const [alerts, setAlerts] = useState(true);
-  const data = village.data;
-  if (!data) return <Shell><div className="page">{village.error ? <Banner tone="warn">{village.error}</Banner> : <p className="muted">Memuat desa…</p>}</div></Shell>;
-  const max = Math.max(1, ...data.daily.map(day => day.detections));
-  const today = data.incidents.filter(incident => Date.now() - new Date(incident.lastDetectedAt).getTime() < 24 * 3600_000);
-  const summary = `Ringkasan 24 jam Desa ${data.name} (Kec. ${data.district}): ${today.length} kejadian titik panas, ${today.filter(i => i.level === 'tinggi').length} prioritas tinggi, `
-    + `${today.filter(i => i.firstVerifiedAt).length} sudah dicek${today.length ? ` (${today.map(i => (i.latestStatus ? statusLabel[i.latestStatus] : 'belum dicek')).join(', ')})` : ''}. `
-    + 'Titik panas belum tentu api; tidak ada titik juga belum tentu aman.';
+  const d = village.data;
+  if (!d) return <Shell><main className="page">{village.error ? <Banner tone="warn">{village.error}</Banner> : <div className="empty">Memuat desa…</div>}</main></Shell>;
+  const max = Math.max(1, ...d.daily.map(x => x.detections));
+  const today = d.incidents.filter(i => Date.now() - new Date(i.lastDetectedAt).getTime() < 24 * 3600_000);
+  const summary = `Ringkasan 24 jam Desa ${d.name} (Kec. ${d.district}, ${d.regency}): ${today.length} kejadian titik panas, ${today.filter(i => i.level === 'tinggi').length} prioritas tinggi, ${today.filter(i => i.firstVerifiedAt).length} sudah dicek${today.length ? ` (${today.map(i => (i.latestStatus ? statusLabel[i.latestStatus] : 'belum dicek')).join(', ')})` : ''}. Titik panas belum tentu api; tidak ada titik juga belum tentu aman.`;
   return (
     <Shell>
-      <div className="page village">
-        <p className="kicker">Kec. {data.district} · {data.regency}</p>
-        <h1>Desa {data.name}</h1>
-        <div className="row">
-          <span className="pill">{Math.round(data.peatShare * 100)}% wilayah bergambut</span>
-          <span className="pill">{Math.round(data.areaHa).toLocaleString('id-ID')} ha</span>
-          <button type="button" className="btn btn-wa btn-small" onClick={() => void shareCard(summary, `/desa/${data.id}`)}>Bagikan ringkasan desa</button>
+      <main className="page">
+        <Link to="/" className="back" style={{ color: 'var(--text-2)' }}><ChevronLeft size={14} />Peta</Link>
+        <div className="page-head">
+          <div><h1 className="title-24">Desa {d.name}</h1><p>Kec. {d.district} · {d.regency} · {d.province} · {Math.round(d.areaHa).toLocaleString('id-ID')} ha · {Math.round(d.peatShare * 100)}% bergambut</p></div>
+          <button type="button" className="btn btn-wa btn-sm" onClick={() => void shareCard(summary, `/desa/${d.id}`)}><Share2 size={16} />Bagikan ringkasan desa</button>
         </div>
-        <div className="incident-grid">
-          <div>
-            <MapView className="map-mid" incidents={data.incidents} focus={data.geometry} layers={{ deteksi: false, deforestasi: alerts, gambut: !alerts }} onSelect={incidentId => navigate(`/kejadian/${incidentId}`)} showVillages />
-            <label className="toggle inline"><input type="checkbox" checked={alerts} onChange={event => setAlerts(event.target.checked)} /><span>Alert gangguan hutan (alih fungsi lahan)<small>Integrated deforestation alerts · Global Nature Watch. Matikan untuk melihat peta gambut.</small></span></label>
-          </div>
-          <div className="stack">
-            <section>
-              <h2>Deteksi satelit 7 hari</h2>
-              <div className="bars">{data.daily.map(day => (
-                <div key={day.day} className="bar"><span style={{ height: `${(day.detections / max) * 100}%` }} /><b>{day.detections}</b><small>{day.day.slice(8)}/{day.day.slice(5, 7)}</small></div>
-              ))}</div>
-            </section>
-            <section>
-              <h2>Kejadian 7 hari</h2>
-              {!data.incidents.length && <p className="muted">Tidak ada titik panas dalam 7 hari. Tetap waspada: awan dan asap bisa menutupi api.</p>}
-              <ul className="history">{data.incidents.slice(0, 20).map(incident => (
-                <li key={incident.id} onClick={() => navigate(`/kejadian/${incident.id}`)} className="clickable">
-                  <LevelBadge level={incident.level} /><StatusPill status={incident.latestStatus} />
-                  <span className="mono">{wibDay(incident.firstDetectedAt)}–{wib(incident.lastDetectedAt)}</span><span>{incident.detectionCount} deteksi</span>
-                </li>
-              ))}</ul>
-            </section>
+        <div className="dash-grid">
+          <div className="dash-map"><MapView hours={168} focus={d.geometry} initialLayers={{ deteksi: true, deforestasi: true }} onSelect={x => navigate(`/kejadian/${x}`)} legend={false} /></div>
+          <div className="card" style={{ padding: 16, display: 'grid', gap: 12, alignContent: 'start' }}>
+            <span className="heading-16">Deteksi satelit 7 hari</span>
+            <div className="bars7">{d.daily.map(x => <div key={x.day}><i style={{ height: `${(x.detections / max) * 100}%` }} /><b>{x.detections}</b><span>{x.day.slice(8)}/{x.day.slice(5, 7)}</span></div>)}</div>
+            <p className="note">Lapisan alert gangguan hutan (GLAD-L, GLAD-S2, RADD) aktif di peta untuk memantau alih fungsi lahan. Matikan lewat tombol Lapisan.</p>
           </div>
         </div>
-      </div>
+        <div className="card list-card">
+          <div className="queue-head"><span className="heading-16">Kejadian 7 hari</span><span className="caption muted">{d.incidents.length}</span></div>
+          {!d.incidents.length && <div className="empty">Tidak ada titik panas dalam 7 hari. Tetap waspada: awan dan asap bisa menutupi api.</div>}
+          {d.incidents.slice(0, 30).map(i => (
+            <Link key={i.id} to={`/kejadian/${i.id}`} className="alert-row">
+              <FlameTile level={i.level} checked={Boolean(i.firstVerifiedAt)} size={20} />
+              <span className="main"><span className="title">{i.detectionCount} titik panas</span><span className="summary">{timeSpan(i.firstDetectedAt, i.lastDetectedAt)}{i.onPeat ? ' · gambut' : ''}</span>
+                <span className="meta"><LevelBadge level={i.level} /><StatusText status={i.latestStatus} /></span></span>
+            </Link>
+          ))}
+        </div>
+      </main>
     </Shell>
   );
 }

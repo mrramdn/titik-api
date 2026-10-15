@@ -4,6 +4,14 @@ const time = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', hour: 
 const day = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short' });
 export const wib = (iso: string | Date) => time.format(new Date(iso)).replace(':', '.');
 export const wibDay = (iso: string | Date) => `${day.format(new Date(iso))} ${wib(iso)}`;
+/** "16 Okt 00.45 WIB", "16 Okt 00.20–01.41 WIB" or "14 Okt 13.18 – 15 Okt 01.41 WIB". */
+export function timeSpan(first: string, last: string) {
+  const a = wibDay(first), b = wibDay(last);
+  if (a === b) return `${a} WIB`;
+  return day.format(new Date(first)) === day.format(new Date(last)) ? `${a}–${wib(last)} WIB` : `${a} – ${b} WIB`;
+}
+/** One satellite by name, several as a count: the full list wraps badly on a phone. */
+export const satellites = (codes: string[]) => { const unique = [...new Set(codes)]; return unique.length === 1 ? satelliteLabel[unique[0]!] ?? unique[0]! : `${unique.length} satelit`; };
 
 export function ago(iso: string, now = Date.now()) {
   const minutes = Math.round((now - new Date(iso).getTime()) / 60000);
@@ -37,5 +45,5 @@ export const statusHint: Record<Status, string> = {
 export const falseAlarmLabel: Record<string, string> = { industri: 'Sumber panas industri', pembakaran_sampah: 'Pembakaran sampah', lainnya: 'Lainnya' };
 export const roleLabel: Record<string, string> = { mpa: 'Relawan MPA', kades: 'Kepala desa', bpbd: 'BPBD / Daops', admin: 'Admin' };
 
-export const percent = (value: number | null) => (value === null ? '–' : `${Math.round(value * 100)}%`);
+export const percent = (value: number | null) => (value === null ? '–' : value > 0 && value < 0.01 ? '<1%' : `${Math.round(value * 100)}%`);
 export const km = (meters: number) => (meters < 1000 ? `${Math.max(10, Math.round(meters / 10) * 10)} m` : `${(Math.round(meters / 100) / 10).toLocaleString('id-ID')} km`);
