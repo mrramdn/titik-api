@@ -121,7 +121,7 @@ export function VerifyPage() {
           <input type="file" accept="image/*" capture="environment" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; const small = await compressPhoto(file); setPhoto(small); setPreview(URL.createObjectURL(small)); }} /></label>
         {preview && <img className="preview" src={preview} alt="Pratinjau foto" />}
         <label className="field"><span className="label">Catatan (opsional)</span>
-          <textarea rows={3} maxLength={600} value={note} onChange={event => setNote(event.target.value)} placeholder="Misalnya: asap dari kanal sebelah timur, sudah dipadamkan regu." /></label>
+          <textarea rows={3} maxLength={600} spellCheck={false} value={note} onChange={event => setNote(event.target.value)} placeholder="Misalnya: asap dari kanal sebelah timur, sudah dipadamkan regu." /></label>
         <p className="note">Lokasi di dalam foto dibuang di server. Pelapor tidak ditampilkan ke publik. "Bakar terkendali" dicatat sebagai fakta lapangan, bukan penilaian hukum.</p>
         <div className="submit-bar" style={{ margin: '0 -16px' }}>
           <button type="submit" className="btn btn-primary btn-block" disabled={!status || busy}><CircleCheck size={16} />{busy ? 'Menyimpan…' : online ? 'Kirim laporan' : 'Simpan, kirim saat ada sinyal'}</button>
