@@ -29,9 +29,14 @@ let village: { id: string; name: string; lon: number; lat: number };
 // Points east (+) and north (+) of the village centre, in metres.
 const at = (east: number, north: number) => ({ lon: village.lon + east / (111_320 * Math.cos((village.lat * Math.PI) / 180)), lat: village.lat + north / 110_574 });
 const header = 'latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight';
+// Incidents are grouped per day in Western Indonesian Time, so every fixture detection falls in one WIB day:
+// an hour ago, or just before the last WIB midnight when an hour ago is too early in the day.
+const wibHours = (date: Date) => ((date.getUTCHours() + 7) % 24) + date.getUTCMinutes() / 60;
+let anchor = new Date(Date.now() - 3600_000);
+if (wibHours(anchor) < 2.6) anchor = new Date(anchor.getTime() - wibHours(anchor) * 3600_000 - 60_000);
 function csv(satellite: string, rows: { point: { lon: number; lat: number }; hoursAgo: number; confidence?: string; frp?: number }[]) {
   return [header, ...rows.map(row => {
-    const time = new Date(Date.now() - row.hoursAgo * 3600_000);
+    const time = new Date(anchor.getTime() - row.hoursAgo * 3600_000);
     const hhmm = `${String(time.getUTCHours()).padStart(2, '0')}${String(time.getUTCMinutes()).padStart(2, '0')}`;
     return `${row.point.lat.toFixed(5)},${row.point.lon.toFixed(5)},340.1,0.4,0.37,${time.toISOString().slice(0, 10)},${hhmm},${satellite},${row.confidence ?? 'nominal'},2.0NRT,295.2,${row.frp ?? 6.5},D`;
   })].join('\n');
@@ -108,8 +113,8 @@ test('a card says how far and which way from the village centre, in Jakarta time
 let firstIncident: string;
 test('ingest links detections to villages, groups them into incidents and is idempotent', async () => {
   const texts = {
-    N21: csv('N21', [{ point: at(0, 0), hoursAgo: 3, confidence: 'high', frp: 31 }, { point: at(250, 120), hoursAgo: 3 }, { point: at(4000, 0), hoursAgo: 3 }]),
-    N20: csv('N20', [{ point: at(120, -80), hoursAgo: 2.5 }, { point: { lon: 104.75, lat: -2.98 }, hoursAgo: 2.5 }]),
+    N21: csv('N21', [{ point: at(0, 0), hoursAgo: 2.5, confidence: 'high', frp: 31 }, { point: at(250, 120), hoursAgo: 2 }, { point: at(4000, 0), hoursAgo: 2 }]),
+    N20: csv('N20', [{ point: at(120, -80), hoursAgo: 1.5 }, { point: { lon: 104.75, lat: -2.98 }, hoursAgo: 1.5 }]),
     N: '',
   };
   const first = await ingest(pool, { source: 'fixture', texts, peat });
@@ -201,7 +206,7 @@ test('a photo is re-encoded without its metadata', async () => {
 
 test('new detections that bridge two incidents merge them, reports included', async () => {
   const before = (await pool.query('SELECT count(*)::int AS n FROM incidents WHERE village_id IS NOT NULL')).rows[0].n;
-  await ingest(pool, { source: 'fixture', peat, texts: { N21: csv('N21', [900, 1600, 2300, 3000, 3600].map(east => ({ point: at(east, 0), hoursAgo: 1 }))), N20: '', N: '' } });
+  await ingest(pool, { source: 'fixture', peat, texts: { N21: csv('N21', [900, 1600, 2300, 3000, 3600].map(east => ({ point: at(east, 0), hoursAgo: 0 }))), N20: '', N: '' } });
   const after = (await pool.query('SELECT count(*)::int AS n FROM incidents WHERE village_id IS NOT NULL')).rows[0].n;
   assert.equal(after, before - 1, 'the two incidents became one');
   const merged = (await pool.query('SELECT incident_id FROM detections WHERE latitude = $1 OR longitude > $2', [at(4000, 0).lat, at(3900, 0).lon])).rows;
@@ -226,7 +231,7 @@ test('the agency dashboard counts checks and the median time to the first one; t
 });
 
 test('a shared link shows the card in the preview', async () => {
-  const code = (await pool.query('SELECT code FROM incidents WHERE id = $1', [firstIncident])).rows[0].code;
+  const code = (await pool.query('SELECT code FROM incidents WHERE village_id IS NOT NULL ORDER BY detection_count DESC LIMIT 1')).rows[0].code;
   const response = await app.inject({ method: 'GET', url: `/k/${code}` });
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /<meta property="og:title" content="\d+ titik panas · Desa /);
