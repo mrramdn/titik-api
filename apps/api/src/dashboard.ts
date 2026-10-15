@@ -38,12 +38,14 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
           FILTER (WHERE i.first_verified_at IS NOT NULL) AS median_minutes
       FROM villages v JOIN incidents i ON i.village_id = v.id AND i.last_detected_at > now() - $1::interval WHERE true${where}
       GROUP BY v.id ORDER BY open_high DESC, max_score DESC, incidents DESC LIMIT 200`, rp);
-    const recent = await pool.query(`SELECT v.id, v.status, v.false_alarm_kind, v.observed_at, v.received_at, v.distance_m, v.note, v.photo_thumb_url, v.is_demo,
-        u.name AS reporter, i.id AS incident_id, i.first_detected_at, vi.name AS village_name
-      FROM verifications v JOIN users u ON u.id = v.user_id JOIN incidents i ON i.id = v.incident_id LEFT JOIN villages vi ON vi.id = i.village_id
-      WHERE v.observed_at > now() - $1::interval ORDER BY v.received_at DESC LIMIT 20`, [range]);
-    const demoShare = (await pool.query(`SELECT count(*)::integer AS total, count(*) FILTER (WHERE is_demo)::integer AS demo FROM verifications
-      WHERE observed_at > now() - $1::interval`, [range])).rows[0];
+    // The feed and the demo share follow the same incidents as the summary: detected in range, inside the chosen region.
+    const recent = await pool.query(`SELECT r.id, r.status, r.false_alarm_kind, r.observed_at, r.received_at, r.distance_m, r.note, r.photo_thumb_url, r.is_demo,
+        u.name AS reporter, i.id AS incident_id, i.first_detected_at, v.name AS village_name
+      FROM verifications r JOIN users u ON u.id = r.user_id JOIN incidents i ON i.id = r.incident_id JOIN villages v ON v.id = i.village_id
+      WHERE i.last_detected_at > now() - $1::interval${where} ORDER BY r.received_at DESC LIMIT 20`, rp);
+    const demoShare = (await pool.query(`SELECT count(*)::integer AS total, count(*) FILTER (WHERE r.is_demo)::integer AS demo
+      FROM verifications r JOIN incidents i ON i.id = r.incident_id JOIN villages v ON v.id = i.village_id
+      WHERE i.last_detected_at > now() - $1::interval${where}`, rp)).rows[0];
     const median = (value: unknown) => (value === null ? null : Math.round(Number(value)));
     return { data: {
       range: object(request.query ?? {}).range ?? '24h',

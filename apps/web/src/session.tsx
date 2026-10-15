@@ -17,7 +17,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [offline, setOffline] = useState(false);
   useEffect(() => {
-    api<{ data: User }>('/auth/me')
+    api<{ data: User | null }>('/auth/me')
       .then(response => { setUser(response.data); remember(response.data); })
       .catch(error => {
         // Without a signal the last known account stays, so a volunteer in the field can still file reports.

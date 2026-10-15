@@ -57,10 +57,13 @@ export async function resetDemo(pool: pg.Pool) {
     for (const village of villages.slice(0, 4)) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, 1)', [mpa.id, village]);
     if (villages[0]) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, 0)', [kades.id, villages[0]]);
 
-    const candidates = (await client.query(`SELECT DISTINCT ON (i.village_id) i.id, i.first_detected_at, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat
+    // Sample checks land on recent incidents, first in the demo volunteer's own villages, then in the OKI pilot.
+    const candidates = (await client.query(`SELECT DISTINCT ON (i.village_id) i.id, i.first_detected_at, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat,
+        (i.village_id = ANY($1::text[]))::integer * 2 + (v.regency = 'Ogan Komering Ilir')::integer AS rank
       FROM incidents i JOIN villages v ON v.id = i.village_id
-      WHERE i.first_verified_at IS NULL AND i.first_detected_at BETWEEN now() - interval '72 hours' AND now() - interval '20 hours'
-      ORDER BY i.village_id, (v.regency = 'Ogan Komering Ilir') DESC, i.score DESC`)).rows.sort((a, b) => b.first_detected_at - a.first_detected_at).slice(0, examples.length);
+      WHERE i.first_verified_at IS NULL AND i.first_detected_at BETWEEN now() - interval '30 hours' AND now() - interval '4 hours'
+      ORDER BY i.village_id, i.score DESC`, [villages])).rows
+      .sort((a, b) => b.rank - a.rank || b.first_detected_at - a.first_detected_at).slice(0, examples.length);
     for (const [index, incident] of candidates.entries()) {
       const example = examples[index]!;
       await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, note, latitude, longitude, accuracy_m, distance_m, observed_at, received_at, is_demo)

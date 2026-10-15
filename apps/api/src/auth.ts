@@ -87,7 +87,8 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
     return startSession(request, reply, userModel(row), client);
   });
 
-  app.get('/api/v1/auth/me', async request => ({ data: authenticated(request) }));
+  // Anonymous visitors get null instead of a 401, so opening the public map logs no errors.
+  app.get('/api/v1/auth/me', async request => ({ data: request.user ?? null }));
   app.post('/api/v1/auth/logout', async (request, reply) => {
     authenticated(request);
     await pool.query('DELETE FROM sessions WHERE token_hash = $1', [request.sessionHash]);
