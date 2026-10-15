@@ -1,0 +1,19 @@
+{
+  "name": "titik-api",
+  "private": true,
+  "packageManager": "pnpm@12.8.1",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev:api": "pnpm --filter @titikapi/api dev",
+    "dev:web": "pnpm --filter @titikapi/web dev",
+    "build": "pnpm --filter @titikapi/web build && pnpm --filter @titikapi/api build",
+    "check": "pnpm -r check",
+    "test:api": "pnpm --filter @titikapi/api test",
+    "test:web": "pnpm --filter @titikapi/web test",
+    "e2e": "pnpm --filter @titikapi/web e2e",
+    "db:migrate": "pnpm --filter @titikapi/api migrate",
+    "db:seed": "pnpm --filter @titikapi/api seed",
+    "db:reset-demo": "pnpm --filter @titikapi/api demo:reset",
+    "ingest": "pnpm --filter @titikapi/api ingest"
+  }
+}

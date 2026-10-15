@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+coverage/
+*.log
+apps/api/storage/uploads/*
+!apps/api/storage/uploads/.gitkeep
+apps/web/test-results/
+.cache/
+.DS_Store

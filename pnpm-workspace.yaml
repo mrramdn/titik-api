@@ -1,0 +1,7 @@
+packages:
+  - apps/api
+  - apps/web
+allowBuilds:
+  argon2: true
+  esbuild: true
+  sharp: true

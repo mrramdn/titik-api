@@ -1,0 +1,21 @@
+# Local development and tests: PostGIS with a second database for the test suite.
+services:
+  db:
+    image: postgis/postgis:17-3.5-alpine
+    environment:
+      POSTGRES_USER: titikapi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-titikapi}
+      POSTGRES_DB: titikapi
+    ports:
+      - "127.0.0.1:5442:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/20-test-db.sql:ro
+    command: ["postgres", "-c", "shared_buffers=48MB", "-c", "max_connections=30"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U titikapi -d titikapi"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  postgres-data:

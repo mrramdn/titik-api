@@ -1,0 +1,13 @@
+.git
+**/node_modules
+**/dist
+**/.env
+.env
+**/.env.local
+**/storage/uploads
+**/test-results
+.cache
+AGENTS.md
+CLAUDE.md
+.claude
+.mcp.json

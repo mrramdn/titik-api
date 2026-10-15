@@ -1,0 +1,39 @@
+{
+  "name": "@titikapi/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "build": "tsc",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "migrate": "node --env-file-if-exists=.env --import tsx src/migrate.ts",
+    "seed": "node --env-file-if-exists=.env --import tsx src/seed.ts",
+    "demo:reset": "node --env-file-if-exists=.env --import tsx src/demo.ts reset",
+    "ingest": "node --env-file-if-exists=.env --import tsx src/ingest.ts",
+    "test": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 test/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/static": "^10.1.5",
+    "argon2": "^0.44.0",
+    "fastify": "^5.6.2",
+    "pg": "^8.16.3",
+    "sharp": "^0.35.5",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/pg": "^8.15.5",
+    "@types/web-push": "^3.6.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
