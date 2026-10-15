@@ -48,11 +48,13 @@ export function MapView({ hours = 24, bounds, selected, focus, initialLayers, on
       maxZoom: 16, attributionControl: { compact: true, customAttribution: 'NASA FIRMS · BPS/HDX · Global Nature Watch · EOX' },
     });
     map.current = instance;
+    // The compact attribution opens as soon as it is added and would cover a phone-sized map; it stays one tap away.
+    const collapseAttribution = () => container.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+    collapseAttribution();
     instance.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     instance.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
     instance.on('load', () => {
-      // The compact attribution opens on load and would cover a phone-sized map; it stays one tap away.
-      container.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+      collapseAttribution();
       const firstSymbol = instance.getStyle().layers?.find(layer => layer.type === 'symbol')?.id;
       instance.addSource('citra', { type: 'raster', tileSize: 256, maxzoom: 15, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg'], attribution: 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)' });
       instance.addLayer({ id: 'citra', type: 'raster', source: 'citra', layout: { visibility: 'none' } }, firstSymbol);

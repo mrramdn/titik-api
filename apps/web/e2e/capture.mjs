@@ -11,7 +11,7 @@ const desktop = { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 }
 const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true };
 
 async function session(options, role, position = { latitude: -3.02, longitude: 105.62 }) {
-  const context = await browser.newContext({ ...options, geolocation: position, permissions: ['geolocation'], locale: 'id-ID', timezoneId: 'Asia/Jakarta' });
+  const context = await browser.newContext({ ...options, geolocation: { accuracy: 12, ...position }, permissions: ['geolocation'], locale: 'id-ID', timezoneId: 'Asia/Jakarta' });
   const page = await context.newPage();
   if (role) {
     await page.goto(`${base}/tentang`);
@@ -20,12 +20,13 @@ async function session(options, role, position = { latitude: -3.02, longitude: 1
   return { context, page };
 }
 const top = await (await fetch(`${base}/api/v1/incidents?hours=72&level=tinggi`)).json();
-const incident = top.data.find(item => item.village && !item.firstVerifiedAt) ?? top.data[0];
+const incident = top.data.find(item => item.village?.regency === 'Ogan Komering Ilir' && !item.firstVerifiedAt) ?? top.data.find(item => item.village && !item.firstVerifiedAt) ?? top.data[0];
 
 { const { context, page } = await session(desktop);
   await page.goto(`${base}/`); await page.waitForTimeout(6000);
   await page.screenshot({ path: `${out}/01-peta.png` });
-  await page.getByText('Lahan gambut', { exact: false }).first().click(); await page.waitForTimeout(3500);
+  await page.locator('.map-control', { hasText: 'Lapisan' }).click(); await page.waitForTimeout(500);
+  await page.locator('label.layer', { hasText: 'Lahan gambut' }).click(); await page.waitForTimeout(3500);
   await page.screenshot({ path: `${out}/02-peta-gambut.png` });
   await context.close(); }
 { const { context, page } = await session(phone, 'mpa');
@@ -42,13 +43,13 @@ if (incident) {
     await page.goto(`${base}/kejadian/${incident.id}`); await page.waitForTimeout(2500);
     await page.goto(`${base}/kejadian/${incident.id}/cek`); await page.waitForTimeout(2500);
     await context.setOffline(true); await page.waitForTimeout(800);
-    await page.locator('label.status-asap_bara').click();
+    await page.locator('label.option', { hasText: 'Asap / bara' }).click();
     await page.screenshot({ path: `${out}/05-cek-offline.png` });
     await page.locator('textarea').fill('Contoh: asap tipis dari tepi kanal.');
     await page.getByRole('button', { name: /Simpan, kirim saat ada sinyal/ }).click(); await page.waitForTimeout(1500);
     await page.screenshot({ path: `${out}/06-tersimpan-offline.png` });
     await context.setOffline(false); await page.waitForTimeout(23000);
-    await page.goto(`${base}/kejadian/${incident.id}`); await page.waitForTimeout(3000);
+    await page.goto(`${base}/kejadian/${incident.id}`); await page.waitForTimeout(7000);
     await page.screenshot({ path: `${out}/07-terkirim.png` });
     await context.close(); }
   { const { context, page } = await session(desktop);
