@@ -21,6 +21,8 @@ type Ring = number[][];
 type Polygon = Ring[];
 type Feature = { properties: Record<string, string>; geometry: { type: string; coordinates: any } };
 const villages = JSON.parse(await readFile(villagesPath, 'utf8')) as { features: Feature[] };
+// COD-AB keeps lakes as pseudo-villages with a code ending in 888888 (Danau Ranau): they are not villages.
+villages.features = villages.features.filter(f => !f.properties.adm4_pcode!.endsWith('888888'));
 const polygonsOf = (geometry: Feature['geometry']): Polygon[] => geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
 function inRing(x: number, y: number, ring: Ring) {
   let inside = false;
