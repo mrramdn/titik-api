@@ -41,7 +41,7 @@ export function installAlerts(app: FastifyInstance, pool: pg.Pool, send?: Sender
     const result = await pool.query(`SELECT a.id AS alert_id, a.created_at AS alert_created, a.updated_at AS alert_updated, a.read_at, a.shared_at,
         s.id AS ref_id, s.name AS ref_name, ST_X(s.center) AS ref_lon, ST_Y(s.center) AS ref_lat, inc.*
       FROM alerts a JOIN villages s ON s.id = a.village_id JOIN (${incidentSelect}) inc ON inc.id = a.incident_id
-      WHERE a.user_id = $1 ORDER BY (a.read_at IS NULL) DESC, a.updated_at DESC LIMIT 60`, [user.id]);
+      WHERE a.user_id = $1 ORDER BY (a.read_at IS NULL) DESC, (inc.first_verified_at IS NULL) DESC, (inc.level = 'tinggi') DESC, inc.last_detected_at DESC LIMIT 60`, [user.id]);
     return { data: result.rows.map(row => ({
       id: row.alert_id, createdAt: row.alert_created.toISOString(), updatedAt: row.alert_updated.toISOString(),
       readAt: row.read_at?.toISOString() ?? null, sharedAt: row.shared_at?.toISOString() ?? null,
