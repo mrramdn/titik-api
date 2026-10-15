@@ -4,9 +4,9 @@
 
 Musim kebakaran hutan dan lahan 2026 setara dengan 2015: SiPongi+ mencatat 15.722 titik panas MODIS berkeyakinan tinggi pada September 2026, hampir sama dengan September 2015 (16.463). Pada 13 Oktober 2026 Presiden meminta pencegahan "di tingkat paling bawah, di tingkat desa". Data satelitnya sudah ada dan terbuka. Yang belum tersambung adalah jalur terakhirnya: dari titik di peta sampai ke orang yang bisa mengecek di lapangan, lalu kembali lagi ke posko.
 
-Titik Api mengisi jalur itu untuk satu kabupaten pilot, **Ogan Komering Ilir (OKI), Sumatera Selatan**:
+Titik Api mengisi jalur itu untuk dua provinsi rawan karhutla, **Sumatera Selatan dan Kalimantan Tengah**: 4.837 desa/kelurahan di 31 kabupaten/kota, dengan **Kabupaten Ogan Komering Ilir (OKI)** sebagai pilot.
 
-1. **Satelit.** Setiap 30 menit server mengambil titik panas NASA FIRMS (VIIRS 375 m) dari NOAA-21, NOAA-20, dan S-NPP, lalu menautkannya ke 327 poligon desa/kelurahan OKI.
+1. **Satelit.** Setiap 30 menit server mengambil titik panas NASA FIRMS (VIIRS 375 m) dari NOAA-21, NOAA-20, dan S-NPP, lalu menautkannya ke 4.837 poligon desa/kelurahan.
 2. **Triase.** Deteksi digabung menjadi kejadian, diberi tanda gambut dan sumber panas tetap, lalu diberi skor prioritas dengan aturan yang bisa dicek siapa pun.
 3. **Kartu desa.** Relawan Masyarakat Peduli Api (MPA) dan kepala desa menerima kartu peringatan untuk desa yang mereka pantau, misalnya "3 titik panas · 1,2 km tenggara pusat Desa X · di lahan gambut · 13.42 WIB". Kartu masuk sebagai notifikasi push dan bisa diteruskan ke grup WhatsApp dengan satu ketukan.
 4. **Cek lapangan, juga tanpa sinyal.** Relawan memilih satu dari lima status (api aktif, asap/bara, bakar terkendali, alarm palsu, tidak terjangkau), lalu menambah foto, GPS, dan catatan. Tanpa sinyal, laporan disimpan di ponsel dan terkirim sendiri begitu ada sinyal.
@@ -22,6 +22,7 @@ Titik Api tidak menggantikan SiPongi+, Songket, atau sistem resmi lain. Titik Ap
 - **Tema:** Sustainability
 - **Subtema 4:** Masyarakat sekitar hutan dan lahan gambut yang terdampak kebakaran dan deforestasi, sehingga sulit memantau titik api dan alih fungsi lahan sejak dini
 - **Prototipe:** https://titik-api.mrramdn.com, dengan akun demo sekali ketuk di halaman Masuk
+- **Linimasa:** riset masalah dan pemilihan ide 15 Okt 2026; prototipe dibangun 16 Okt 2026, di dalam periode pengerjaan lomba 12–16 Okt.
 
 ## Coba dalam dua menit
 
@@ -31,11 +32,11 @@ Titik Api tidak menggantikan SiPongi+, Songket, atau sistem resmi lain. Titik Ap
 | Kepala desa | **Masuk → Kepala desa** | Kartu untuk desanya dan ringkasan desa yang bisa dibagikan |
 | Petugas BPBD/Daops | **Masuk → BPBD / Daops** | Dasbor, tabel per desa, umpan cek lapangan, ekspor CSV groundcheck |
 
-Akun demo dipakai bersama dan bukan akun resmi instansi mana pun. Titik panasnya data asli NASA FIRMS. Cek lapangan dari akun demo ditandai "demo" di semua tampilan dan direset setiap malam pukul 03.00 WIB. Reset itu juga memilih ulang desa yang dipantau relawan demo, yaitu desa dengan kejadian terbanyak dalam 72 jam terakhir, supaya selalu ada titik asli untuk dicoba.
+Akun demo dipakai bersama dan bukan akun resmi instansi mana pun. Titik panasnya data asli NASA FIRMS. Cek lapangan dari akun demo ditandai "demo" di semua tampilan dan direset setiap malam pukul 03.00 WIB. Reset itu juga memilih ulang desa yang dipantau relawan demo, yaitu desa di OKI dengan kejadian terbanyak dalam 72 jam terakhir, supaya selalu ada titik asli untuk dicoba.
 
 **Skenario singkat:**
 
-1. Buka peta beranda dan lihat titik panas OKI 24 jam terakhir. Nyalakan lapisan gambut dan alert gangguan hutan.
+1. Buka peta beranda dan lihat kejadian titik panas 24 jam terakhir di Sumsel dan Kalteng. Pilih satu provinsi di bilah atas, lalu nyalakan lapisan gambut dan alert gangguan hutan lewat tombol **Lapisan**.
 2. Masuk sebagai relawan MPA. Buka kartu berprioritas TINGGI, lalu ketuk **Bagikan ke WA**.
 3. Ketuk **Cek lapangan**. Matikan sinyal (mode pesawat, atau DevTools → Network → Offline), pilih "Asap / bara", lalu kirim. Laporan masuk antrean. Nyalakan lagi sinyalnya, dan laporan terkirim sendiri.
 4. Masuk sebagai BPBD. Kejadian tadi sudah tercatat, lengkap dengan waktu dari deteksi sampai cek.
@@ -46,25 +47,28 @@ Akun demo dipakai bersama dan bukan akun resmi instansi mana pun. Titik panasnya
 flowchart LR
   FIRMS["NASA FIRMS<br/>CSV publik VIIRS<br/>NOAA-21 · NOAA-20 · S-NPP"] -->|setiap 30 menit| Ingest
   subgraph API["Fastify 5 + TypeScript"]
-    Ingest["Ingest<br/>kotak OKI · dedup"] --> Desa["ST_Contains<br/>327 desa"] --> Klaster["ST_ClusterDBSCAN<br/>750 m · per hari WIB"] --> Skor["Skor prioritas<br/>aturan terbuka"] --> Kartu["Kartu pelanggan<br/>desa / radius"]
+    Ingest["Ingest<br/>kotak Sumsel + Kalteng · dedup"] --> Desa["ST_Contains<br/>4.837 desa"] --> Klaster["ST_ClusterDBSCAN<br/>750 m · per hari WIB"] --> Skor["Skor prioritas<br/>aturan terbuka"] --> Kartu["Kartu pelanggan<br/>desa / radius"]
     Kartu --> Push["Web Push"]
     Lapor["Laporan cek lapangan<br/>idempoten · foto tanpa EXIF"] --> Dasbor["Dasbor + ekspor<br/>groundcheck CSV"]
+    Ubin["Vector tile<br/>ST_AsMVT: desa, kabupaten,<br/>kejadian, deteksi"]
   end
   DB[("PostgreSQL 17 + PostGIS 3.5")] --- API
   Ref["Data rujukan<br/>batas desa BPS/HDX · gambut GFW · OSM"] --> DB
   PWA["PWA React + MapLibre<br/>service worker · antrean IndexedDB"] <--> API
+  Ubin --> PWA
   Push --> PWA
 ```
 
-- **Backend** (`apps/api`): Fastify 5, TypeScript, `pg`, PostgreSQL 17 + PostGIS 3.5, sharp, web-push. Penjadwal ingest berjalan di dalam proses dengan advisory lock, sehingga hanya satu ingest yang berjalan pada satu waktu.
+- **Backend** (`apps/api`): Fastify 5, TypeScript, `pg`, PostgreSQL 17 + PostGIS 3.5, sharp, web-push. Penjadwal ingest berjalan di dalam proses dengan advisory lock, sehingga hanya satu ingest yang berjalan pada satu waktu. Peta memakai vector tile yang dipotong PostGIS (`ST_AsMVT`), karena dua provinsi berarti ±4.800 poligon desa dan puluhan ribu deteksi per minggu: terlalu berat untuk GeoJSON.
 - **Frontend** (`apps/web`): React 19, React Router, MapLibre GL, dan vite-plugin-pwa (Workbox `injectManifest`). Antrean laporan disimpan di IndexedDB. Halaman, data terakhir, dan tile peta tetap terbuka tanpa sinyal.
-- **Data rujukan** (`data/`): batas desa OKI, masker gambut, permukiman, kawasan industri, dan snapshot FIRMS 16 Okt 2026 sebagai cadangan. Sumber dan perintah pembuatannya ada di [`data/SOURCES.md`](data/SOURCES.md).
+- **Desain:** sistem desain (warna, tipografi, komponen) dan layar utama dibuat di Figma lebih dulu, lalu dipakai bersama oleh aplikasi, pitch deck, dan video. Pola dasarnya peta penuh dengan panel kejadian yang padat; warna kuat hanya untuk prioritas dan status cek.
+- **Data rujukan** (`data/`): batas desa dua provinsi, masker gambut per provinsi, permukiman, kawasan industri, dan snapshot FIRMS 16 Okt 2026 sebagai cadangan. Sumber dan perintah pembuatannya ada di [`data/SOURCES.md`](data/SOURCES.md).
 
 ### Pipeline titik panas
 
 | Langkah | Detail |
 | --- | --- |
-| Ambil | CSV 24 jam FIRMS (Asia Tenggara) untuk tiga satelit, disaring ke kotak OKI. Pengiriman data S-NPP berhenti 1–2 Nov 2026 (NASA Earthdata, NOAA OSPO), jadi NOAA-21/20 dipakai sejak awal. |
+| Ambil | CSV 24 jam FIRMS (Asia Tenggara) untuk tiga satelit, disaring ke kotak Sumatera Selatan dan Kalimantan Tengah. Pengiriman data S-NPP berhenti 1–2 Nov 2026 (NASA Earthdata, NOAA OSPO), jadi NOAA-21/20 dipakai sejak awal. |
 | Simpan | `UNIQUE (satellite, acq_at, latitude, longitude)`, sehingga ingest ulang tidak menggandakan data. |
 | Tautkan | `ST_Contains` ke poligon desa; ditandai gambut (masker GFW) dan sumber panas tetap (industri OSM, atau alarm palsu yang sudah diverifikasi, dalam radius tertentu). |
 | Kelompokkan | Titik yang berjarak ≤ 750 m pada hari WIB yang sama digabung menjadi satu kejadian (`ST_ClusterDBSCAN` pada koordinat UTM 48S). Kejadian lama tetap memakai ID-nya; bila tersambung, kejadian yang lebih tua menyerap yang lain beserta laporannya. |
@@ -113,13 +117,15 @@ Perintah lain: `pnpm ingest` (sekali tarik FIRMS), `pnpm --filter @titikapi/api 
 | --- | --- | --- |
 | `GET health` | publik | status basis data |
 | `POST auth/demo`, `POST auth/login`, `GET auth/me`, `POST auth/logout` | publik / masuk | sesi cookie (web) atau Bearer |
-| `GET villages`, `GET villages.geojson`, `GET villages/:id` | publik | desa, poligon, statistik 7 hari |
-| `GET detections?hours=`, `GET incidents?hours=&level=&village=`, `GET incidents/:id` | publik | titik panas, kejadian, rincian skor; catatan dan pelapor hanya untuk yang masuk |
+| `GET regions`, `GET summary?hours=&province=` | publik | provinsi dan kabupaten (batas peta), ringkasan angka |
+| `GET villages?q=&province=`, `GET villages/:id` | publik | cari desa, poligon dan statistik 7 hari |
+| `GET tiles/{desa,kabupaten,kejadian,deteksi}/:z/:x/:y` | publik | vector tile (MVT) untuk peta |
+| `GET incidents?hours=&level=&village=&province=&regency=`, `GET incidents/:id` | publik | kejadian dan rincian skor; catatan dan pelapor hanya untuk yang masuk |
 | `GET ingest/status` | publik | lintasan terakhir per satelit, riwayat ingest |
 | `GET/PUT me/subscriptions`, `GET me/alerts`, `POST me/alerts/:id/read`, `POST me/alerts/:id/shared` | masuk | desa yang dipantau dan kartu peringatan |
 | `GET push/public-key`, `POST/DELETE me/push`, `POST me/push/test` | masuk | Web Push |
 | `POST incidents/:id/verifications` | MPA | laporan cek lapangan (JSON atau multipart dengan foto), idempoten lewat `clientUuid` |
-| `GET dashboard?range=24h\|7d`, `GET export/groundcheck.csv` | BPBD | dasbor dan ekspor |
+| `GET dashboard?range=24h\|7d&province=`, `GET export/groundcheck.csv` | BPBD | dasbor dan ekspor |
 | `GET /k/:code` | publik | tautan bagikan dengan pratinjau kartu (Open Graph) |
 
 ## Pengujian dan CI
@@ -141,7 +147,7 @@ Satu image Docker (`Dockerfile`) berisi API dan PWA, berjalan di VPS bersama Pos
 
 ## Penggunaan AI
 
-Kode, tes, dokumentasi, dan materi lomba dibuat dengan bantuan Claude (Anthropic) melalui Claude Code. Narasi video memakai suara sintetis Microsoft Edge TTS. Keputusan produk, pemilihan pilot, pemeriksaan klaim, dan pengujian dilakukan tim. Daftar lengkapnya ada di lampiran pitch deck.
+Kode, tes, dokumentasi, desain Figma, dan materi lomba dibuat dengan bantuan Claude (Anthropic, model Opus 5.5) melalui Claude Code. Narasi video memakai suara sintetis Microsoft Edge TTS. Keputusan produk, pemilihan pilot, pemeriksaan klaim, dan pengujian dilakukan tim. Daftar lengkapnya ada di lampiran pitch deck.
 
 ## Lisensi dan kredit
 
