@@ -47,17 +47,20 @@ export async function resetDemo(pool: pg.Pool) {
       AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)) WHERE d.incident_id = ANY($1::uuid[])`, [touched]);
     await refreshVerificationSummary(client, touched);
 
-    let villages = (await client.query(`SELECT village_id FROM incidents WHERE village_id IS NOT NULL AND last_detected_at > now() - interval '72 hours'
-      GROUP BY village_id ORDER BY count(*) DESC, max(score) DESC, village_id LIMIT 5`)).rows.map(row => row.village_id as string);
+    // The demo volunteer and village head work in the pilot regency, Ogan Komering Ilir.
+    let villages = (await client.query(`SELECT i.village_id FROM incidents i JOIN villages v ON v.id = i.village_id
+      WHERE v.regency = 'Ogan Komering Ilir' AND i.last_detected_at > now() - interval '72 hours'
+      GROUP BY i.village_id ORDER BY count(*) DESC, max(i.score) DESC, i.village_id LIMIT 5`)).rows.map(row => row.village_id as string);
     if (villages.length < 5) villages = [...new Set([...villages, ...(await client.query(`SELECT village_id FROM incidents WHERE village_id IS NOT NULL
       GROUP BY village_id ORDER BY max(last_detected_at) DESC LIMIT 5`)).rows.map(row => row.village_id as string)])].slice(0, 5);
     if (villages.length < 5) villages = [...new Set([...villages, ...(await client.query('SELECT id FROM villages ORDER BY peat_share DESC, id LIMIT 5')).rows.map(row => row.id as string)])].slice(0, 5);
     for (const village of villages.slice(0, 4)) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, 1)', [mpa.id, village]);
     if (villages[0]) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, 0)', [kades.id, villages[0]]);
 
-    const candidates = (await client.query(`SELECT DISTINCT ON (village_id) id, first_detected_at, ST_X(centroid) AS lon, ST_Y(centroid) AS lat FROM incidents
-      WHERE village_id IS NOT NULL AND first_verified_at IS NULL AND first_detected_at BETWEEN now() - interval '72 hours' AND now() - interval '20 hours'
-      ORDER BY village_id, score DESC`)).rows.sort((a, b) => b.first_detected_at - a.first_detected_at).slice(0, examples.length);
+    const candidates = (await client.query(`SELECT DISTINCT ON (i.village_id) i.id, i.first_detected_at, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat
+      FROM incidents i JOIN villages v ON v.id = i.village_id
+      WHERE i.first_verified_at IS NULL AND i.first_detected_at BETWEEN now() - interval '72 hours' AND now() - interval '20 hours'
+      ORDER BY i.village_id, (v.regency = 'Ogan Komering Ilir') DESC, i.score DESC`)).rows.sort((a, b) => b.first_detected_at - a.first_detected_at).slice(0, examples.length);
     for (const [index, incident] of candidates.entries()) {
       const example = examples[index]!;
       await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, note, latitude, longitude, accuracy_m, distance_m, observed_at, received_at, is_demo)

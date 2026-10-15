@@ -1,9 +1,16 @@
 {
-  "zoom": 12,
-  "tileX0": 3238,
-  "tileY0": 2074,
-  "width": 4864,
-  "height": 5888,
+  "region": "Sumatera Selatan",
+  "zoom": 11,
+  "tileX0": 1604,
+  "tileY0": 1033,
+  "width": 6400,
+  "height": 5120,
+  "bbox": [
+    102.06745,
+    -4.92535,
+    106.18945,
+    -1.62544
+  ],
   "source": "Global Forest Watch / Global Nature Watch, \"Global peatland extent\" v20230315 (Indonesia: Miettinen et al. 2016), tiles gfw_peatlands/v20230315/is",
   "license": "CC BY 4.0",
   "retrieved": "2026-10-15"

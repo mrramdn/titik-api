@@ -2,6 +2,7 @@
 // S-NPP stops delivering data on 1–2 Nov 2026 (NASA Earthdata / NOAA OSPO), so NOAA-21 and NOAA-20 come first.
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 
 export interface Feed { satellite: 'N21' | 'N20' | 'N'; path: string }
 export const feeds: Feed[] = [
@@ -11,8 +12,10 @@ export const feeds: Feed[] = [
 ];
 export const feedUrl = (feed: Feed, range: '24h' | '7d') => `https://firms.modaps.eosdis.nasa.gov/data/active_fire/${feed.path}_${range}.csv`;
 
-/** Ogan Komering Ilir with a margin of about 6 km: west, south, east, north. */
-export const areaBox = [104.58, -4.33, 106.25, -2.33] as const;
+export type Box = readonly [number, number, number, number];
+/** The covered provinces with a margin of about 5 km (west, south, east, north): South Sumatra and Central Kalimantan. */
+export const areaBoxes: readonly Box[] = [[102.0, -4.98, 106.25, -1.57], [110.68, -3.6, 115.9, 0.83]];
+const inBoxes = (lon: number, lat: number, boxes: readonly Box[]) => boxes.some(b => lon >= b[0] && lon <= b[2] && lat >= b[1] && lat <= b[3]);
 
 export interface FirmsRow {
   satellite: string; acqAt: Date; latitude: number; longitude: number; confidence: 'low' | 'nominal' | 'high';
@@ -21,8 +24,8 @@ export interface FirmsRow {
 
 const number = (value: string | undefined) => (value === undefined || value === '' || Number.isNaN(Number(value)) ? null : Number(value));
 
-/** Parses a FIRMS VIIRS CSV and keeps the rows inside the box. Unknown or broken rows are skipped. */
-export function parseFirmsCsv(text: string, box: readonly [number, number, number, number] = areaBox) {
+/** Parses a FIRMS VIIRS CSV and keeps the rows inside the covered area. Unknown or broken rows are skipped. */
+export function parseFirmsCsv(text: string, boxes: readonly Box[] = areaBoxes) {
   const lines = text.trim().split(/\r?\n/);
   const header = (lines.shift() ?? '').split(',');
   const column = (name: string) => header.indexOf(name);
@@ -36,7 +39,7 @@ export function parseFirmsCsv(text: string, box: readonly [number, number, numbe
     total++;
     const cells = line.split(',');
     const latitude = Number(cells[at.lat]), longitude = Number(cells[at.lon]);
-    if (!(longitude >= box[0] && longitude <= box[2] && latitude >= box[1] && latitude <= box[3])) continue;
+    if (!inBoxes(longitude, latitude, boxes)) continue;
     const time = (cells[at.time] ?? '').padStart(4, '0');
     const acqAt = new Date(`${cells[at.date]}T${time.slice(0, 2)}:${time.slice(2)}:00Z`);
     const confidence = ({ h: 'high', n: 'nominal', l: 'low', high: 'high', nominal: 'nominal', low: 'low' } as const)[cells[at.confidence] as 'h'] ;
@@ -54,8 +57,8 @@ export async function fetchFeed(feed: Feed, range: '24h' | '7d', fetchImpl: type
   return response.text();
 }
 
-/** The committed snapshot (data/firms-snapshot/<date>/<satellite>_<range>.csv), used when FIRMS cannot be reached. */
+/** The committed snapshot (data/firms-snapshot/<date>/<satellite>_<range>.csv.gz), used when FIRMS cannot be reached. */
 export async function snapshotFeed(feed: Feed, range: '24h' | '7d', dataDir: string) {
   const directory = resolve(dataDir, 'firms-snapshot', '2026-10-16');
-  return readFile(resolve(directory, `${feed.satellite}_${range}.csv`), 'utf8');
+  return gunzipSync(await readFile(resolve(directory, `${feed.satellite}_${range}.csv.gz`))).toString('utf8');
 }

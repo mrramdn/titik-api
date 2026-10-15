@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 
@@ -12,17 +12,18 @@ export function lonLatToPixel(lon: number, lat: number, zoom: number): [number, 
 export interface PeatMask { isPeat(lon: number, lat: number): boolean }
 
 /**
- * The GFW peatland layer over the pilot regency as a 1-bit raster (data/gambut-oki-mask.png), so every detection
- * is checked without a network call. Outside the raster nothing counts as peat.
+ * The GFW peatland layer over each covered province as a 1-bit raster (data/gambut-<province>.png), so every
+ * detection is checked without a network call. Outside the rasters nothing counts as peat.
  */
 export async function loadPeatMask(dataDir = resolve(process.env.DATA_DIR ?? resolve(import.meta.dirname, '../../../data'))): Promise<PeatMask> {
-  const meta = JSON.parse(readFileSync(resolve(dataDir, 'gambut-oki-mask.json'), 'utf8')) as { zoom: number; tileX0: number; tileY0: number; width: number; height: number };
-  const { data, info } = await sharp(resolve(dataDir, 'gambut-oki-mask.png')).greyscale().raw().toBuffer({ resolveWithObject: true });
-  return {
-    isPeat(lon, lat) {
+  const masks = await Promise.all(readdirSync(dataDir).filter(name => /^gambut-.+\.json$/.test(name)).map(async name => {
+    const meta = JSON.parse(readFileSync(resolve(dataDir, name), 'utf8')) as { zoom: number; tileX0: number; tileY0: number };
+    const { data, info } = await sharp(resolve(dataDir, name.replace(/\.json$/, '.png'))).greyscale().raw().toBuffer({ resolveWithObject: true });
+    return (lon: number, lat: number) => {
       const [px, py] = lonLatToPixel(lon, lat, meta.zoom);
       const x = Math.floor(px) - meta.tileX0 * 256, y = Math.floor(py) - meta.tileY0 * 256;
       return x >= 0 && y >= 0 && x < info.width && y < info.height && data[y * info.width + x]! > 127;
-    },
-  };
+    };
+  }));
+  return { isPeat: (lon, lat) => masks.some(check => check(lon, lat)) };
 }

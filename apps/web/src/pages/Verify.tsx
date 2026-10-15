@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router';
 import type { IncidentDetail, Status } from '../api';
 import { Shell } from '../components/Shell';
 import { Banner, LevelBadge, useApi, useOnline } from '../components/ui';
-import { compressPhoto, enqueue, flush, queued } from '../outbox';
+import { compressPhoto, enqueue, flush, onOutboxChange, queued } from '../outbox';
 import { bearing, distanceMeters, windName } from '../geo';
 import { falseAlarmLabel, km, statusHint, statusLabel, wib } from '../format';
 import { useSession } from '../session';
@@ -23,7 +23,7 @@ export function VerifyPage() {
   const [preview, setPreview] = useState<string | null>(null);
   const [position, setPosition] = useState<GeolocationPosition | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ sent: boolean; at: string } | null>(null);
+  const [result, setResult] = useState<{ sent: boolean; at: string; clientUuid: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -33,6 +33,11 @@ export function VerifyPage() {
     return () => navigator.geolocation.clearWatch(watch);
   }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  // A report saved without a signal leaves the queue once it is sent; the page follows it.
+  useEffect(() => {
+    if (!result || result.sent) return;
+    return onOutboxChange(() => { void queued().then(items => { if (!items.some(item => item.clientUuid === result.clientUuid)) setResult({ ...result, sent: true }); }); });
+  }, [result]);
 
   if (ready && !user) return <Navigate to="/masuk" replace />;
   if (user && user.role !== 'mpa' && user.role !== 'admin') return <Shell><div className="page narrow"><Banner tone="warn">Cek lapangan dilakukan oleh relawan MPA. Masuk sebagai relawan untuk mencoba.</Banner></div></Shell>;
@@ -54,7 +59,7 @@ export function VerifyPage() {
       accuracyM: position?.coords.accuracy ?? null, observedAt, photo });
     if (navigator.onLine !== false) await flush();
     const stillQueued = (await queued()).some(item => item.clientUuid === clientUuid);
-    setResult({ sent: !stillQueued, at: observedAt });
+    setResult({ sent: !stillQueued, at: observedAt, clientUuid });
     setBusy(false);
   };
 

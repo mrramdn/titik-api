@@ -45,7 +45,8 @@ async function readFeeds(options: IngestOptions) {
 
 /**
  * Groups detections into incidents: single-linkage clusters of points within 750 m of each other on the same
- * day (Western Indonesian Time), found with ST_ClusterDBSCAN. Only the days that received new detections are
+ * day (Western Indonesian Time), found with ST_ClusterDBSCAN on Web Mercator coordinates (within 0.3% of true
+ * distance at these latitudes, for both provinces). Only the days that received new detections are
  * clustered again. Adding points can only join clusters, so an existing incident keeps its id; when new points
  * connect two incidents, the older one absorbs the other together with its reports and cards. A peat fire that
  * smoulders for a week therefore becomes one card per day instead of one incident that grows for kilometres.
@@ -54,11 +55,11 @@ async function clusterDays(client: pg.PoolClient, newIds: string[], touched: Set
   const groups = (await client.query(`WITH days AS (
         SELECT DISTINCT (acq_at AT TIME ZONE 'Asia/Jakarta')::date AS day FROM detections WHERE id = ANY($1::bigint[]) AND village_id IS NOT NULL),
       points AS (
-        SELECT d.id, d.incident_id, days.day, d.geom_m FROM days
+        SELECT d.id, d.incident_id, days.day, d.geom_3857 FROM days
         JOIN detections d ON d.acq_at >= (days.day::timestamp AT TIME ZONE 'Asia/Jakarta') AND d.acq_at < ((days.day + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')
         WHERE d.village_id IS NOT NULL),
       clustered AS (
-        SELECT id, incident_id, day, ST_ClusterDBSCAN(geom_m, eps := 750, minpoints := 1) OVER (PARTITION BY day) AS cluster FROM points)
+        SELECT id, incident_id, day, ST_ClusterDBSCAN(geom_3857, eps := 750, minpoints := 1) OVER (PARTITION BY day) AS cluster FROM points)
     SELECT c.day, c.cluster, array_agg(c.id ORDER BY c.id)::text[] AS detections,
       array_remove(array_agg(DISTINCT c.incident_id), NULL)::text[] AS incidents,
       bool_or(c.incident_id IS NULL) AS has_new
@@ -99,7 +100,7 @@ export async function refreshIncidents(client: pg.PoolClient | pg.Pool, ids: str
         array_agg(DISTINCT satellite) AS sats, mode() WITHIN GROUP (ORDER BY village_id) AS village
       FROM detections WHERE incident_id = ANY($1::uuid[]) GROUP BY incident_id)
     UPDATE incidents i SET first_detected_at = a.first, last_detected_at = a.last, detection_count = a.n, max_frp = a.max_frp,
-      best_confidence = a.best, on_peat = a.peat, near_static = a.near_static, centroid = a.c, satellites = a.sats,
+      best_confidence = a.best, on_peat = a.peat, near_static = a.near_static, centroid = a.c, centroid_3857 = ST_Transform(a.c, 3857), satellites = a.sats,
       village_id = COALESCE(a.village, i.village_id), updated_at = now(),
       settlement_m = (SELECT round(ST_Distance(s.geom::geography, a.c::geography))::integer FROM settlements s ORDER BY s.geom <-> a.c LIMIT 1)
     FROM a WHERE i.id = a.incident_id
@@ -142,8 +143,8 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
       const insertedIds: string[] = [];
       for (let start = 0; start < rows.length; start += 2000) {
         const batch = rows.slice(start, start + 2000);
-        const inserted = await client.query(`INSERT INTO detections (satellite, acq_at, latitude, longitude, geom, geom_m, confidence, frp, bright_ti4, bright_ti5, scan, track, daynight, on_peat)
-            SELECT s, a, la, lo, ST_SetSRID(ST_MakePoint(lo, la), 4326), ST_Transform(ST_SetSRID(ST_MakePoint(lo, la), 4326), 32748), c, f, t4, t5, sc, tr, dn, p
+        const inserted = await client.query(`INSERT INTO detections (satellite, acq_at, latitude, longitude, geom, geom_m, geom_3857, confidence, frp, bright_ti4, bright_ti5, scan, track, daynight, on_peat)
+            SELECT s, a, la, lo, ST_SetSRID(ST_MakePoint(lo, la), 4326), ST_Transform(ST_SetSRID(ST_MakePoint(lo, la), 4326), 32748), ST_Transform(ST_SetSRID(ST_MakePoint(lo, la), 4326), 3857), c, f, t4, t5, sc, tr, dn, p
             FROM unnest($1::text[], $2::timestamptz[], $3::float8[], $4::float8[], $5::text[], $6::numeric[], $7::numeric[], $8::numeric[], $9::numeric[], $10::numeric[], $11::text[], $12::boolean[])
               AS u(s, a, la, lo, c, f, t4, t5, sc, tr, dn, p)
           ON CONFLICT (satellite, acq_at, latitude, longitude) DO NOTHING RETURNING id`,

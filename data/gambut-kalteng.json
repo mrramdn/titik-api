@@ -1,0 +1,17 @@
+{
+  "region": "Kalimantan Tengah",
+  "zoom": 11,
+  "tileX0": 1653,
+  "tileY0": 1019,
+  "width": 7936,
+  "height": 6656,
+  "bbox": [
+    110.73448,
+    -3.54358,
+    115.84722,
+    0.77783
+  ],
+  "source": "Global Forest Watch / Global Nature Watch, \"Global peatland extent\" v20230315 (Indonesia: Miettinen et al. 2016), tiles gfw_peatlands/v20230315/is",
+  "license": "CC BY 4.0",
+  "retrieved": "2026-10-15"
+}

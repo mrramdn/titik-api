@@ -22,28 +22,35 @@ async function load(pool: pg.Pool, name: string, work: (client: pg.PoolClient, f
 }
 
 export async function loadReference(pool: pg.Pool) {
-  await load(pool, 'desa-oki.geojson', async (client, features) => {
+  await load(pool, 'desa.geojson', async (client, features) => {
     // Villages are only ever added or corrected: detections, incidents and subscriptions point at them.
     for (const feature of features) {
       const p = feature.properties;
       await client.query(`INSERT INTO villages (id, name, district, regency, province, geom, center, center_source, area_ha, peat_share)
         SELECT $1, $2, $3, $4, $5, g, COALESCE(ST_SetSRID(ST_MakePoint($7, $8), 4326), ST_PointOnSurface(g)), $9,
           round((ST_Area(g::geography) / 10000)::numeric, 1), $10
-        FROM (SELECT ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326))) AS g) s
+        FROM (SELECT ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($6), 4326)), 3)) AS g) s
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, district = EXCLUDED.district, regency = EXCLUDED.regency, province = EXCLUDED.province,
           geom = EXCLUDED.geom, center = EXCLUDED.center, center_source = EXCLUDED.center_source, area_ha = EXCLUDED.area_ha, peat_share = EXCLUDED.peat_share`,
       [p.id, p.name, p.district, p.regency, p.province, JSON.stringify(feature.geometry), p.center?.[0] ?? null, p.center?.[1] ?? null,
         p.center ? 'osm' : 'polygon', p.peat_share]);
     }
+    await client.query('UPDATE villages SET geom_3857 = ST_Transform(geom, 3857)');
+    // Regencies are the union of their villages, for filters and the zoomed-out map.
+    await client.query('DELETE FROM regencies');
+    await client.query(`INSERT INTO regencies (name, province, villages, geom, geom_3857, center)
+      SELECT regency, min(province), count(*)::integer, g, ST_Transform(g, 3857), ST_PointOnSurface(g)
+      FROM (SELECT regency, province, ST_Multi(ST_CollectionExtract(ST_Union(geom) OVER (PARTITION BY regency), 3)) AS g FROM villages) u
+      GROUP BY regency, g`);
   });
-  await load(pool, 'permukiman-oki.geojson', async (client, features) => {
+  await load(pool, 'permukiman.geojson', async (client, features) => {
     await client.query('DELETE FROM settlements');
     for (const feature of features) {
       await client.query('INSERT INTO settlements (id, name, kind, geom) VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))',
         [feature.properties.id, feature.properties.name, feature.properties.kind, ...feature.geometry.coordinates]);
     }
   });
-  await load(pool, 'industri-oki.geojson', async (client, features) => {
+  await load(pool, 'industri.geojson', async (client, features) => {
     await client.query("DELETE FROM static_sources WHERE kind = 'industri'");
     for (const feature of features) {
       await client.query("INSERT INTO static_sources (kind, label, geom, radius_m) VALUES ('industri', $1, ST_SetSRID(ST_MakePoint($2, $3), 4326), $4)",

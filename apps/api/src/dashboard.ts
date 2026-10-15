@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { authenticated } from './auth.js';
 import { choice, object } from './errors.js';
 import { confidenceLabel, falseAlarmLabel, formatWib, satelliteLabel, statusLabel } from './geo.js';
+import { regionFilter } from './incidents.js';
 
 const ranges = { '24h': '24 hours', '7d': '7 days' } as const;
 const rangeOf = (query: unknown) => ranges[choice(object(query ?? {}).range ?? '24h', ['24h', '7d'] as const, 'Rentang')];
@@ -14,6 +15,8 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/dashboard', async request => {
     authenticated(request, 'bpbd');
     const range = rangeOf(request.query);
+    const rp: unknown[] = [range];
+    const where = regionFilter(object(request.query ?? {}), rp);
     const summary = (await pool.query(`SELECT count(*)::integer AS incidents,
         count(*) FILTER (WHERE first_verified_at IS NOT NULL)::integer AS verified,
         count(*) FILTER (WHERE level = 'tinggi')::integer AS high,
@@ -23,18 +26,18 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
         percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM first_verified_at - first_detected_at) / 60)
           FILTER (WHERE first_verified_at IS NOT NULL) AS median_minutes,
         COALESCE(sum(detection_count), 0)::integer AS detections
-      FROM incidents WHERE village_id IS NOT NULL AND last_detected_at > now() - $1::interval`, [range])).rows[0];
-    const statuses = await pool.query(`SELECT latest_status AS status, count(*)::integer AS count FROM incidents
-      WHERE latest_status IS NOT NULL AND last_detected_at > now() - $1::interval GROUP BY latest_status ORDER BY count DESC`, [range]);
-    const villages = await pool.query(`SELECT v.id, v.name, v.district, ST_X(v.center) AS lon, ST_Y(v.center) AS lat, count(i.id)::integer AS incidents,
+      FROM incidents i JOIN villages v ON v.id = i.village_id WHERE i.last_detected_at > now() - $1::interval${where}`, rp)).rows[0];
+    const statuses = await pool.query(`SELECT i.latest_status AS status, count(*)::integer AS count FROM incidents i JOIN villages v ON v.id = i.village_id
+      WHERE i.latest_status IS NOT NULL AND i.last_detected_at > now() - $1::interval${where} GROUP BY i.latest_status ORDER BY count DESC`, rp);
+    const villages = await pool.query(`SELECT v.id, v.name, v.district, v.regency, ST_X(v.center) AS lon, ST_Y(v.center) AS lat, count(i.id)::integer AS incidents,
         COALESCE(sum(i.detection_count), 0)::integer AS detections,
         count(i.id) FILTER (WHERE i.first_verified_at IS NOT NULL)::integer AS verified,
         count(i.id) FILTER (WHERE i.level = 'tinggi' AND i.first_verified_at IS NULL)::integer AS open_high,
         max(i.score)::integer AS max_score, bool_or(i.on_peat) AS on_peat, max(i.last_detected_at) AS last_detected_at,
         percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM i.first_verified_at - i.first_detected_at) / 60)
           FILTER (WHERE i.first_verified_at IS NOT NULL) AS median_minutes
-      FROM villages v JOIN incidents i ON i.village_id = v.id AND i.last_detected_at > now() - $1::interval
-      GROUP BY v.id ORDER BY open_high DESC, max_score DESC, incidents DESC LIMIT 200`, [range]);
+      FROM villages v JOIN incidents i ON i.village_id = v.id AND i.last_detected_at > now() - $1::interval WHERE true${where}
+      GROUP BY v.id ORDER BY open_high DESC, max_score DESC, incidents DESC LIMIT 200`, rp);
     const recent = await pool.query(`SELECT v.id, v.status, v.false_alarm_kind, v.observed_at, v.received_at, v.distance_m, v.note, v.photo_thumb_url, v.is_demo,
         u.name AS reporter, i.id AS incident_id, i.first_detected_at, vi.name AS village_name
       FROM verifications v JOIN users u ON u.id = v.user_id JOIN incidents i ON i.id = v.incident_id LEFT JOIN villages vi ON vi.id = i.village_id
@@ -48,7 +51,7 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
         high: summary.high, openHigh: summary.open_high, falseAlarms: summary.false_alarms, onPeat: summary.on_peat,
         medianMinutesToVerification: median(summary.median_minutes), detections: summary.detections },
       statuses: statuses.rows,
-      villages: villages.rows.map(row => ({ id: row.id, name: row.name, district: row.district, center: [row.lon, row.lat], incidents: row.incidents,
+      villages: villages.rows.map(row => ({ id: row.id, name: row.name, district: row.district, regency: row.regency, center: [row.lon, row.lat], incidents: row.incidents,
         detections: row.detections, verified: row.verified, openHigh: row.open_high, maxScore: row.max_score, onPeat: row.on_peat,
         lastDetectedAt: row.last_detected_at.toISOString(), medianMinutesToVerification: median(row.median_minutes) })),
       recentVerifications: recent.rows.map(row => ({ id: row.id, status: row.status, falseAlarmKind: row.false_alarm_kind, observedAt: row.observed_at.toISOString(),

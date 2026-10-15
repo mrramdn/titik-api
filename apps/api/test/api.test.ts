@@ -14,7 +14,7 @@ import { ingest } from '../src/ingest.js';
 import { resetDemo } from '../src/demo.js';
 import { parseFirmsCsv } from '../src/firms.js';
 import { cardText, formatDistance, formatWib, scoreIncident, windName } from '../src/geo.js';
-import type { PeatMask } from '../src/peat.js';
+import { lonLatToPixel, type PeatMask } from '../src/peat.js';
 
 const testUrl = process.env.TEST_DATABASE_URL ?? 'postgres://titikapi:titikapi@localhost:5442/titikapi_test';
 assert.ok(new URL(testUrl).pathname.endsWith('_test'), 'Integration tests require a dedicated database ending in _test.');
@@ -114,14 +114,14 @@ let firstIncident: string;
 test('ingest links detections to villages, groups them into incidents and is idempotent', async () => {
   const texts = {
     N21: csv('N21', [{ point: at(0, 0), hoursAgo: 2.5, confidence: 'high', frp: 31 }, { point: at(250, 120), hoursAgo: 2 }, { point: at(4000, 0), hoursAgo: 2 }]),
-    N20: csv('N20', [{ point: at(120, -80), hoursAgo: 1.5 }, { point: { lon: 104.75, lat: -2.98 }, hoursAgo: 1.5 }]),
+    N20: csv('N20', [{ point: at(120, -80), hoursAgo: 1.5 }, { point: { lon: 106.10, lat: -2.13 }, hoursAgo: 1.5 }]),
     N: '',
   };
   const first = await ingest(pool, { source: 'fixture', texts, peat });
   assert.equal(first.inserted, 5);
   assert.equal(first.incidents.length, 2);
-  const outside = await pool.query('SELECT village_id, incident_id FROM detections WHERE longitude < 104.8');
-  assert.equal(outside.rows[0].village_id, null, 'Palembang lies outside the pilot regency');
+  const outside = await pool.query('SELECT village_id, incident_id FROM detections WHERE abs(longitude - 106.10) < 0.001');
+  assert.equal(outside.rows[0].village_id, null, 'Pangkalpinang (Bangka Belitung) lies outside the covered provinces');
   assert.equal(outside.rows[0].incident_id, null);
   const incident = (await pool.query('SELECT * FROM incidents ORDER BY detection_count DESC LIMIT 1')).rows[0];
   firstIncident = incident.id;
@@ -228,6 +228,25 @@ test('the agency dashboard counts checks and the median time to the first one; t
   const [head] = exported.body.replace('﻿', '').split('\r\n');
   assert.ok(head!.startsWith('id_kejadian,tanggal_deteksi,jam_deteksi_wib,provinsi,kabupaten,kecamatan,desa,lintang,bujur,satelit'));
   assert.match(exported.body, /Asap\/bara/);
+});
+
+test('both provinces are served as regions, vector tiles and a summary', async () => {
+  const regions = (await call('GET', '/regions')).json().data as { name: string; villages: number; regencies: unknown[] }[];
+  assert.deepEqual(regions.map(r => r.name).sort(), ['Kalimantan Tengah', 'Sumatera Selatan']);
+  assert.ok(regions.reduce((n, r) => n + r.villages, 0) > 4000);
+  const [px, py] = lonLatToPixel(village.lon, village.lat, 12);
+  const tx = Math.floor(px / 256), ty = Math.floor(py / 256);
+  for (const layer of ['desa', 'kabupaten', 'kejadian']) {
+    const tile = await app.inject({ method: 'GET', url: `/api/v1/tiles/${layer}/12/${tx}/${ty}.mvt?hours=24` });
+    assert.equal(tile.statusCode, 200);
+    assert.equal(tile.headers['content-type'], 'application/vnd.mapbox-vector-tile');
+    assert.ok(tile.rawPayload.length > 20, `${layer} tile has features`);
+  }
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/tiles/desa/3/99/0.mvt' })).statusCode, 400);
+  const summary = (await call('GET', '/summary?hours=24')).json().data;
+  assert.ok(summary.incidents >= 1 && summary.detections >= 3);
+  const kalteng = (await call('GET', `/summary?hours=24&province=${encodeURIComponent('Bali')}`)).json().data;
+  assert.equal(kalteng.incidents, 0);
 });
 
 test('a shared link shows the card in the preview', async () => {
