@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { bearing, distanceMeters, windName } from './geo';
 import { duration, formatter, km, wib } from './format';
 import * as common from './i18n/common';
+import { dailyImagery } from './satellite';
 import { enqueue, flush, queued } from './outbox';
 
 describe('field helpers', () => {
@@ -54,5 +55,15 @@ describe('two languages', () => {
         expect(en, name).toEqual(id);
       }
     }
+  });
+});
+
+describe('daily satellite imagery', () => {
+  it('uses the newest pass that NASA GIBS has published', () => {
+    expect(dailyImagery(new Date('2026-10-16T02:00:00Z')).layer).toContain('NOAA20');   // 09.00 WIB: yesterday's midday image
+    expect(dailyImagery(new Date('2026-10-16T02:00:00Z')).date).toBe('2026-10-15');
+    expect(dailyImagery(new Date('2026-10-16T06:00:00Z')).satellite).toBe('Terra');      // 13.00 WIB: this morning's Terra
+    expect(dailyImagery(new Date('2026-10-16T11:00:00Z')).date).toBe('2026-10-16');      // 18.00 WIB: today's NOAA-20
+    expect(dailyImagery(new Date('2026-10-16T06:00:00Z')).label.id).toBe('Citra Terra, 16 Okt pagi');
   });
 });

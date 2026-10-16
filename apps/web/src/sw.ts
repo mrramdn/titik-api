@@ -23,7 +23,7 @@ registerRoute(({ url, request }) => request.method === 'GET' && url.pathname.sta
 registerRoute(({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/v1/') && !url.pathname.startsWith('/api/v1/export'),
   new NetworkFirst({ cacheName: 'api', networkTimeoutSeconds: 4, plugins: [new ExpirationPlugin({ maxEntries: 400, maxAgeSeconds: 3 * 24 * 3600 })] }));
 registerRoute(({ url }) => url.pathname.startsWith('/uploads/'), new CacheFirst({ cacheName: 'photos', plugins: [new ExpirationPlugin({ maxEntries: 120 })] }));
-registerRoute(({ url }) => /(openfreemap\.org|tiles\.maps\.eox\.at|tiles\.globalforestwatch\.org)$/.test(url.hostname),
+registerRoute(({ url }) => /(openfreemap\.org|tiles\.maps\.eox\.at|tiles\.globalforestwatch\.org|gibs\.earthdata\.nasa\.gov)$/.test(url.hostname),
   new CacheFirst({ cacheName: 'map', plugins: [new ExpirationPlugin({ maxEntries: 1500, maxAgeSeconds: 14 * 24 * 3600 })] }));
 
 self.addEventListener('push', event => {
