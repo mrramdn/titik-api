@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, InjectOptions } from 'fastify';
 import sharp from 'sharp';
 import { createApp } from '../src/app.js';
 import { createPool } from '../src/db.js';
@@ -52,8 +52,9 @@ function modisCsv(rows: { point: { lon: number; lat: number }; hoursAgo: number;
   return [modisHeader, ...rows.map(row => `${row.point.lat.toFixed(5)},${row.point.lon.toFixed(5)},325.4,${row.scan ?? 1},${row.track ?? 1},${stamp(row.hoursAgo)},${row.satellite},${row.confidence},6.1NRT,298.7,18.2,D`)].join('\n');
 }
 const empty = { N21: '', N20: '', N: '', MODIS: '' };
-async function call(method: string, url: string, token?: string, payload?: unknown) {
-  return app.inject({ method: method as any, url: `/api/v1${url}`, ...(payload === undefined ? {} : { payload }), headers: token ? { authorization: `Bearer ${token}` } : {} });
+async function call(method: string, url: string, token?: string, payload?: object) {
+  return app.inject({ method: method as InjectOptions['method'], url: `/api/v1${url}`, ...(payload === undefined ? {} : { payload }),
+    headers: token ? { authorization: `Bearer ${token}` } : {} });
 }
 async function demo(role: 'mpa' | 'kades' | 'bpbd') {
   const response = await call('POST', '/auth/demo', undefined, { role, client: 'mobile' });

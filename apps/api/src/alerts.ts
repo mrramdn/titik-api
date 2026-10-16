@@ -30,9 +30,9 @@ export function installAlerts(app: FastifyInstance, pool: pg.Pool, send?: Sender
       for (const item of items) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [user.id, item.villageId, item.radiusKm]);
     });
     // A new village brings in what is already burning there, so the inbox is right at once. Only this user's inbox changes.
-    const recent = await pool.query("SELECT id FROM incidents WHERE last_detected_at > now() - interval '48 hours'");
+    const recent = await pool.query("SELECT id FROM incidents WHERE last_detected_at > now() - interval '24 hours'");
     const { alertSubscribers } = await import('./ingest.js');
-    const created = (await alertSubscribers(pool, recent.rows.map(row => row.id), { userIds: [user.id], recentHours: 48 })).filter(alert => alert.fresh);
+    const created = (await alertSubscribers(pool, recent.rows.map(row => row.id), { userIds: [user.id] })).filter(alert => alert.fresh);
     return { data: { saved: items.length, newAlerts: created.length } };
   });
 

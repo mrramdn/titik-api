@@ -34,6 +34,8 @@ const MODIS = `('T', 'A')`;
 /** Detections of one WIB day ($1, 'YYYY-MM-DD') inside a village, for the table alias given. */
 const onDay = (alias: string) => `${alias}.acq_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta') AND ${alias}.acq_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')
   AND ${alias}.village_id IS NOT NULL`;
+/** The same day filter as an expression, so a nearest-point search walks the spatial index instead of the day's time index. */
+const onDayNear = (alias: string) => `(${alias}.acq_at AT TIME ZONE 'Asia/Jakarta')::date = $1::date AND ${alias}.village_id IS NOT NULL`;
 /** Incidents never chain past a 3 km grid cell (Web Mercator metres), so a fire complex splits the same way on every run. */
 const cell = (alias: string) => `floor(ST_X(${alias}.geom_3857) / 3000), floor(ST_Y(${alias}.geom_3857) / 3000)`;
 
@@ -196,7 +198,7 @@ async function clusterDay(client: pg.PoolClient, day: string, state: RunState) {
   const keyOf = new Map(viirs.map(row => [row.id, row.key]));
   const modis = (await client.query(`SELECT m.id::text AS id, m.incident_id::text AS incident, near.id::text AS viirs
     FROM detections m LEFT JOIN LATERAL (
-      SELECT d.id FROM detections d WHERE ${onDay('d')} AND d.satellite IN ${VIIRS}
+      SELECT d.id FROM detections d WHERE ${onDayNear('d')} AND d.satellite IN ${VIIRS}
         AND ST_DWithin(d.geom_3857, m.geom_3857, least(500 * greatest(COALESCE(m.scan, 1), COALESCE(m.track, 1)), 1500) + 375)
       ORDER BY d.geom_3857 <-> m.geom_3857, d.id LIMIT 1) near ON true
     WHERE ${onDay('m')} AND m.satellite IN ${MODIS}`, [day])).rows as { id: string; incident: string | null; viirs: string | null }[];
