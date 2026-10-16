@@ -1,15 +1,53 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router';
-import { Bell, Info, LayoutDashboard, Map as MapIcon, MapPin, UserRound } from 'lucide-react';
-import type { IngestStatus } from '../api';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router';
+import { ChevronDown, ClipboardList, FileText, Info, LayoutDashboard, LogOut, Mail, Map as MapIcon, MapPin, UserRound, X, type LucideIcon } from 'lucide-react';
+import type { Role } from '../api';
+import { dict, useT } from '../i18n';
+import { useFormat } from '../format';
 import { useSession } from '../session';
 import { flush, onOutboxChange, queued, type QueuedReport } from '../outbox';
-import { roleLabel, satelliteLabel, wib, wibDay } from '../format';
 import { shortProvince, useRegion } from '../region';
 import { LogoMark } from './Logo';
-import { useApi, useOnline } from './ui';
+import { useOnline } from './ui';
+import { Freshness } from './shell/Freshness';
+import { LangSwitch } from './shell/LangSwitch';
+import { RoleList, roleText } from './shell/roles';
+import { usePopover } from './shell/popover';
+
+const text = dict({
+  id: {
+    home: 'Titik Api, ke peta', region: 'Wilayah', allRegions: 'Sumsel + Kalteng', villages: '{n} desa',
+    map: 'Peta', tasks: 'Tugas', myVillage: 'Desa saya', dashboard: 'Dasbor', recap: 'Rekap', about: 'Tentang', nav: 'Navigasi',
+    account: 'Akun', language: 'Bahasa', signIn: 'Masuk', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup',
+    offline: 'Tanpa sinyal. Laporan disimpan di ponsel.', waitingOne: '{n} laporan menunggu sinyal sejak {time}.', waitingMany: '{n} laporan menunggu sinyal sejak {time}.',
+    rejectedOne: '{n} laporan ditolak: {error}', rejectedMany: '{n} laporan ditolak: {error}', sendNow: 'Kirim sekarang',
+  },
+  en: {
+    home: 'Titik Api, to the map', region: 'Region', allRegions: 'Sumsel + Kalteng', villages: '{n} villages',
+    map: 'Map', tasks: 'Tasks', myVillage: 'My village', dashboard: 'Dashboard', recap: 'Recap', about: 'About', nav: 'Navigation',
+    account: 'Account', language: 'Language', signIn: 'Sign in', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close',
+    offline: 'No signal. Reports are saved on this phone.', waitingOne: '{n} report waiting for signal since {time}.', waitingMany: '{n} reports waiting for signal since {time}.',
+    rejectedOne: '{n} report rejected: {error}', rejectedMany: '{n} reports rejected: {error}', sendNow: 'Send now',
+  },
+});
+type Key = keyof typeof text.id;
+
+interface NavItem { to: string; key: Key; icon: LucideIcon; roles?: Role[] }
+const navItems: NavItem[] = [
+  { to: '/', key: 'map', icon: MapIcon },
+  { to: '/tugas', key: 'tasks', icon: ClipboardList, roles: ['mpa'] },
+  { to: '/desa-saya', key: 'myVillage', icon: MapPin, roles: ['mpa', 'kades'] },
+  { to: '/dasbor', key: 'dashboard', icon: LayoutDashboard, roles: ['bpbd', 'admin'] },
+  { to: '/rekap', key: 'recap', icon: FileText, roles: ['bpbd', 'admin'] },
+  { to: '/tentang', key: 'about', icon: Info },
+];
+/** Peta, the role's own pages, Tentang: at most four, so the phone tab bar has room for the account. */
+const navFor = (role: Role | undefined) => navItems.filter(item => !item.roles || (role && item.roles.includes(role))).slice(0, 4);
+/** The map tab stays active while an incident is open in its sidebar. */
+const onMap = (path: string) => path === '/' || path.startsWith('/k/') || (path.startsWith('/kejadian/') && !path.endsWith('/cek'));
 
 function OutboxBar() {
+  const t = useT(text), f = useFormat();
   const [items, setItems] = useState<QueuedReport[]>([]);
   const online = useOnline();
   useEffect(() => { const load = () => { void queued().then(setItems); }; load(); return onOutboxChange(load); }, []);
@@ -17,60 +55,120 @@ function OutboxBar() {
   if (!items.length && online) return null;
   return (
     <div className="outbox" role="status">
-      {!online && <strong className="warn">Tanpa sinyal · laporan disimpan di ponsel</strong>}
-      {waiting.length > 0 && <span><strong>{waiting.length}</strong> laporan menunggu sinyal · antre sejak {wib(waiting[0]!.queuedAt)}</span>}
-      {rejected.length > 0 && <span className="bad">{rejected.length} laporan ditolak: {rejected[0]!.lastError}</span>}
-      {waiting.length > 0 && online && <button type="button" className="btn btn-dark btn-sm" onClick={() => void flush()}>Kirim sekarang</button>}
+      {!online && <strong className="warn">{t('offline')}</strong>}
+      {waiting.length > 0 && <span>{t(waiting.length === 1 ? 'waitingOne' : 'waitingMany', { n: waiting.length, time: f.time(waiting[0]!.queuedAt) })}</span>}
+      {rejected.length > 0 && <span className="bad">{t(rejected.length === 1 ? 'rejectedOne' : 'rejectedMany', { n: rejected.length, error: rejected[0]!.lastError ?? '' })}</span>}
+      {waiting.length > 0 && online && <button type="button" className="btn btn-dark btn-sm" onClick={() => void flush()}>{t('sendNow')}</button>}
     </div>
   );
 }
 
-function Freshness() {
-  const status = useApi<IngestStatus>('/ingest/status');
-  const latest = status.data?.satellites.filter(s => s.latestAcquisition).sort((a, b) => b.latestAcquisition!.localeCompare(a.latestAcquisition!))[0];
-  if (!latest?.latestAcquisition) return null;
-  const acquired = latest.latestAcquisition;
-  const old = Date.now() - new Date(acquired).getTime() > 12 * 3600_000;
-  return <span className="freshness" title="Lintasan satelit terbaru yang sudah dirilis NASA FIRMS"><i className={`live-dot ${old ? 'stale' : ''}`} />{satelliteLabel[latest.satellite] ?? latest.satellite} · {old ? wibDay(acquired) : wib(acquired)} WIB</span>;
+function RegionSelect() {
+  const t = useT(text), f = useFormat();
+  const { provinces, province, setProvince } = useRegion();
+  return (
+    <label className="region-chip"><MapPin size={14} className="icon" aria-hidden="true" />
+      <select value={province} onChange={event => setProvince(event.target.value)} aria-label={t('region')}>
+        <option value="">{t('allRegions')}</option>
+        {provinces.map(p => <option key={p.name} value={p.name}>{shortProvince(p.name)} · {t('villages', { n: f.num(p.villages) })}</option>)}
+      </select>
+      <ChevronDown size={14} className="icon region-caret" aria-hidden="true" />
+    </label>
+  );
+}
+
+/** Who is signed in, with email sign-in or sign-out; under the role list in the menu and the phone sheet. */
+function AccountFoot({ onDone }: { onDone?: () => void }) {
+  const t = useT(text);
+  const { user, signOut } = useSession();
+  const navigate = useNavigate();
+  if (user && !user.demo) {
+    return (
+      <div className="acct-foot">
+        <span className="acct-name"><UserRound size={16} className="icon" aria-hidden="true" />{user.name}</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { await signOut(); onDone?.(); navigate('/'); }}><LogOut size={16} />{t('signOut')}</button>
+      </div>
+    );
+  }
+  return (
+    <div className="acct-foot">
+      {user && <span className="acct-name"><UserRound size={16} className="icon" aria-hidden="true" />{user.name}<small>{t('demoAccount')}</small></span>}
+      <Link to="/masuk" className="acct-link" onClick={onDone}><Mail size={16} className="icon" aria-hidden="true" />{t('emailSignIn')}</Link>
+    </div>
+  );
+}
+
+/** "Lihat sebagai" in the top bar: the current role, and a menu with the four roles. */
+function RoleMenu() {
+  const t = useT(roleText), f = useFormat();
+  const { user } = useSession();
+  const { open, toggle, setOpen, root } = usePopover();
+  return (
+    <div className="rolemenu" ref={root}>
+      <button type="button" className="rolemenu-btn" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+        <span className="rolemenu-label">{t('viewAs')}</span><b>{f.role(user ? user.role : 'public')}</b><ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="rolemenu-pop">
+          <h3 className="rolemenu-title">{t('viewAs')}</h3>
+          <RoleList onDone={() => setOpen(false)} />
+          <AccountFoot onDone={() => setOpen(false)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Phone and tablet: the account tab opens a sheet with the roles, the language and sign-in. */
+function AccountSheet({ onClose }: { onClose(): void }) {
+  const t = useT(text), r = useT(roleText);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [onClose]);
+  return (
+    <div className="sheet-wrap">
+      <button type="button" className="sheet-backdrop" aria-label={t('close')} onClick={onClose} />
+      <div className="sheet" role="dialog" aria-modal="true" aria-label={r('viewAs')}>
+        <div className="sheet-head"><h2 className="heading-16">{r('viewAs')}</h2><button type="button" className="icon-btn" aria-label={t('close')} onClick={onClose}><X size={18} /></button></div>
+        <RoleList onDone={onClose} />
+        <div className="sheet-row"><span>{t('language')}</span><LangSwitch /></div>
+        <AccountFoot onDone={onClose} />
+      </div>
+    </div>
+  );
 }
 
 export function Shell({ children }: { children: ReactNode }) {
-  const { user, signOut } = useSession();
-  const { provinces, province, setProvince } = useRegion();
-  const navigate = useNavigate();
-  const links = [
-    { to: '/', label: 'Peta', icon: MapIcon, end: true, show: true },
-    { to: '/peringatan', label: 'Peringatan', icon: Bell, show: user?.role === 'mpa' || user?.role === 'kades' },
-    { to: '/desa-saya', label: 'Desa saya', icon: MapPin, show: Boolean(user) && user?.role !== 'bpbd' },
-    { to: '/dasbor', label: 'Dasbor', icon: LayoutDashboard, show: user?.role === 'bpbd' || user?.role === 'admin' },
-    { to: '/tentang', label: 'Tentang', icon: Info, show: true },
-  ].filter(link => link.show);
+  const t = useT(text);
+  const { user } = useSession();
+  const { pathname } = useLocation();
+  const [sheet, setSheet] = useState(false);
+  const links = navFor(user?.role);
+  const active = (to: string) => (to === '/' ? onMap(pathname) : pathname === to || pathname.startsWith(`${to}/`));
+  useEffect(() => setSheet(false), [pathname]);
   return (
     <div className="app">
       <header className="topbar">
-        <Link to="/" className="brand" aria-label="Titik Api, peta"><LogoMark />Titik Api</Link>
-        <label className="region-chip"><MapPin size={14} className="icon" />
-          <select value={province} onChange={event => setProvince(event.target.value)} aria-label="Wilayah">
-            <option value="">Sumsel + Kalteng</option>
-            {provinces.map(p => <option key={p.name} value={p.name}>{shortProvince(p.name)} · {p.villages.toLocaleString('id-ID')} desa</option>)}
-          </select>
-        </label>
+        <Link to="/" className="brand" aria-label={t('home')}><LogoMark /><span className="brand-name">Titik Api</span></Link>
+        <RegionSelect />
         <Freshness />
-        <nav className="topnav">
-          {links.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => (isActive ? 'active' : '')}><Icon size={16} />{label}</NavLink>)}
+        <nav className="topnav" aria-label={t('nav')}>
+          {links.map(({ to, key, icon: Icon }) => <NavLink key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={16} aria-hidden="true" />{t(key)}</NavLink>)}
         </nav>
-        <div className="account">
-          {user ? <><UserRound size={16} /><span>{user.name}</span><button type="button" onClick={async () => { await signOut(); navigate('/'); }}>Keluar</button></>
-            : <Link to="/masuk" className="btn btn-primary btn-sm">Masuk</Link>}
+        <div className="topbar-end">
+          <RoleMenu />
+          <LangSwitch className="on-dark" />
         </div>
       </header>
       <OutboxBar />
       {children}
-      <nav className="tabbar" aria-label="Navigasi">
-        {links.slice(0, 4).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => (isActive ? 'active' : '')}><Icon size={20} />{label}</NavLink>)}
-        {!user && <NavLink to="/masuk"><UserRound size={20} />Masuk</NavLink>}
+      <nav className="tabbar" aria-label={t('nav')}>
+        {links.map(({ to, key, icon: Icon }) => <NavLink key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={20} aria-hidden="true" />{t(key)}</NavLink>)}
+        <button type="button" className={sheet ? 'active' : ''} aria-haspopup="dialog" aria-expanded={sheet} onClick={() => setSheet(true)}><UserRound size={20} aria-hidden="true" />{user ? t('account') : t('signIn')}</button>
       </nav>
+      {sheet && <AccountSheet onClose={() => setSheet(false)} />}
     </div>
   );
 }
-export { roleLabel };

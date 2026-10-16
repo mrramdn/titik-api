@@ -1,44 +1,63 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
-import { ChevronRight, LayoutDashboard, Landmark, Users } from 'lucide-react';
+import { Check, ChevronRight } from 'lucide-react';
 import { Shell } from '../components/Shell';
-import { Banner } from '../components/ui';
+import { Banner, useErrorText } from '../components/ui';
+import { roleText, useRoleSwitch, viewRoles } from '../components/shell/roles';
+import { dict, useT } from '../i18n';
+import { useFormat } from '../format';
 import { homeFor, useSession } from '../session';
 
-const roles = [
-  { role: 'mpa' as const, icon: Users, title: 'Relawan MPA', text: 'Kartu titik panas desa, bagikan ke grup WA, cek lapangan (juga tanpa sinyal).' },
-  { role: 'kades' as const, icon: Landmark, title: 'Kepala desa', text: 'Kartu untuk desanya, ringkasan desa, dan apa yang sudah dicek.' },
-  { role: 'bpbd' as const, icon: LayoutDashboard, title: 'BPBD / Daops', text: 'Dasbor dua provinsi: persentase dicek, waktu respons, ekspor groundcheck.' },
-];
+const text = dict({
+  id: {
+    title: 'Masuk', lead: 'Pilih peran untuk membuka Titik Api dari sisi pengguna itu. Akun demo dipakai bersama dan direset setiap malam.',
+    demoNote: 'Cek lapangan dari akun demo ditandai "demo".', emailTitle: 'Masuk dengan email', email: 'Email', password: 'Kata sandi',
+    submit: 'Masuk', sending: 'Memeriksa…', current: 'Peran saat ini',
+  },
+  en: {
+    title: 'Sign in', lead: 'Choose a role to open Titik Api as that user. Demo accounts are shared and reset every night.',
+    demoNote: 'Field checks from demo accounts are marked "demo".', emailTitle: 'Sign in with email', email: 'Email', password: 'Password',
+    submit: 'Sign in', sending: 'Checking…', current: 'Current role',
+  },
+});
 
 export function LoginPage() {
-  const { signInDemo, signIn } = useSession();
+  const t = useT(text), r = useT(roleText), f = useFormat();
+  const { signIn } = useSession();
+  const { current, choose, busy, error: switchError } = useRoleSwitch();
   const navigate = useNavigate();
+  const describe = useErrorText();
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [email, setEmail] = useState(''), [password, setPassword] = useState('');
-  const go = async (work: () => Promise<Parameters<typeof homeFor>[0]>) => { setError(null); try { navigate(homeFor(await work())); } catch (failure) { setError((failure as Error).message); } };
-  const submit = (event: FormEvent) => { event.preventDefault(); void go(() => signIn(email, password)); };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setError(null); setSending(true);
+    try { navigate(homeFor(await signIn(email, password))); } catch (failure) { setError(describe(failure)); } finally { setSending(false); }
+  };
   return (
     <Shell>
-      <main className="page narrow">
-        <div className="page-head"><div><h1 className="title-24">Masuk</h1><p>Pilih peran untuk mencoba. Akun demo dipakai bersama dan bukan akun resmi instansi mana pun.</p></div></div>
-        <div className="card roles">
-          {roles.map(({ role, icon: Icon, title, text }) => (
-            <button key={role} type="button" className="role" onClick={() => void go(() => signInDemo(role))}>
-              <span className="tile"><Icon size={20} /></span><span className="text"><b>{title}</b><small>{text}</small></span><ChevronRight size={18} color="var(--text-3)" />
+      <main className="page narrow login">
+        <div className="page-head"><div><h1 className="title-24">{t('title')}</h1><p>{t('lead')}</p></div></div>
+        <div className="card roles" role="group" aria-label={r('viewAs')}>
+          {viewRoles.map(({ role, icon: Icon }) => (
+            <button key={role} type="button" className="role" disabled={busy !== null} aria-current={current === role ? 'true' : undefined} onClick={() => void choose(role)}>
+              <span className="tile"><Icon size={20} aria-hidden="true" /></span>
+              <span className="text"><b>{f.role(role)}</b><small>{busy === role ? r('busy') : r(role)}</small></span>
+              {current === role ? <Check size={18} aria-label={t('current')} /> : <ChevronRight size={18} color="var(--text-3)" aria-hidden="true" />}
             </button>
           ))}
         </div>
-        {error && <Banner tone="warn">{error}</Banner>}
-        <p className="note">Titik panasnya data asli NASA FIRMS. Cek lapangan dari akun demo ditandai "demo" dan direset setiap malam.</p>
-        <details>
-          <summary className="caption" style={{ cursor: 'pointer', color: 'var(--text-2)' }}>Masuk dengan email</summary>
-          <form onSubmit={submit} style={{ display: 'grid', gap: 10, maxWidth: 360, marginTop: 12 }}>
-            <label className="field"><span className="label">Email</span><input type="email" autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} required /></label>
-            <label className="field"><span className="label">Password</span><input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
-            <button type="submit" className="btn btn-primary">Masuk</button>
+        {switchError && <Banner tone="warn">{switchError}</Banner>}
+        <p className="note">{t('demoNote')}</p>
+        <section className="card login-form">
+          <h2 className="heading-16">{t('emailTitle')}</h2>
+          <form onSubmit={submit}>
+            <label className="field"><span className="label">{t('email')}</span><input type="email" autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} required /></label>
+            <label className="field"><span className="label">{t('password')}</span><input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
+            {error && <Banner tone="warn">{error}</Banner>}
+            <button type="submit" className="btn btn-primary" disabled={sending}>{sending ? t('sending') : t('submit')}</button>
           </form>
-        </details>
+        </section>
       </main>
     </Shell>
   );
