@@ -1,6 +1,6 @@
 // Daily true-colour imagery from NASA GIBS (public, no key) for the map's imagery layer. Terra passes in the
 // morning and NOAA-20 around midday; GIBS publishes a pass about three hours later, so the newest complete image
-// changes during the day. Same rule as src/satellite.ts on main; the map keeps its own copy so this slice builds alone.
+// changes during the day.
 
 export interface DailyLayer { layer: string; satellite: 'Terra' | 'NOAA-20'; date: string; part: 'morning' | 'midday'; tiles: string; maxzoom: number }
 

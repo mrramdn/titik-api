@@ -10,3 +10,6 @@ apps/api/storage/uploads/*
 apps/web/test-results/
 .cache/
 .DS_Store
+
+# Local agent worktrees
+.claude/
