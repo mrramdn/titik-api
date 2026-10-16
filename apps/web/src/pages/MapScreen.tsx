@@ -181,12 +181,15 @@ export function IncidentList() {
   const legacy = Boolean(status && !('serverTime' in status));
   const asked = legacy && filters.levels.length > 1 ? { ...filters, levels: [] } : filters;
   const list = useApi<Incident[]>(`/incidents${incidentQuery(asked, query)}&limit=${LIMIT}`, version);
-  const server = useApi<Summary>(`/summary${incidentQuery(filters, query)}`, version);
+  // /summary knows the time window and the region only, so other filters do not refetch it.
+  const server = useApi<Summary>(`/summary?hours=${filters.hours}${filters.regency ? `&regency=${encodeURIComponent(filters.regency)}` : ''}${query}`, version);
   const hits = useApi<VillageHit[]>(q.trim().length >= 2 ? `/villages?q=${encodeURIComponent(q.trim())}${query}` : null);
   const rows = useMemo(() => (Array.isArray(list.data) ? prepareRows(list.data, filters) : null), [list.data, key]);
-  // Counts follow the same filters as the rows: from the rows when the list is complete, else from the server.
+  // Counts follow the same filters as the rows: from the rows when the list is complete; from /summary when only
+  // the time window and the region narrow it (the filters /summary knows); otherwise the rows with a "+".
   const complete = Array.isArray(list.data) && list.data.length < LIMIT;
-  const counts = rows && (complete || !server.data) ? summarize(rows, !complete) : server.data ? { ...server.data, atLeast: false } : null;
+  const serverExact = !filters.levels.length && filters.status === 'all' && !filters.peat;
+  const counts = rows && (complete || !serverExact || !server.data) ? summarize(rows, !complete) : server.data ? { ...server.data, atLeast: false } : null;
   const closeIntro = () => { setIntro(false); try { localStorage.setItem(introKey, 'seen'); } catch { /* private mode */ } };
   const windowLabel = t(filters.hours === 24 ? 'h24' : filters.hours === 72 ? 'd3' : 'd7');
   const sorts: [IncidentSort, Key][] = [['priority', 'byPriority'], ['recent', 'byRecent'], ['size', 'bySize']];

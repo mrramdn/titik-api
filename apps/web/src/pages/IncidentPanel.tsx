@@ -85,6 +85,18 @@ function scoreLabels(d: IncidentDetail, t: T, f: Format): ScorePart[] {
   });
 }
 
+/**
+ * The distance the score uses (any settlement), with the nearest named place under it; the named place can be
+ * further away than an unnamed settlement, so its own distance is shown when it differs.
+ */
+function settlementFact(d: IncidentDetail, t: T, f: Format) {
+  const place = d.nearestPlace;
+  const meters = d.settlementMeters ?? place?.distanceM ?? null;
+  if (meters === null) return <b>{t('unknown')}</b>;
+  const sameSpot = place && Math.abs(place.distanceM - meters) < 50;
+  return <><b>{f.km(meters)}</b>{place && <small>{sameSpot ? t('placeDir', { dir: f.wind(place.bearingDeg), name: place.name }) : f.place(place)}</small>}</>;
+}
+
 export function IncidentPanel() {
   const t = useT(text), f = useFormat();
   const { lang } = useLang();
@@ -97,6 +109,8 @@ export function IncidentPanel() {
   const incident = useApi<IncidentDetail>(`/incidents/${key}`, version);
   const d = incident.data;
   useEffect(() => { if (d) setSelected({ id: d.id, centroid: d.centroid, detections: (d.detections ?? []).map(x => [x.longitude, x.latitude]) }); }, [d?.id, d?.detections?.length]);
+  // On a phone the page itself scrolls: a row tapped far down the list opens with the map and the header in view.
+  useEffect(() => { if (typeof matchMedia === 'function' && matchMedia('(max-width: 900px)').matches) window.scrollTo({ top: 0 }); }, [key]);
   const events = useMemo(() => (d ? (Array.isArray(d.timeline) && d.timeline.length ? d.timeline : fallbackTimeline(d)).slice().sort((a, b) => a.at.localeCompare(b.at)) : []), [d]);
   if (incident.error && !d) return <div className="sidebar-scroll detail"><section><Link to="/" className="back"><ChevronLeft size={14} />{t('back')}</Link><p className="subline">{incident.error}</p></section></div>;
   if (!d) return <div className="empty">{t('loading')}</div>;
@@ -109,7 +123,6 @@ export function IncidentPanel() {
   const byTime = new Map<string, Verification>(verifications.map(v => [v.observedAt, v]));
   const viirs = d.viirsCount ?? detections.filter(x => sensorOf(x.satellite) === 'VIIRS').length;
   const modis = d.modisCount ?? detections.length - viirs;
-  const place = d.nearestPlace;
   const canCheck = user?.role === 'mpa' || user?.role === 'admin';
   return (
     <div className="sidebar-scroll detail ip">
@@ -126,10 +139,7 @@ export function IncidentPanel() {
           <div><span className="label">{t('hotspots')}</span><b>{f.num(d.detectionCount)}</b>{(modis > 0 || d.modisCount !== undefined) && <small>{t('split', { viirs: f.num(viirs), modis: f.num(modis) })}</small>}</div>
           <div><span className="label">{t('frp')}</span><b>{d.maxFrp === null || d.maxFrp === undefined ? '–' : `${f.num(d.maxFrp, 1)} MW`}</b></div>
           <div><span className="label">{t('peat')}</span><b>{d.onPeat ? t('yes') : t('no')}</b></div>
-          <div><span className="label">{t('settlement')}</span>
-            {place ? <><b>{f.km(place.distanceM)}</b><small>{t('placeDir', { dir: f.wind(place.bearingDeg), name: place.name })}</small></>
-              : <b>{d.settlementMeters === null || d.settlementMeters === undefined ? t('unknown') : f.km(d.settlementMeters)}</b>}
-          </div>
+          <div><span className="label">{t('settlement')}</span>{settlementFact(d, t, f)}</div>
         </div>
         {d.modisOnly && <p className="note">{t('modisOnly', { km: f.km(d.locationUncertaintyM ?? 1000) })}</p>}
       </section>

@@ -1,30 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { dict, useT } from '../../i18n';
 import { useFormat } from '../../format';
 import { satelliteName } from '../../i18n/common';
 import { useDataVersion } from '../ui';
-import { readFreshness, roughMinutes, type PassWindow } from './freshness';
+import { clockOffset, readFreshness, roughMinutes, type PassWindow } from './freshness';
 import { usePopover } from './popover';
 
 const text = dict({
   id: {
     data: 'Data satelit {time} WIB ({sat})', noData: 'Belum ada data satelit', checked: 'Diperiksa {time}, tiap {n} menit', checkedShort: 'Diperiksa {time}',
-    next: 'Lintasan berikutnya ±{span} WIB', eta: 'masuk dalam {eta}', etaMin: '±{n} menit', etaHour: '±{n} jam',
-    title: 'Data satelit', newest: 'Lintasan terbaru {sat} pukul {time} WIB.',
+    next: 'Lintasan berikutnya ±{span} WIB', nextEta: 'Lintasan berikutnya ±{span} WIB, masuk dalam {eta}',
+    pending: 'Data lintasan ±{span} WIB belum masuk', pendingEta: 'Data lintasan ±{span} WIB masuk dalam {eta}', etaMin: '±{n} menit', etaHour: '±{n} jam',
+    title: 'Data satelit', newest: 'Titik panas terakhir dari lintasan {sat} pukul {time} WIB.',
     checkedLong: 'Diperiksa {time} WIB. Server memeriksa NASA FIRMS tiap {n} menit.', nextRun: 'Pemeriksaan berikutnya {time} WIB.',
-    nextLong: 'Lintasan berikutnya ±{span} WIB.', etaLong: 'Datanya masuk dalam {eta}.',
+    nextLong: 'Lintasan berikutnya ±{span} WIB.', etaLong: 'Datanya masuk dalam {eta}.', pendingLong: 'Data lintasan ±{span} WIB masuk dalam {eta}.',
     failed: 'Pemeriksaan terakhir gagal. Server mencoba lagi pada jadwal berikutnya.', overdue: 'Data lintasan {sat} ±{span} WIB belum masuk.',
-    colSat: 'Satelit', colLast: 'Lintasan terakhir', colNext: 'Berikutnya', inactive: 'Tidak aktif',
+    colSat: 'Satelit', colLast: 'Lintasan terakhir', colNext: 'Berikutnya', inactive: 'Tidak aktif', late: 'belum masuk',
     delay: 'NASA FIRMS merilis titik panas paling lambat ±3 jam setelah satelit melintas.', open: 'Rincian data satelit',
   },
   en: {
     data: 'Satellite data {time} WIB ({sat})', noData: 'No satellite data yet', checked: 'Checked {time}, every {n} min', checkedShort: 'Checked {time}',
-    next: 'Next pass ±{span} WIB', eta: 'arrives in {eta}', etaMin: '±{n} min', etaHour: '±{n} h',
-    title: 'Satellite data', newest: 'Newest pass {sat} at {time} WIB.',
+    next: 'Next pass ±{span} WIB', nextEta: 'Next pass ±{span} WIB, arrives in {eta}',
+    pending: 'Data from the ±{span} WIB pass not in yet', pendingEta: 'Data from the ±{span} WIB pass arrives in {eta}', etaMin: '±{n} min', etaHour: '±{n} h',
+    title: 'Satellite data', newest: 'Last hotspots from the {sat} pass at {time} WIB.',
     checkedLong: 'Checked {time} WIB. The server checks NASA FIRMS every {n} minutes.', nextRun: 'Next check {time} WIB.',
-    nextLong: 'Next pass ±{span} WIB.', etaLong: 'Its data arrives in {eta}.',
+    nextLong: 'Next pass ±{span} WIB.', etaLong: 'Its data arrives in {eta}.', pendingLong: 'Data from the ±{span} WIB pass arrives in {eta}.',
     failed: 'The last check failed. The server tries again at the next run.', overdue: 'Data from the {sat} pass ±{span} WIB has not arrived.',
-    colSat: 'Satellite', colLast: 'Last pass', colNext: 'Next', inactive: 'Inactive',
+    colSat: 'Satellite', colLast: 'Last pass', colNext: 'Next', inactive: 'Inactive', late: 'not in yet',
     delay: 'NASA FIRMS releases hotspots up to about 3 hours after the satellite passes.', open: 'Satellite data details',
   },
 });
@@ -40,20 +42,26 @@ function useNow(intervalMs = 60_000) {
 export function Freshness() {
   const t = useT(text), f = useFormat();
   const { status } = useDataVersion();
-  const now = useNow();
+  // The server's clock decides whether a pass is late; the browser clock may be off.
+  const offset = useMemo(() => clockOffset(status?.serverTime), [status]);
+  const now = useNow() + offset;
   const { open, toggle, root } = usePopover();
   const info = readFreshness(status, now);
   if (!info) return null;
   const today = f.day(new Date(now));
   const when = (iso: string) => (f.day(iso) === today ? f.time(iso) : f.dayTime(iso));
   const span = (w: PassWindow) => `${when(w.start)}–${f.time(w.end)}`;
-  const rough = info.next ? roughMinutes((new Date(info.next.expectedBy).getTime() - now) / 60_000) : null;
+  const rough = info.next ? roughMinutes((new Date(info.next.arrival).getTime() - now) / 60_000) : null;
   const eta = rough ? t(rough.unit === 'min' ? 'etaMin' : 'etaHour', { n: rough.n }) : null;
   const data = info.latest ? t('data', { time: when(info.latest.at), sat: satelliteName(info.latest.code) }) : t('noData');
   const checked = info.checkedAt ? t('checked', { time: f.time(info.checkedAt), n: info.intervalMinutes }) : null;
-  const nextShort = info.next ? t('next', { span: span(info.next) }) : null;
-  const next = nextShort && eta ? `${nextShort}, ${t('eta', { eta })}` : nextShort;
-  const short = [info.checkedAt ? t('checkedShort', { time: f.time(info.checkedAt) }) : null, nextShort].filter(Boolean).join(' · ');
+  const checkedShort = info.checkedAt ? t('checkedShort', { time: f.time(info.checkedAt) }) : null;
+  const next = info.next
+    ? info.next.started ? t(eta ? 'pendingEta' : 'pending', { span: span(info.next), eta: eta ?? '' }) : t(eta ? 'nextEta' : 'next', { span: span(info.next), eta: eta ?? '' })
+    : null;
+  const nextShort = info.next && !info.next.started ? t('next', { span: span(info.next) }) : next;
+  const short = [checkedShort, nextShort].filter(Boolean).join(' · ');
+  const long = [checked, next].filter(Boolean).join(' · ');
   const overdue = info.satellites.filter(s => s.overdue);
   return (
     <div className="fresh" ref={root}>
@@ -62,8 +70,9 @@ export function Freshness() {
         <span className="fresh-compact">{info.latest ? `${when(info.latest.at)} WIB` : t('noData')}</span>
         <span className="fresh-parts">
           <span className="fresh-line">{data}</span>
+          {checkedShort && <span className="fresh-line fresh-sub fresh-min">{checkedShort}</span>}
           {short && <span className="fresh-line fresh-sub fresh-short">{short}</span>}
-          {(checked || next) && <span className="fresh-line fresh-sub fresh-long">{[checked, next].filter(Boolean).join(' · ')}</span>}
+          {long && <span className="fresh-line fresh-sub fresh-long">{long}</span>}
         </span>
       </button>
       {open && (
@@ -72,7 +81,9 @@ export function Freshness() {
           <div className="fresh-facts">
             {info.latest && <p>{t('newest', { sat: satelliteName(info.latest.code), time: when(info.latest.at) })}</p>}
             {info.checkedAt && <p>{t('checkedLong', { time: f.time(info.checkedAt), n: info.intervalMinutes })}{info.nextRunAt ? ` ${t('nextRun', { time: f.time(info.nextRunAt) })}` : ''}</p>}
-            {info.next && <p>{t('nextLong', { span: span(info.next) })}{eta ? ` ${t('etaLong', { eta })}` : ''}</p>}
+            {info.next && (info.next.started
+              ? eta && <p>{t('pendingLong', { span: span(info.next), eta })}</p>
+              : <p>{t('nextLong', { span: span(info.next) })}{eta ? ` ${t('etaLong', { eta })}` : ''}</p>)}
             {info.failed && <p className="fresh-warn">{t('failed')}</p>}
             {overdue.map(s => <p key={s.code} className="fresh-warn">{t('overdue', { sat: satelliteName(s.code), span: span(s.next!) })}</p>)}
           </div>
@@ -83,7 +94,7 @@ export function Freshness() {
                 <tr key={s.code} className={s.active ? '' : 'off'}>
                   <td>{s.label}</td>
                   <td>{s.latest ? `${when(s.latest)} WIB` : '–'}</td>
-                  <td>{!s.active ? t('inactive') : s.next ? `±${span(s.next)} WIB` : '–'}</td>
+                  <td className={s.overdue ? 'late' : ''}>{!s.active ? t('inactive') : s.next ? `±${span(s.next)} WIB${s.overdue ? `, ${t('late')}` : ''}` : '–'}</td>
                 </tr>
               ))}</tbody>
             </table>

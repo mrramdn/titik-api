@@ -18,14 +18,14 @@ const text = dict({
   id: {
     home: 'Titik Api, ke peta', region: 'Wilayah', allRegions: 'Sumsel + Kalteng', villages: '{n} desa',
     map: 'Peta', tasks: 'Tugas', myVillage: 'Desa saya', dashboard: 'Dasbor', recap: 'Rekap', about: 'Tentang', nav: 'Navigasi',
-    account: 'Akun', language: 'Bahasa', signIn: 'Masuk', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup',
+    account: 'Akun', role: 'Peran', language: 'Bahasa', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup',
     offline: 'Tanpa sinyal. Laporan disimpan di ponsel.', waitingOne: '{n} laporan menunggu sinyal sejak {time}.', waitingMany: '{n} laporan menunggu sinyal sejak {time}.',
     rejectedOne: '{n} laporan ditolak: {error}', rejectedMany: '{n} laporan ditolak: {error}', sendNow: 'Kirim sekarang',
   },
   en: {
     home: 'Titik Api, to the map', region: 'Region', allRegions: 'Sumsel + Kalteng', villages: '{n} villages',
     map: 'Map', tasks: 'Tasks', myVillage: 'My village', dashboard: 'Dashboard', recap: 'Recap', about: 'About', nav: 'Navigation',
-    account: 'Account', language: 'Language', signIn: 'Sign in', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close',
+    account: 'Account', role: 'Role', language: 'Language', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close',
     offline: 'No signal. Reports are saved on this phone.', waitingOne: '{n} report waiting for signal since {time}.', waitingMany: '{n} reports waiting for signal since {time}.',
     rejectedOne: '{n} report rejected: {error}', rejectedMany: '{n} reports rejected: {error}', sendNow: 'Send now',
   },
@@ -166,7 +166,7 @@ export function Shell({ children }: { children: ReactNode }) {
       {children}
       <nav className="tabbar" aria-label={t('nav')}>
         {links.map(({ to, key, icon: Icon }) => <NavLink key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={20} aria-hidden="true" />{t(key)}</NavLink>)}
-        <button type="button" className={sheet ? 'active' : ''} aria-haspopup="dialog" aria-expanded={sheet} onClick={() => setSheet(true)}><UserRound size={20} aria-hidden="true" />{user ? t('account') : t('signIn')}</button>
+        <button type="button" className={sheet ? 'active' : ''} aria-haspopup="dialog" aria-expanded={sheet} onClick={() => setSheet(true)}><UserRound size={20} aria-hidden="true" />{user && !user.demo ? t('account') : t('role')}</button>
       </nav>
       {sheet && <AccountSheet onClose={() => setSheet(false)} />}
     </div>

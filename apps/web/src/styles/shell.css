@@ -18,7 +18,7 @@
 .fresh-parts { display: none; min-width: 0; }
 .fresh-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fresh-sub { font-size: 11px; line-height: 15px; color: var(--chrome-text-3); }
-.fresh-long { display: none; }
+.fresh-short, .fresh-long { display: none; }
 .fresh-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 420px; display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface-card); color: var(--text); box-shadow: 0 10px 30px rgb(0 0 0 / 0.25); }
 .fresh-facts { display: grid; gap: 4px; }
 .fresh-facts p { font-size: 13px; line-height: 18px; color: var(--text-2); }
@@ -28,6 +28,7 @@
 .fresh-table td { padding: 6px 8px 6px 0; border-top: 1px solid var(--surface-line); color: var(--text-2); white-space: nowrap; }
 .fresh-table td:first-child { color: var(--text); white-space: normal; }
 .fresh-table tr.off td { color: var(--text-3); }
+.fresh-table td.late { color: #9a3b0a; }
 
 .rolemenu { position: relative; }
 .rolemenu-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--chrome-line); background: var(--chrome-900); color: var(--chrome-text); font-size: 12px; cursor: pointer; white-space: nowrap; }
@@ -69,17 +70,18 @@
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 10px; }
 .sheet-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border-top: 1px solid var(--surface-line); }
 
-@media (min-width: 1280px) {
-  .fresh-compact { display: none; }
-  .fresh-parts { display: grid; max-width: 360px; }
+/* On desktop the freshness block takes the room the navigation leaves and says as much as fits. */
+@media (min-width: 1024px) {
+  .fresh { flex: 1 1 0; min-width: 96px; container: fresh / inline-size; }
+  .rolemenu-label { display: inline; }
 }
-@media (min-width: 1600px) {
-  .fresh-parts { max-width: 560px; }
-  .fresh-short { display: none; }
-  .fresh-long { display: block; }
+@container fresh (min-width: 220px) { .fresh-compact { display: none; } .fresh-parts { display: grid; } }
+@container fresh (min-width: 340px) { .fresh-min { display: none; } .fresh-short { display: block; } }
+@container fresh (min-width: 540px) { .fresh-short { display: none; } .fresh-long { display: block; } }
+@media (max-width: 1279px) {
+  .topnav a { padding: 0 8px; }
+  .topnav a > svg, .region-chip > .icon:first-child { display: none; }
 }
-@media (min-width: 1440px) { .rolemenu-label { display: inline; } }
-@media (max-width: 1279px) { .topnav a { padding: 0 8px; } }
 @media (max-width: 1023px) {
   .topbar { gap: 10px; }
   .topnav, .topbar-end { display: none; }
@@ -99,8 +101,8 @@
 @media (max-width: 359px) { .brand-name { display: none; } }
 
 /* ---------- map screen sidebar ---------- */
-.intro { position: relative; display: grid; gap: 10px; margin: 12px 12px 0; padding: 14px 40px 14px 14px; border-radius: var(--radius-lg); background: var(--chrome-900); border: 1px solid var(--chrome-line); }
-.intro-text { font-size: 13px; line-height: 19px; color: var(--chrome-text); }
+.intro { position: relative; display: grid; gap: 10px; margin: 12px 12px 0; padding: 14px; border-radius: var(--radius-lg); background: var(--chrome-900); border: 1px solid var(--chrome-line); }
+.intro-text { padding-right: 28px; font-size: 13px; line-height: 19px; color: var(--chrome-text); }
 .intro-roles { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .intro-label { width: 100%; font-size: 12px; line-height: 16px; color: var(--chrome-text-3); }
 .intro-close { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: none; color: var(--chrome-text-3); cursor: pointer; }
@@ -212,6 +214,7 @@
 .lg-s1 { width: 12px; height: 12px; }
 .lg-s2 { width: 18px; height: 18px; }
 .lg-bubble { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; background: var(--priority-high); color: #fff; font-size: 11px; font-weight: 700; font-style: normal; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12); }
+.lg-bubble-none { width: 20px; height: 20px; margin: 0 3px; background: var(--text-2); }
 .lg-note { margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--text-3); }
 @media (max-width: 600px) { .mapcard { left: 10px; right: 56px; width: auto; } }
 

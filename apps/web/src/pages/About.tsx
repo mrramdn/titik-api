@@ -41,8 +41,8 @@ const text = dict({
     source2: 'Batas desa dari Indonesia COD-AB, BPS melalui OCHA/HDX, CC BY-IGO.',
     source3: 'Lahan gambut dan peringatan gangguan hutan dari Global Nature Watch (dahulu Global Forest Watch), CC BY 4.0.',
     source4: 'Permukiman dan kawasan industri dari © kontributor OpenStreetMap, ODbL.',
-    source5: 'Peta dasar OpenFreeMap, © OpenMapTiles. Citra Sentinel-2 cloudless 2023 oleh EOX, CC BY-NC-SA 4.0.',
-    contest: 'Hackathon JOINTS UGM 2026, tim Close AI (Universitas Bina Nusantara). Kode sumber di github.com/mrramdn/titik-api.',
+    source5: 'Peta dasar OpenFreeMap, © OpenMapTiles. Citra satelit harian dari NASA EOSDIS GIBS. Citra detail Sentinel-2 cloudless 2023 oleh EOX, CC BY-NC-SA 4.0.',
+    contest: 'Hackathon JOINTS UGM 2026, tema Sustainability, subtema 4. Tim Close AI, Universitas Bina Nusantara.',
   },
   en: {
     title: 'About Titik Api',
@@ -83,8 +83,8 @@ const text = dict({
     source2: 'Village boundaries from Indonesia COD-AB, BPS via OCHA/HDX, CC BY-IGO.',
     source3: 'Peatland and forest disturbance alerts from Global Nature Watch (formerly Global Forest Watch), CC BY 4.0.',
     source4: 'Settlements and industrial areas from © OpenStreetMap contributors, ODbL.',
-    source5: 'Base map OpenFreeMap, © OpenMapTiles. Imagery Sentinel-2 cloudless 2023 by EOX, CC BY-NC-SA 4.0.',
-    contest: 'Hackathon JOINTS UGM 2026, team Close AI (Universitas Bina Nusantara). Source code at github.com/mrramdn/titik-api.',
+    source5: 'Base map OpenFreeMap, © OpenMapTiles. Daily satellite imagery from NASA EOSDIS GIBS. Detailed imagery Sentinel-2 cloudless 2023 by EOX, CC BY-NC-SA 4.0.',
+    contest: 'Hackathon JOINTS UGM 2026, theme Sustainability, subtheme 4. Team Close AI, Universitas Bina Nusantara.',
   },
 });
 type Key = keyof typeof text.id;

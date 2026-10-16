@@ -78,8 +78,17 @@ export const modisDetection = ['any', ['==', ['get', 'sensor'], 'MODIS'], ['in',
 export const kilometreRadius = ['interpolate', ['exponential', 2], ['zoom'], 8, 1.64, 16, 419] as E;
 
 /** Regency bubbles: the number is the open high-priority count, the size follows all incidents. */
-export const bubbleRadius = ['interpolate', ['linear'], ['sqrt', ['to-number', ['get', 'incidents'], 0]], 1, 11, 10, 17, 30, 26, 60, 34] as E;
-export const bubbleColor = ['case', ['>', ['to-number', ['get', 'label'], 0], 0], colors.high, colors.line] as E;
+const openHigh = ['to-number', ['get', 'label'], 0] as E;
+const bubbleStops: [number, number][] = [[1, 11], [10, 17], [30, 26], [60, 34]];
+/** Zoomed far out (a phone shows both provinces at about z4) the bubbles shrink so neighbours stay apart. */
+const bubbleScale: [number, number][] = [[4, 0.62], [6, 0.85], [7.5, 1]];
+const bySqrtCount = (pick: (radius: number) => unknown) => ['interpolate', ['linear'], ['sqrt', ['to-number', ['get', 'incidents'], 0]], ...bubbleStops.flatMap(([n, r]) => [n, pick(r)])];
+export const bubbleRadius = ['interpolate', ['linear'], ['zoom'], ...bubbleScale.flatMap(([zoom, k]) => [zoom, bySqrtCount(r => r * k)])] as E;
+/** The regency name sits under its bubble (text offset in ems of the 11 px label). */
+export const bubbleNameOffset = ['interpolate', ['linear'], ['zoom'], ...bubbleScale.flatMap(([zoom, k]) => [zoom, bySqrtCount(r => ['literal', [0, (r * k) / 11 + 0.15]])])] as E;
+export const bubbleColor = ['case', ['>', openHigh, 0], colors.high, colors.line] as E;
+/** A grey bubble has nothing urgent: no number on it. */
+export const bubbleLabel = ['case', ['>', openHigh, 0], ['to-string', openHigh], ''] as E;
 
 /** Hours since midnight in WIB (UTC+7, no daylight saving). */
 export const hoursSinceMidnightWib = (now = Date.now()) => (((now / 3_600_000 + 7) % 24) + 24) % 24;
