@@ -51,7 +51,8 @@
 .acct-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 10px; border-top: 1px solid var(--surface-line); font-size: 13px; color: var(--text-2); }
 .acct-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .acct-name small { margin-left: 4px; color: var(--text-3); font-size: 12px; }
-.acct-link { display: inline-flex; align-items: center; gap: 6px; color: var(--info); font-weight: 500; }
+.acct-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--surface-line); }
+.acct-link:hover { text-decoration-color: currentColor; }
 
 .langswitch { display: inline-flex; flex: none; border: 1px solid var(--surface-line); border-radius: var(--radius-sm); overflow: hidden; }
 .langswitch button { height: 28px; min-width: 34px; padding: 0 8px; border: 0; background: transparent; color: var(--text-3); font-size: 12px; font-weight: 600; cursor: pointer; }
@@ -125,7 +126,8 @@
   background: var(--chrome-950) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a8a29e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 9px center; }
 .fselect:hover { color: var(--chrome-text); }
 .fselect option, .fselect optgroup { color: #191614; background: #fff; }
-.fclear { height: 28px; padding: 0 4px; border: 0; background: none; color: #74b4f0; font-size: 12px; font-weight: 500; cursor: pointer; }
+.fclear { height: 28px; padding: 0 4px; border: 0; background: none; color: var(--chrome-text); font-size: 12px; font-weight: 500; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
+.fclear:hover { text-decoration-color: currentColor; }
 
 .sumrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 16px; border-top: 1px solid var(--chrome-line); border-bottom: 1px solid var(--chrome-line); }
 .sumrow > div { display: grid; gap: 2px; min-width: 0; }
@@ -161,8 +163,8 @@
 .ip-actions { gap: 8px; }
 .ip-actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .ip-actions-row .btn { flex: 1 1 auto; padding: 0 12px; }
-.ip-link { display: inline-flex; align-items: center; gap: 6px; justify-self: start; font-size: 13px; color: #74b4f0; }
-.ip-link:hover { text-decoration: underline; }
+.ip-link { display: inline-flex; align-items: center; gap: 6px; justify-self: start; font-size: 13px; color: var(--chrome-text-2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
+.ip-link:hover { color: var(--chrome-text); text-decoration-color: currentColor; }
 .ip-timeline { list-style: none; margin: 0; display: grid; gap: 14px; padding: 14px 20px 20px; }
 .ip-event { display: grid; grid-template-columns: minmax(44px, max-content) 1fr; gap: 12px; font-size: 13px; line-height: 18px; color: var(--chrome-text-2); }
 .ip-event time { color: var(--chrome-text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -198,7 +200,7 @@
 .maplayer-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.2); transition: transform 0.15s; }
 .maplayer input:checked + .maplayer-switch { background: var(--text); }
 .maplayer input:checked + .maplayer-switch::after { transform: translateX(14px); }
-.maplayer input:focus-visible + .maplayer-switch { outline: 2px solid var(--info); outline-offset: 2px; }
+.maplayer input:focus-visible + .maplayer-switch { outline: 2px solid var(--text); outline-offset: 2px; }
 .lg-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--text-2); }
 .lg-title { margin-top: 10px; }
 .lg-dot { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12); }

@@ -39,6 +39,8 @@ interface Props {
   controls?: boolean;
   /** Opens the legend on wide screens. */
   legend?: boolean;
+  /** One bubble per regency below zoom 8 (default). False shows the incidents at every zoom. */
+  overview?: boolean;
   className?: string;
 }
 
@@ -87,7 +89,7 @@ const rememberLegend = (closed: boolean) => { try { if (closed) localStorage.set
 const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 const levelKey = { tinggi: 'high', sedang: 'medium', rendah: 'low' } as const;
 
-export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoom, selected, focus, initialLayers, onSelect, onVillage, controls = true, legend = true, className }: Props) {
+export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoom, selected, focus, initialLayers, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
   const t = useT(text), f = useFormat();
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -105,10 +107,10 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
   // Below the overview zoom the map shows regency bubbles only, and the legend explains just those.
   const [zoomedOut, setZoomedOut] = useState(true);
   const { query, findRegency } = useRegion();
-  const regions = useApi<RegionSummary[]>(`/regions/summary?hours=${hours}${query}`, version);
+  const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
   // refresh keeps the bubbles it already has.
-  const overview = Array.isArray(regions.data) || (regions.data === null && !regions.error);
+  const overview = bubbles && (Array.isArray(regions.data) || (regions.data === null && !regions.error));
   const handlers = useRef({ onSelect, onVillage, findRegency });
   handlers.current = { onSelect, onVillage, findRegency };
   const state = useRef({ hours, version, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily });
