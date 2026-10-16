@@ -27,10 +27,11 @@ function OutboxBar() {
 
 function Freshness() {
   const status = useApi<IngestStatus>('/ingest/status');
-  const latest = status.data?.satellites.slice().sort((a, b) => b.latestAcquisition.localeCompare(a.latestAcquisition))[0];
-  if (!latest) return null;
-  const old = Date.now() - new Date(latest.latestAcquisition).getTime() > 12 * 3600_000;
-  return <span className="freshness" title="Lintasan satelit terbaru yang sudah dirilis NASA FIRMS"><i className={`live-dot ${old ? 'stale' : ''}`} />{satelliteLabel[latest.satellite]} · {old ? wibDay(latest.latestAcquisition) : wib(latest.latestAcquisition)} WIB</span>;
+  const latest = status.data?.satellites.filter(s => s.latestAcquisition).sort((a, b) => b.latestAcquisition!.localeCompare(a.latestAcquisition!))[0];
+  if (!latest?.latestAcquisition) return null;
+  const acquired = latest.latestAcquisition;
+  const old = Date.now() - new Date(acquired).getTime() > 12 * 3600_000;
+  return <span className="freshness" title="Lintasan satelit terbaru yang sudah dirilis NASA FIRMS"><i className={`live-dot ${old ? 'stale' : ''}`} />{satelliteLabel[latest.satellite] ?? latest.satellite} · {old ? wibDay(acquired) : wib(acquired)} WIB</span>;
 }
 
 export function Shell({ children }: { children: ReactNode }) {
