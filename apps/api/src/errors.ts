@@ -9,7 +9,7 @@ export function requireCondition(condition: unknown, status: number, code: strin
 }
 
 export function object(value: unknown): Record<string, unknown> {
-  requireCondition(value !== null && typeof value === 'object' && !Array.isArray(value), 400, 'INVALID_INPUT', 'Data tidak valid.');
+  requireCondition(value !== null && typeof value === 'object' && !Array.isArray(value), 400, 'INVALID_INPUT', 'Data tidak valid. Muat ulang halaman.');
   return value as Record<string, unknown>;
 }
 
@@ -21,7 +21,7 @@ export function text(value: unknown, name: string, min = 1, max = 2000): string 
 }
 
 export function uuid(value: unknown): string {
-  requireCondition(typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value), 400, 'INVALID_INPUT', 'ID tidak valid.');
+  requireCondition(typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value), 400, 'INVALID_INPUT', 'ID tidak valid. Muat ulang halaman.');
   return value;
 }
 

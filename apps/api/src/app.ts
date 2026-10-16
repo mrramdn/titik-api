@@ -14,6 +14,9 @@ import { installIncidents } from './incidents.js';
 import { installAlerts } from './alerts.js';
 import { installVerifications } from './verifications.js';
 import { installDashboard } from './dashboard.js';
+import { installAssignments } from './assignments.js';
+import { installRecap } from './recap.js';
+import { installStatus } from './status.js';
 import { installShare } from './share.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
@@ -44,7 +47,7 @@ export async function createApp(options: Options = {}) {
   await app.register(cors, { origin: [...origins], credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] });
   // The plugin throws what the builder returns, so it must carry its own status. Only API calls count.
   await app.register(rateLimit, { max: request => (request.method === 'GET' ? 900 : 300), timeWindow: '1 minute', allowList: request => !request.url.startsWith('/api/'),
-    errorResponseBuilder: (_request, context) => new ApiError(context.statusCode, 'RATE_LIMITED', 'Terlalu banyak permintaan. Coba lagi sebentar.') });
+    errorResponseBuilder: (_request, context) => new ApiError(context.statusCode, 'RATE_LIMITED', 'Terlalu banyak permintaan. Tunggu satu menit lalu coba lagi.') });
   await app.register(multipart, { limits: { fileSize: 6 * 1024 * 1024, files: 1, fields: 12, fieldSize: 4096 } });
   await app.register(staticFiles, { root: uploadsDir, prefix: '/uploads/', index: false, dotfiles: 'deny', setHeaders(reply) {
     reply.header('X-Content-Type-Options', 'nosniff');
@@ -66,6 +69,9 @@ export async function createApp(options: Options = {}) {
   installAlerts(app, pool, options.pushSender);
   installVerifications(app, pool, uploadsDir);
   installDashboard(app, pool);
+  installAssignments(app, pool, options.pushSender);
+  installRecap(app, pool);
+  installStatus(app, pool);
   installShare(app, pool, webDir);
 
   app.get('/api/v1/health', async () => {
@@ -76,15 +82,15 @@ export async function createApp(options: Options = {}) {
     if (request.method === 'GET' && !request.url.startsWith('/api') && !request.url.startsWith('/uploads') && existsSync(`${webDir}/index.html`)) {
       return reply.header('Cache-Control', 'no-cache').type('text/html').sendFile('index.html', webDir);
     }
-    return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Halaman tidak ditemukan.' } });
+    return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Halaman tidak ditemukan. Periksa alamatnya.' } });
   });
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ApiError) return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
     const pgError = error as { code?: string; statusCode?: number };
-    if (pgError.code === '23505') return reply.code(409).send({ error: { code: 'CONFLICT', message: 'Data ini sudah tercatat.' } });
-    if (pgError.statusCode && pgError.statusCode < 500) return reply.code(pgError.statusCode).send({ error: { code: 'INVALID_INPUT', message: pgError.statusCode === 413 ? 'Ukuran foto maksimal 6 MB.' : 'Permintaan tidak valid.' } });
+    if (pgError.code === '23505') return reply.code(409).send({ error: { code: 'CONFLICT', message: 'Data ini sudah tercatat. Muat ulang halaman.' } });
+    if (pgError.statusCode && pgError.statusCode < 500) return reply.code(pgError.statusCode).send({ error: { code: 'INVALID_INPUT', message: pgError.statusCode === 413 ? 'Foto lebih dari 6 MB. Pilih foto yang lebih kecil.' : 'Permintaan tidak valid. Muat ulang halaman.' } });
     request.log.error({ err: error }, 'Request failed');
-    return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Terjadi kesalahan. Silakan coba lagi.' } });
+    return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Terjadi kesalahan di server. Coba lagi sebentar lagi.' } });
   });
   if (ownsPool) app.addHook('onClose', () => pool.end());
   return { app, pool };
