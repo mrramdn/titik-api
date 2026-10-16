@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Outlet, useNavigate, useOutletContext } from 'react-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Outlet, useLocation, useNavigate, useOutletContext } from 'react-router';
 import { Info, Search, X } from 'lucide-react';
 import { defaultFilters, incidentQuery, type Incident, type IncidentFilters, type IncidentSort, type Level, type StatusFilter } from '../api';
 import { Shell } from '../components/Shell';
 import { PriorityMark, StatusLine, useApi, useDataVersion } from '../components/ui';
-import { useRoleSwitch } from '../components/shell/roles';
+import { signOutFlag, useRoleSwitch } from '../components/shell/roles';
 import { MapView, type Selected } from '../map/MapView';
 import { narrowed, prepareRows, summarize } from '../map/list';
 import { dict, useT } from '../i18n';
@@ -22,7 +22,7 @@ const text = dict({
     regency: 'Kabupaten', allRegencies: 'Semua kabupaten', clear: 'Hapus filter',
     incidents: 'Kejadian', highOpen: 'Tinggi, belum dicek', hotspots: 'Titik panas', sort: 'Urutkan', byPriority: 'Prioritas', byRecent: 'Terbaru', bySize: 'Terbesar',
     title: 'Desa {village} · Kec. {district}', outside: 'Di luar batas desa', fromSettlement: '{km} dari permukiman', peat: 'lahan gambut',
-    hotspotOne: '{n} titik panas', hotspotMany: '{n} titik panas', uncertain: 'lokasi ±{km}', score: 'Skor prioritas {score} dari 100',
+    hotspotOne: '{n} titik panas', hotspotMany: '{n} titik panas', uncertain: 'lokasi ±1 km', score: 'Skor prioritas {score} dari 100',
     loading: 'Memuat kejadian…', noMatch: 'Tidak ada kejadian yang cocok dengan filter ini.', noneIn: 'Tidak ada titik panas di desa dalam {window} terakhir.',
     widen: 'Lihat 7 hari terakhir', checkedEvery: 'Data satelit diperiksa tiap 30 menit.', retry: 'Muat ulang', more: 'Tampilkan {n} kejadian lagi',
     caveat: 'Titik panas perlu dicek di lapangan.',
@@ -36,7 +36,7 @@ const text = dict({
     regency: 'Regency', allRegencies: 'All regencies', clear: 'Clear filters',
     incidents: 'Incidents', highOpen: 'High, not checked', hotspots: 'Hotspots', sort: 'Sort', byPriority: 'Priority', byRecent: 'Newest', bySize: 'Largest',
     title: '{village} · {district} district', outside: 'Outside village boundaries', fromSettlement: '{km} from a settlement', peat: 'peatland',
-    hotspotOne: '{n} hotspot', hotspotMany: '{n} hotspots', uncertain: 'location ±{km}', score: 'Priority score {score} of 100',
+    hotspotOne: '{n} hotspot', hotspotMany: '{n} hotspots', uncertain: 'location ±1 km', score: 'Priority score {score} of 100',
     loading: 'Loading incidents…', noMatch: 'No incidents match these filters.', noneIn: 'No hotspots in villages in the last {window}.',
     widen: 'Show the last 7 days', checkedEvery: 'Satellite data is checked every 30 minutes.', retry: 'Reload', more: 'Show {n} more incidents',
     caveat: 'Hotspots need a field check.',
@@ -59,6 +59,15 @@ export function MapScreen() {
   const { bbox, regencies, findRegency, province } = useRegion();
   const { version } = useDataVersion();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { signOut } = useSession();
+  // "Lihat sebagai: Publik" and "Keluar" land here first and sign out once the map is open (see useSignOutToMap).
+  const signedOutAt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!(location.state as Record<string, unknown> | null)?.[signOutFlag] || signedOutAt.current === location.key) return;
+    signedOutAt.current = location.key;
+    void signOut().finally(() => navigate(location.pathname, { replace: true, state: null }));
+  }, [location.key]);
   const setFilters = (next: IncidentFilters) => { setFiltersState(next); try { sessionStorage.setItem(filterKey, JSON.stringify(next)); } catch { /* private mode */ } };
   // A regency from the other province makes no sense once the province changes.
   useEffect(() => { if (filters.regency && regencies.length && !regencies.some(r => r.name === filters.regency)) setFilters({ ...filters, regency: '' }); }, [province, regencies.length]);
@@ -146,7 +155,8 @@ function IncidentRow({ incident, onOpen }: { incident: Incident; onOpen(): void 
     incident.nearestPlace ? f.place(incident.nearestPlace) : incident.settlementMeters !== null && incident.settlementMeters !== undefined ? t('fromSettlement', { km: f.km(incident.settlementMeters) }) : null,
     incident.onPeat ? t('peat') : null,
     t(incident.detectionCount === 1 ? 'hotspotOne' : 'hotspotMany', { n: f.num(incident.detectionCount) }),
-    incident.modisOnly ? t('uncertain', { km: f.km(incident.locationUncertaintyM ?? 1000) }) : null,
+    // The class label of MODIS-only incidents; the incident panel gives the measured uncertainty.
+    incident.modisOnly ? t('uncertain') : null,
   ].filter(Boolean).join(', ');
   return (
     <button type="button" className="inc" onClick={onOpen}>

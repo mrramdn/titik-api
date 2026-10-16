@@ -1,6 +1,6 @@
 // "Lihat sebagai": one click signs in to a demo account (or out, for Publik) and opens that role's home.
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { Check, LayoutDashboard, Landmark, Map as MapIcon, Users, type LucideIcon } from 'lucide-react';
 import { dict, useT } from '../../i18n';
 import { useFormat } from '../../format';
@@ -25,10 +25,22 @@ export const roleText = dict({
   },
 });
 
+/**
+ * Signing out on a page that needs an account would make that page send the visitor to /masuk first, so the map
+ * opens and signs out itself (MapScreen reads this flag from the navigation state).
+ */
+export const signOutFlag = 'signOut';
+export function useSignOutToMap() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  return () => navigate('/', { replace: pathname === '/', state: { [signOutFlag]: true } });
+}
+
 /** The role the visitor is viewing as, and a function that switches to another one. */
 export function useRoleSwitch() {
-  const { user, signInDemo, signOut } = useSession();
+  const { user, signInDemo } = useSession();
   const navigate = useNavigate();
+  const signOutToMap = useSignOutToMap();
   const describe = useErrorText();
   const [busy, setBusy] = useState<ViewRole | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +50,7 @@ export function useRoleSwitch() {
     if (role === current) { navigate(homeFor(user)); return true; }
     setBusy(role);
     try {
-      if (role === 'public') { await signOut(); navigate(homeFor(null)); }
+      if (role === 'public') signOutToMap();
       else navigate(homeFor(await signInDemo(role)));
       return true;
     } catch (failure) { setError(describe(failure)); return false; } finally { setBusy(null); }
@@ -51,9 +63,9 @@ export function RoleList({ onDone }: { onDone?: () => void }) {
   const t = useT(roleText), f = useFormat();
   const { current, choose, busy, error } = useRoleSwitch();
   return (
-    <div className="rolelist" role="radiogroup" aria-label={t('viewAs')}>
+    <div className="rolelist" role="group" aria-label={t('viewAs')}>
       {viewRoles.map(({ role, icon: Icon }) => (
-        <button key={role} type="button" role="radio" aria-checked={current === role} className={`rolelist-item ${current === role ? 'on' : ''}`} disabled={busy !== null}
+        <button key={role} type="button" aria-pressed={current === role} className={`rolelist-item ${current === role ? 'on' : ''}`} disabled={busy !== null}
           onClick={async () => { if (await choose(role)) onDone?.(); }}>
           <Icon size={18} className="icon" aria-hidden="true" />
           <span className="rolelist-text"><b>{f.role(role)}</b><small>{busy === role ? t('busy') : t(role)}</small></span>

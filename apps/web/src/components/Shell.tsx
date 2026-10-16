@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { ChevronDown, ClipboardList, FileText, Info, LayoutDashboard, LogOut, Mail, Map as MapIcon, MapPin, UserRound, X, type LucideIcon } from 'lucide-react';
 import type { Role } from '../api';
 import { dict, useT } from '../i18n';
@@ -11,7 +11,7 @@ import { LogoMark } from './Logo';
 import { useOnline } from './ui';
 import { Freshness } from './shell/Freshness';
 import { LangSwitch } from './shell/LangSwitch';
-import { RoleList, roleText } from './shell/roles';
+import { RoleList, roleText, useSignOutToMap } from './shell/roles';
 import { usePopover } from './shell/popover';
 
 const text = dict({
@@ -80,13 +80,13 @@ function RegionSelect() {
 /** Who is signed in, with email sign-in or sign-out; under the role list in the menu and the phone sheet. */
 function AccountFoot({ onDone }: { onDone?: () => void }) {
   const t = useT(text);
-  const { user, signOut } = useSession();
-  const navigate = useNavigate();
+  const { user } = useSession();
+  const signOutToMap = useSignOutToMap();
   if (user && !user.demo) {
     return (
       <div className="acct-foot">
         <span className="acct-name"><UserRound size={16} className="icon" aria-hidden="true" />{user.name}</span>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { await signOut(); onDone?.(); navigate('/'); }}><LogOut size={16} />{t('signOut')}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => { onDone?.(); signOutToMap(); }}><LogOut size={16} />{t('signOut')}</button>
       </div>
     );
   }
@@ -105,11 +105,11 @@ function RoleMenu() {
   const { open, toggle, setOpen, root } = usePopover();
   return (
     <div className="rolemenu" ref={root}>
-      <button type="button" className="rolemenu-btn" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+      <button type="button" className="rolemenu-btn" aria-haspopup="dialog" aria-expanded={open} onClick={toggle}>
         <span className="rolemenu-label">{t('viewAs')}</span><b>{f.role(user ? user.role : 'public')}</b><ChevronDown size={14} aria-hidden="true" />
       </button>
       {open && (
-        <div className="rolemenu-pop">
+        <div className="rolemenu-pop" role="dialog" aria-label={t('viewAs')}>
           <h3 className="rolemenu-title">{t('viewAs')}</h3>
           <RoleList onDone={() => setOpen(false)} />
           <AccountFoot onDone={() => setOpen(false)} />
@@ -155,7 +155,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <RegionSelect />
         <Freshness />
         <nav className="topnav" aria-label={t('nav')}>
-          {links.map(({ to, key, icon: Icon }) => <NavLink key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={16} aria-hidden="true" />{t(key)}</NavLink>)}
+          {links.map(({ to, key, icon: Icon }) => <Link key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={16} aria-hidden="true" />{t(key)}</Link>)}
         </nav>
         <div className="topbar-end">
           <RoleMenu />
@@ -165,7 +165,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <OutboxBar />
       {children}
       <nav className="tabbar" aria-label={t('nav')}>
-        {links.map(({ to, key, icon: Icon }) => <NavLink key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={20} aria-hidden="true" />{t(key)}</NavLink>)}
+        {links.map(({ to, key, icon: Icon }) => <Link key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={20} aria-hidden="true" />{t(key)}</Link>)}
         <button type="button" className={sheet ? 'active' : ''} aria-haspopup="dialog" aria-expanded={sheet} onClick={() => setSheet(true)}><UserRound size={20} aria-hidden="true" />{user && !user.demo ? t('account') : t('role')}</button>
       </nav>
       {sheet && <AccountSheet onClose={() => setSheet(false)} />}
