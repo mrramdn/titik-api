@@ -1,98 +1,159 @@
-import { useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router';
-import { Download, ImageOff } from 'lucide-react';
-import type { Incident, Status } from '../api';
+// Dasbor BPBD/Daops: what needs action now, what is in progress, what is done. Four numbers over one time window filter
+// the lanes, the map and the village table; the kabupaten column narrows everything to one regency.
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { CalendarDays, Download, Info, X } from 'lucide-react';
+import { incidentQuery, type RegionSummary } from '../api';
 import { Shell } from '../components/Shell';
-import { Banner, FlameTile, LevelBadge, StatusText, useApi } from '../components/ui';
-import { MapView } from '../map/MapView';
-import { ago, duration, km, percent, wib } from '../format';
-import { shortProvince, useRegion } from '../region';
+import { Banner, useDataVersion } from '../components/ui';
+import { MapView, type MapFilters } from '../map/MapView';
+import { dict, useT } from '../i18n';
+import { useFormat } from '../format';
+import { useRegion } from '../region';
 import { useSession } from '../session';
+import { canUseBpbd, RoleGate } from '../components/bpbd/RoleGate';
+import { focusKeys, Kpis, type Focus } from '../components/bpbd/Kpis';
+import { RegencyList } from '../components/bpbd/RegencyList';
+import { Lanes } from '../components/bpbd/Lanes';
+import { VillageTable } from '../components/bpbd/VillageTable';
+import { LANE_LIMIT, laneCount, splitLanes, useLanes, useLoad, type DashboardData, type LaneKey } from '../components/bpbd/data';
 
-interface Dashboard {
-  summary: { incidents: number; verified: number; verifiedShare: number | null; high: number; openHigh: number; falseAlarms: number; onPeat: number; medianMinutesToVerification: number | null; detections: number };
-  villages: { id: string; name: string; district: string; regency: string; incidents: number; detections: number; verified: number; openHigh: number; lastDetectedAt: string; medianMinutesToVerification: number | null }[];
-  recentVerifications: { id: string; status: Status; observedAt: string; distanceMeters: number | null; note: string; photoThumbUrl: string | null; demo: boolean; reporter: string; incidentId: string; villageName: string | null; minutesFromDetection: number }[];
-  verificationsFromDemoAccounts: { total: number; demo: number };
-}
+const text = dict({
+  id: {
+    title: 'Dasbor', both: 'Sumatera Selatan dan Kalimantan Tengah', last24: '24 jam terakhir', last7: '7 hari terakhir',
+    window: 'Rentang waktu', h24: '24 jam', d7: '7 hari', recap: 'Rekap harian', csv: 'Ekspor CSV',
+    demo: '{demo} dari {total} cek lapangan dalam rentang ini berasal dari akun demo.',
+    filters: 'Filter aktif', remove: 'Hapus filter {name}', clear: 'Hapus semua filter',
+    checked: 'Sudah dicek', response: 'Waktu tanggap', action: 'Tinggi belum ditangani',
+  },
+  en: {
+    title: 'Dashboard', both: 'Sumatera Selatan and Kalimantan Tengah', last24: 'last 24 hours', last7: 'last 7 days',
+    window: 'Time window', h24: '24 h', d7: '7 days', recap: 'Daily recap', csv: 'Export CSV',
+    demo: '{demo} of {total} field checks in this window come from demo accounts.',
+    filters: 'Active filters', remove: 'Remove filter {name}', clear: 'Clear all filters',
+    checked: 'Checked', response: 'Response time', action: 'High priority, not handled',
+  },
+});
+
+const lanesFor: Record<Focus, LaneKey[]> = { all: ['action', 'active', 'done'], action: ['action'], checked: ['done'], response: ['active', 'done'] };
+const mapFiltersFor: Record<Focus, MapFilters | undefined> = {
+  all: undefined, action: { levels: ['tinggi'], status: 'open' }, checked: { status: 'checked' }, response: { status: 'checked' },
+};
+type Bbox = [number, number, number, number];
 
 export function DashboardPage() {
-  const { user, ready } = useSession();
-  const { province, query, bbox, provinces } = useRegion();
+  const { user } = useSession();
+  if (!canUseBpbd(user?.role)) return <RoleGate page="dashboard" />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
+  const t = useT(text), f = useFormat();
   const navigate = useNavigate();
-  const [range, setRange] = useState<'24h' | '7d'>('24h');
-  const [all, setAll] = useState(false);
-  const allowed = user?.role === 'bpbd' || user?.role === 'admin';
-  const dash = useApi<Dashboard>(allowed ? `/dashboard?range=${range}${query}` : null);
-  const queue = useApi<Incident[]>(allowed ? `/incidents?hours=${range === '24h' ? 24 : 168}&level=tinggi&limit=40${query}` : null);
-  if (ready && !user) return <Navigate to="/masuk" replace />;
-  if (user && !allowed) return <Shell><main className="page narrow"><Banner tone="warn">Dasbor untuk BPBD dan Daops. Masuk sebagai petugas BPBD untuk mencoba.</Banner></main></Shell>;
-  const d = dash.data, s = d?.summary;
-  const villageCount = province ? provinces.find(p => p.name === province)?.villages : provinces.reduce((n, p) => n + p.villages, 0);
-  const open = (queue.data ?? []).filter(i => !i.firstVerifiedAt);
+  const { province, provinces, bbox, query } = useRegion();
+  const { version } = useDataVersion();
+  // Bumped after an assignment changes, so the numbers, the lanes and the map tiles all reload together.
+  const [changes, setChanges] = useState(0);
+  const dataVersion = version * 1000 + changes;
+  const [params, setParams] = useSearchParams();
+
+  // Window, focus and regency live in the address, so going back from an incident restores the same view.
+  const range = params.get('range') === '7d' ? '7d' : '24h';
+  const hours = range === '7d' ? 168 : 24;
+  const askedFocus = params.get('focus') as Focus | null;
+  const focus: Focus = askedFocus && focusKeys.includes(askedFocus) ? askedFocus : 'all';
+  const regencies = province ? provinces.find(p => p.name === province)?.regencies ?? [] : provinces.flatMap(p => p.regencies);
+  const askedRegency = params.get('regency') ?? '';
+  // After a province switch in the top bar, a regency from the other province no longer applies.
+  const regency = askedRegency && (!provinces.length || regencies.some(r => r.name === askedRegency)) ? askedRegency : '';
+  const update = (next: { range?: string; focus?: Focus; regency?: string }) => setParams(previous => {
+    const result = new URLSearchParams(previous);
+    for (const [key, value] of Object.entries(next)) {
+      if (value && value !== 'all' && value !== '24h') result.set(key, value); else result.delete(key);
+    }
+    return result;
+  }, { replace: true });
+
+  const regencyParam = regency ? `&regency=${encodeURIComponent(regency)}` : '';
+  const dash = useLoad<DashboardData>(`/dashboard?range=${range}&hours=${hours}${query}${regencyParam}`, dataVersion);
+  const regions = useLoad<RegionSummary[]>(`/regions/summary?hours=${hours}${query}`, dataVersion);
+  const lanePaths = useMemo(() => {
+    const extra = `&limit=${LANE_LIMIT}${query}`;
+    return {
+      action: `/incidents${incidentQuery({ hours, levels: ['tinggi'], status: 'open', sort: 'priority', regency }, extra)}`,
+      active: `/incidents${incidentQuery({ hours, status: 'assigned', sort: 'priority', regency }, extra)}`,
+      done: `/incidents${incidentQuery({ hours, status: 'checked', sort: 'recent', regency }, extra)}`,
+    };
+  }, [hours, regency, query]);
+  const lanes = useLanes(lanePaths, dataVersion);
+  const split = useMemo(() => splitLanes(lanes.lists), [lanes.lists]);
+
+  const summary = dash.data?.summary;
+  // One count per lane, shared with the numbers on top, so the KPI and the lane under it never disagree.
+  const counts = {
+    action: laneCount(split.action.length, lanes.lists.action?.length ?? null, summary?.needsAction),
+    active: laneCount(split.active.length, lanes.lists.active?.length ?? null, summary?.assigned),
+    done: laneCount(split.done.length, lanes.lists.done?.length ?? null, summary?.verified),
+  };
+  const photos = useMemo(() => {
+    const byIncident = new Map<string, string>();
+    for (const check of dash.data?.recentVerifications ?? []) {
+      if (check.photoThumbUrl && !byIncident.has(check.incidentId)) byIncident.set(check.incidentId, check.photoThumbUrl);
+    }
+    return byIncident;
+  }, [dash.data]);
+  // The kabupaten column needs GET /regions/summary; without it (an older server) the column stays away.
+  const regionRows = Array.isArray(regions.data) && regions.data.length ? regions.data : null;
+  const regencyBox = regency ? regencies.find(r => r.name === regency)?.bbox : undefined;
+  const bounds: Bbox = regencyBox?.length === 4 ? (regencyBox as Bbox) : bbox;
+  const demo = dash.data?.verificationsFromDemoAccounts;
+  const changed = () => setChanges(value => value + 1);
+
   return (
     <Shell>
-      <main className="page wide">
-        <div className="page-head">
-          <div><h1 className="title-24">Dasbor</h1><p>{province ? province : 'Sumatera Selatan + Kalimantan Tengah'} · {range === '24h' ? '24 jam' : '7 hari'} terakhir{villageCount ? ` · ${villageCount.toLocaleString('id-ID')} desa` : ''}</p></div>
-          <div className="chips">
-            <button type="button" className={`chip ${range === '24h' ? 'on' : ''}`} onClick={() => setRange('24h')}>24 jam</button>
-            <button type="button" className={`chip ${range === '7d' ? 'on' : ''}`} onClick={() => setRange('7d')}>7 hari</button>
-            <a className="btn btn-secondary btn-sm" href={`/api/v1/export/groundcheck.csv?range=${range}${query}`}><Download size={16} />Ekspor CSV groundcheck</a>
+      <main className="page wide bd-page">
+        <div className="bd-head">
+          <div>
+            <h1 className="title-24">{t('title')}</h1>
+            <p>{province || t('both')}{regency ? ` › ${regency}` : ''} · {t(range === '7d' ? 'last7' : 'last24')}</p>
           </div>
-        </div>
-        {d && d.verificationsFromDemoAccounts.demo > 0 && <Banner>Prototipe: {d.verificationsFromDemoAccounts.demo} dari {d.verificationsFromDemoAccounts.total} cek lapangan di rentang ini berasal dari akun demo. Titik panasnya data asli NASA FIRMS.</Banner>}
-        {dash.error && <Banner tone="warn">{dash.error}</Banner>}
-        <div className="card kpi-strip">
-          <div><span className="label">Kejadian</span><span className="number-28">{s ? s.incidents.toLocaleString('id-ID') : '–'}</span><span className="caption muted">{s ? `${s.detections.toLocaleString('id-ID')} deteksi · ${s.incidents ? Math.round((s.onPeat / s.incidents) * 100) : 0}% di gambut` : ''}</span></div>
-          <div><span className="label">Sudah dicek</span><span className="number-28">{s ? percent(s.verifiedShare) : '–'}</span><span className="caption muted">{s ? `${s.verified} kejadian` : ''}</span></div>
-          <div><span className="label">Median deteksi → cek</span><span className="number-28">{s ? duration(s.medianMinutesToVerification) : '–'}</span><span className="caption muted">termasuk jeda rilis data satelit</span></div>
-          <div className="hot"><span className="label">Tinggi belum dicek</span><span className="number-28">{s ? s.openHigh.toLocaleString('id-ID') : '–'}</span><span className="caption muted">{s ? `dari ${s.high.toLocaleString('id-ID')} prioritas tinggi` : ''}</span></div>
-          <div><span className="label">Alarm palsu</span><span className="number-28">{s?.falseAlarms ?? '–'}</span><span className="caption muted">lokasi ditandai 30 hari</span></div>
-        </div>
-        <div className="dash-grid">
-          <div className="dash-map"><MapView hours={range === '24h' ? 24 : 168} bounds={bbox} initialLayers={{ deteksi: false }} onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} legend={false} /></div>
-          <div className="card queue">
-            <div className="queue-head"><span className="heading-16">Antrean: tinggi, belum dicek</span><span className="caption muted">{open.length}</span></div>
-            <div className="queue-list">
-              {open.slice(0, 20).map(i => (
-                <Link key={i.id} to={`/kejadian/${i.id}`} className="alert-row">
-                  <FlameTile level={i.level} size={20} />
-                  <span className="main"><span className="title">{i.detectionCount} titik panas · Desa {i.village?.name}</span><span className="summary">{i.village?.regency} · {i.onPeat ? 'gambut · ' : ''}skor {i.score}</span>
-                    <span className="meta"><LevelBadge level={i.level} />{wib(i.lastDetectedAt)} WIB</span></span>
-                </Link>
+          <div className="bd-actions">
+            <div className="bd-window" role="group" aria-label={t('window')}>
+              {(['24h', '7d'] as const).map(value => (
+                <button key={value} type="button" className={range === value ? 'on' : ''} aria-pressed={range === value} onClick={() => update({ range: value })}>
+                  {t(value === '7d' ? 'd7' : 'h24')}
+                </button>
               ))}
-              {queue.data && !open.length && <div className="empty">Semua kejadian prioritas tinggi sudah dicek.</div>}
             </div>
+            <Link to="/rekap" className="btn btn-secondary btn-sm"><CalendarDays size={16} />{t('recap')}</Link>
+            <a className="btn btn-secondary btn-sm" href={`/api/v1/export/groundcheck.csv?range=${range}${query}${regencyParam}`} download><Download size={16} />{t('csv')}</a>
           </div>
         </div>
-        <div className="dash-grid">
-          <div className="card" style={{ overflow: 'hidden' }}>
-            <table className="table">
-              <thead><tr><th>Desa</th><th>Kabupaten</th><th>Kejadian</th><th>Dicek</th><th>Tinggi belum dicek</th><th>Median ke cek</th><th>Terakhir</th></tr></thead>
-              <tbody>{d?.villages.slice(0, all ? undefined : 15).map(v => (
-                <tr key={v.id} onClick={() => navigate(`/desa/${v.id}`)}>
-                  <td>{v.name}<div className="caption muted">{v.district}</div></td><td>{v.regency}</td><td>{v.incidents}</td>
-                  <td><span className="checkbar"><span className="track"><i style={{ width: `${v.incidents ? (v.verified / v.incidents) * 100 : 0}%` }} /></span>{v.verified}/{v.incidents}</span></td>
-                  <td className={v.openHigh ? 'hot' : ''}>{v.openHigh || '–'}</td><td>{duration(v.medianMinutesToVerification)}</td><td>{ago(v.lastDetectedAt)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-            {d && d.villages.length > 15 && !all && <div style={{ padding: 12 }}><button type="button" className="btn btn-secondary btn-sm" onClick={() => setAll(true)}>Tampilkan {d.villages.length} desa</button></div>}
+        {demo && demo.demo > 0 && <p className="note bd-demo"><Info size={14} className="icon" />{t('demo', { demo: f.num(demo.demo), total: f.num(demo.total) })}</p>}
+        {dash.error && <Banner tone="warn">{dash.error}</Banner>}
+        <Kpis focus={focus} onFocus={value => update({ focus: value })} incidents={summary?.incidents ?? null} detections={summary?.detections ?? null}
+          high={summary?.high ?? null} medianMinutes={summary?.medianMinutesToVerification ?? summary?.medianMinutes ?? null}
+          checked={counts.done} action={counts.action} />
+        {(regency || focus !== 'all') && (
+          <div className="bd-filters" role="group" aria-label={t('filters')}>
+            {regency && <button type="button" className="bd-filter" aria-label={t('remove', { name: regency })} onClick={() => update({ regency: '' })}>{regency}<X size={14} /></button>}
+            {focus !== 'all' && <button type="button" className="bd-filter" aria-label={t('remove', { name: t(focus) })} onClick={() => update({ focus: 'all' })}>{t(focus)}<X size={14} /></button>}
+            {regency && focus !== 'all' && <button type="button" className="bd-clear" onClick={() => update({ regency: '', focus: 'all' })}>{t('clear')}</button>}
           </div>
-          <div className="card feed">
-            <div className="queue-head"><span className="heading-16">Cek lapangan terbaru</span></div>
-            {d?.recentVerifications.map(v => (
-              <Link key={v.id} to={`/kejadian/${v.incidentId}`} className="feed-item">
-                {v.photoThumbUrl ? <img src={v.photoThumbUrl} alt="" loading="lazy" /> : <span className="nophoto"><ImageOff size={18} /></span>}
-                <span style={{ display: 'grid', gap: 3 }}><StatusText status={v.status} demo={v.demo} /><b style={{ fontWeight: 500 }}>Desa {v.villageName}</b>
-                  <span className="caption muted">{duration(v.minutesFromDetection)} setelah deteksi{v.distanceMeters !== null ? ` · ${km(v.distanceMeters)} dari titik` : ''} · {v.reporter}</span></span>
-              </Link>
-            ))}
-            {d && !d.recentVerifications.length && <div className="empty">Belum ada cek lapangan di rentang ini.</div>}
+        )}
+        <div className={`bd-body ${regionRows ? '' : 'no-side'}`}>
+          {regionRows && <RegencyList rows={regionRows} selected={regency} onSelect={name => update({ regency: name })}
+            selectedCount={regency && counts.action && !counts.action.more && !lanes.loading && !dash.loading ? counts.action.value : undefined} />}
+          <div className="bd-centre">
+            <div className="bd-map">
+              <MapView hours={hours} bounds={bounds} filters={mapFiltersFor[focus]} version={dataVersion} initialLayers={{ deteksi: false }} legend={false}
+                onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} />
+            </div>
+            <Lanes lanes={split} counts={counts} errors={lanes.errors} visible={lanesFor[focus]} loading={lanes.loading} photos={photos} onChanged={changed}
+              loaded={{ action: lanes.lists.action !== null, active: lanes.lists.active !== null, done: lanes.lists.done !== null }} />
           </div>
         </div>
-        <p className="note">Wilayah: {province ? shortProvince(province) : 'Sumsel + Kalteng'}. Ganti lewat pemilih wilayah di bilah atas.</p>
+        <VillageTable villages={dash.data?.villages ?? null} focus={focus} loading={dash.loading} />
       </main>
     </Shell>
   );
