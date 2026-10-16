@@ -28,6 +28,8 @@ export function startScheduler(pool: pg.Pool, log: FastifyBaseLogger, minutes = 
   const plan = (at: number) => {
     schedule.nextRunAt = new Date(at);
     timer = setTimeout(async () => {
+      // While this pull runs, the status already names the one after it.
+      schedule.nextRunAt = new Date(at + minutes * 60_000);
       await tick();
       if (stopped) return;
       // Keep the beat; a pull that ran past the next slot moves on to the one after.

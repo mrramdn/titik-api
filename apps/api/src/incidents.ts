@@ -34,17 +34,21 @@ export function nearestPlace(row: Record<string, any>) {
   return row.place_name ? { name: row.place_name as string, kind: row.place_kind as string, distanceM: row.place_m as number, bearingDeg: (row.place_bearing ?? 0) as number } : null;
 }
 
-/** An assignment as the API returns it, from columns named with a prefix (task_ in incidentSelect). */
-export function assignmentModel(row: Record<string, any>, prefix = 'task_') {
+/**
+ * An assignment as the API returns it, from columns named with a prefix (task_ in incidentSelect). The squad is
+ * public; who assigned it and the note are for signed-in teams, like the notes of field reports.
+ */
+export function assignmentModel(row: Record<string, any>, prefix = 'task_', team = true) {
   const at = (name: string) => row[`${prefix}${name}`];
   if (!at('id')) return null;
   return { id: at('id') as string, status: at('status') as string,
     assignee: { id: at('assignee_id') as string, name: at('assignee_name') as string, organization: at('assignee_organization') as string },
-    assignedBy: at('assigned_by') as string, note: at('note') as string,
+    assignedBy: team ? at('assigned_by') as string : '', note: team ? at('note') as string : '',
     createdAt: (at('created_at') as Date).toISOString(), updatedAt: (at('updated_at') as Date).toISOString(), closedAt: (at('closed_at') as Date | null)?.toISOString() ?? null };
 }
 
-export function incidentModel(row: Record<string, any>) {
+/** `team` is false for visitors who are not signed in: they see the squad of a task, not its note. */
+export function incidentModel(row: Record<string, any>, team = true) {
   const village = row.village_id ? { id: row.village_id, name: row.village_name, district: row.village_district, regency: row.village_regency,
     province: row.village_province, center: [row.village_lon, row.village_lat] as [number, number] } : null;
   return {
@@ -57,7 +61,7 @@ export function incidentModel(row: Record<string, any>) {
     settlementMeters: row.settlement_m, score: row.score, scoreParts: row.score_parts, level: row.level,
     firstVerifiedAt: row.first_verified_at?.toISOString() ?? null, latestStatus: row.latest_status,
     latestCheck: row.check_status ? { status: row.check_status, observedAt: row.check_observed_at.toISOString(), demo: row.check_demo } : null,
-    assignment: assignmentModel(row),
+    assignment: assignmentModel(row, 'task_', team),
     nearestPlace: nearestPlace(row),
     card: village ? cardText(cardIncident(row)) : null,
     sharePath: `/k/${row.code}`,
@@ -154,7 +158,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const params = object(request.params);
     const layer = choice(params.layer, ['desa', 'kabupaten', 'kejadian', 'deteksi'] as const, 'Lapisan');
     const z = Number(params.z), x = Number(params.x), y = Number(String(params.y).replace(/\.mvt$/, ''));
-    requireCondition([z, x, y].every(Number.isInteger) && z >= 0 && z <= 16 && x >= 0 && y >= 0 && x < 2 ** z && y < 2 ** z, 400, 'INVALID_INPUT', 'Ubin peta tidak valid.');
+    requireCondition([z, x, y].every(Number.isInteger) && z >= 0 && z <= 16 && x >= 0 && y >= 0 && x < 2 ** z && y < 2 ** z, 400, 'INVALID_INPUT', 'Ubin peta tidak valid. Muat ulang peta.');
     const live = layer === 'kejadian' || layer === 'deteksi';
     const hours = live ? hoursParam(object(request.query ?? {}).hours, 24, 168) : 0;
     const ttl = live ? 120_000 : 3_600_000;
@@ -246,7 +250,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
       GROUP BY day ORDER BY day`, [id]);
     return { data: { id: village.id, name: village.name, district: village.district, regency: village.regency, province: village.province,
       peatShare: Number(village.peat_share), areaHa: Number(village.area_ha), center: [village.lon, village.lat], centerSource: village.center_source,
-      geometry: village.geometry, incidents: incidents.rows.map(incidentModel), daily: daily.rows } };
+      geometry: village.geometry, incidents: incidents.rows.map(row => incidentModel(row, Boolean(request.user))), daily: daily.rows } };
   });
 
   // The incident list for the map sidebar, the volunteer and the agency queues, with the same filters as the map.
@@ -268,7 +272,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 500, 400, 'INVALID_INPUT', 'Batas daftar harus 1–500.');
     const result = await pool.query(`${incidentSelect} WHERE i.village_id IS NOT NULL AND i.last_detected_at > now() - make_interval(hours => $1)${where}
       ORDER BY ${sorts[sort]} LIMIT ${limit}`, params);
-    return { data: result.rows.map(incidentModel) };
+    return { data: result.rows.map(row => incidentModel(row, Boolean(request.user))) };
   });
 
   app.get('/api/v1/incidents/:id', async request => {
@@ -294,7 +298,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
       ...verifications.rows.map(v => ({ kind: 'checked' as const, at: v.observed_at.toISOString(), status: v.status, demo: v.is_demo,
         ...(signedIn ? { actor: v.reporter } : {}) })),
     ].sort((a, b) => a.at.localeCompare(b.at) || order[a.kind] - order[b.kind]);
-    return { data: { ...incidentModel(row),
+    return { data: { ...incidentModel(row, signedIn),
       detections: detections.rows.map(d => ({ id: Number(d.id), satellite: d.satellite, sensor: d.satellite === 'T' || d.satellite === 'A' ? 'MODIS' : 'VIIRS',
         acqAt: d.acq_at.toISOString(), latitude: d.latitude, longitude: d.longitude, confidence: d.confidence, confidencePct: d.confidence_pct,
         frp: d.frp === null ? null : Number(d.frp), brightTi4: d.bright_ti4 === null ? null : Number(d.bright_ti4),

@@ -47,7 +47,7 @@ export async function createApp(options: Options = {}) {
   await app.register(cors, { origin: [...origins], credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] });
   // The plugin throws what the builder returns, so it must carry its own status. Only API calls count.
   await app.register(rateLimit, { max: request => (request.method === 'GET' ? 900 : 300), timeWindow: '1 minute', allowList: request => !request.url.startsWith('/api/'),
-    errorResponseBuilder: (_request, context) => new ApiError(context.statusCode, 'RATE_LIMITED', 'Terlalu banyak permintaan. Tunggu satu menit lalu coba lagi.') });
+    errorResponseBuilder: (_request, context) => new ApiError(context.statusCode, 'RATE_LIMITED', 'Terlalu banyak permintaan. Tunggu satu menit, lalu ulangi.') });
   await app.register(multipart, { limits: { fileSize: 6 * 1024 * 1024, files: 1, fields: 12, fieldSize: 4096 } });
   await app.register(staticFiles, { root: uploadsDir, prefix: '/uploads/', index: false, dotfiles: 'deny', setHeaders(reply) {
     reply.header('X-Content-Type-Options', 'nosniff');
@@ -90,7 +90,7 @@ export async function createApp(options: Options = {}) {
     if (pgError.code === '23505') return reply.code(409).send({ error: { code: 'CONFLICT', message: 'Data ini sudah tercatat. Muat ulang halaman.' } });
     if (pgError.statusCode && pgError.statusCode < 500) return reply.code(pgError.statusCode).send({ error: { code: 'INVALID_INPUT', message: pgError.statusCode === 413 ? 'Foto lebih dari 6 MB. Pilih foto yang lebih kecil.' : 'Permintaan tidak valid. Muat ulang halaman.' } });
     request.log.error({ err: error }, 'Request failed');
-    return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Terjadi kesalahan di server. Coba lagi sebentar lagi.' } });
+    return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Terjadi kesalahan di server. Ulangi beberapa menit lagi.' } });
   });
   if (ownsPool) app.addHook('onClose', () => pool.end());
   return { app, pool };

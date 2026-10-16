@@ -66,8 +66,8 @@ export function installAssignments(app: FastifyInstance, pool: pg.Pool, send?: S
     const status = choice(object(request.body).status, ['menuju', 'dibatalkan'] as const, 'Status tugas');
     const task = (await pool.query('SELECT assignee_id, status FROM assignments WHERE id = $1', [id])).rows[0];
     requireCondition(task, 404, 'NOT_FOUND', 'Tugas tidak ditemukan. Muat ulang daftar tugas.');
-    if (status === 'menuju') requireCondition(task.assignee_id === user.id || user.role === 'admin', 403, 'FORBIDDEN', 'Status ini hanya untuk regu yang ditugaskan.');
-    else requireCondition(user.role === 'bpbd' || user.role === 'admin', 403, 'FORBIDDEN', 'Pembatalan tugas hanya untuk BPBD/Daops.');
+    if (status === 'menuju') requireCondition(task.assignee_id === user.id || user.role === 'admin', 403, 'FORBIDDEN', 'Hanya regu yang ditugaskan yang bisa mengubah status ini. Masuk dengan akun regu itu.');
+    else requireCondition(user.role === 'bpbd' || user.role === 'admin', 403, 'FORBIDDEN', 'Hanya BPBD/Daops yang bisa membatalkan tugas. Masuk dengan akun BPBD/Daops.');
     requireCondition(task.status === 'ditugaskan' || task.status === 'menuju', 409, 'ASSIGNMENT_CLOSED', closedMessage);
     const updated = await pool.query(status === 'menuju'
       ? `UPDATE assignments SET status = 'menuju', enroute_at = COALESCE(enroute_at, now()), updated_at = now() WHERE id = $1 AND status IN ${OPEN} RETURNING id`

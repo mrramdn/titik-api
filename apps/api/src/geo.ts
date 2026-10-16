@@ -42,6 +42,9 @@ const dateFormat = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', 
 export const formatWib = (date: Date) => timeFormat.format(date).replace(':', '.');
 /** "16 Okt 13.42". */
 export const formatWibDateTime = (date: Date) => `${dateFormat.format(date).replace('.', '')} ${formatWib(date)}`;
+const dayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' });
+/** "13.42" on the same WIB day as `now`, else "15 Okt 13.42". */
+export const formatWibWhen = (date: Date, now = new Date()) => (dayFormat.format(date) === dayFormat.format(now) ? formatWib(date) : formatWibDateTime(date));
 
 export interface ScoreInput {
   bestConfidence: string | null; maxFrp: number | null; viirsCount: number; modisCount: number;
@@ -99,16 +102,19 @@ export function placeText(place: CardPlace) {
   return place.distanceM < 300 ? `dekat ${placeName(place)}` : `${formatDistance(place.distanceM)} ${windName(place.bearingDeg)} ${placeName(place)}`;
 }
 
+/** How far off a MODIS-only location may be, in steps of 500 m and at least 1 km: "lokasi ±1 km". */
+export const uncertaintyText = (meters: number) => `lokasi ±${formatDistance(Math.max(1000, Math.ceil(meters / 500) * 500))}`;
+
 /**
  * "46 titik panas · 6,9 km barat daya Dusun Sungai Perlu · Desa Cinta Jaya · lahan gambut · terakhir 14.20 WIB ·
- * prioritas tinggi. Titik panas perlu dicek di lapangan."
+ * prioritas tinggi. Titik panas perlu dicek di lapangan." The last detection carries its date when it was not today.
  */
-export function cardText(incident: CardIncident) {
+export function cardText(incident: CardIncident, now = new Date()) {
   const parts = [`${formatCount(incident.detectionCount)} titik panas`];
   if (incident.place) parts.push(placeText(incident.place));
-  if (incident.modisOnly && incident.locationUncertaintyM) parts.push(`lokasi ±${formatDistance(incident.locationUncertaintyM)}`);
+  if (incident.modisOnly && incident.locationUncertaintyM) parts.push(uncertaintyText(incident.locationUncertaintyM));
   if (incident.village && !(incident.place?.kind === 'village' && incident.place.name === incident.village.name)) parts.push(`Desa ${incident.village.name}`);
   if (incident.onPeat) parts.push('lahan gambut');
-  parts.push(`terakhir ${formatWib(incident.lastDetectedAt)} WIB`, `prioritas ${incident.level}`);
+  parts.push(`terakhir ${formatWibWhen(incident.lastDetectedAt, now)} WIB`, `prioritas ${incident.level}`);
   return `${parts.join(' · ')}.${incident.nearStatic ? ' Dekat sumber panas tetap.' : ''} Titik panas perlu dicek di lapangan.`;
 }

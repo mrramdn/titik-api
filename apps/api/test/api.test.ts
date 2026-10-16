@@ -10,11 +10,12 @@ import { createApp } from '../src/app.js';
 import { createPool } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
 import { loadReference } from '../src/reference.js';
-import { ingest } from '../src/ingest.js';
+import { ingest, type NewAlert } from '../src/ingest.js';
 import { demoAccounts, demoPassword, demoSquads, resetDemo } from '../src/demo.js';
 import { parseFirmsCsv } from '../src/firms.js';
-import { cardText, formatDistance, formatWib, scoreIncident, sizePoints, windName, type CardIncident } from '../src/geo.js';
+import { cardText, formatDistance, formatWib, scoreIncident, sizePoints, uncertaintyText, windName, type CardIncident } from '../src/geo.js';
 import { lonLatToPixel, type PeatMask } from '../src/peat.js';
+import { pushAlerts } from '../src/push.js';
 import { defaultWindows, learnWindows, nextWindow } from '../src/status.js';
 
 const testUrl = process.env.TEST_DATABASE_URL ?? 'postgres://titikapi:titikapi@localhost:5442/titikapi_test';
@@ -161,11 +162,14 @@ test('alert text names the nearest settlement and the village, in Jakarta time',
   assert.equal(formatWib(new Date('2026-10-16T06:42:00Z')), '13.42');
   const base: CardIncident = { detectionCount: 46, onPeat: true, lastDetectedAt: new Date('2026-10-16T07:20:00Z'), level: 'tinggi', nearStatic: false, modisOnly: false,
     locationUncertaintyM: null, place: { name: 'Sungai Perlu', kind: 'hamlet', distanceM: 6900, bearingDeg: 225 }, village: { name: 'Cinta Jaya' } };
-  assert.equal(cardText(base), '46 titik panas · 6,9 km barat daya Dusun Sungai Perlu · Desa Cinta Jaya · lahan gambut · terakhir 14.20 WIB · prioritas tinggi. Titik panas perlu dicek di lapangan.');
-  assert.equal(cardText({ ...base, detectionCount: 1299, modisOnly: true, locationUncertaintyM: 1000, onPeat: false, nearStatic: true, level: 'sedang' }),
+  const sameDay = new Date('2026-10-16T09:00:00Z');
+  assert.equal(cardText(base, sameDay), '46 titik panas · 6,9 km barat daya Dusun Sungai Perlu · Desa Cinta Jaya · lahan gambut · terakhir 14.20 WIB · prioritas tinggi. Titik panas perlu dicek di lapangan.');
+  assert.equal(cardText({ ...base, detectionCount: 1299, modisOnly: true, locationUncertaintyM: 707, onPeat: false, nearStatic: true, level: 'sedang' }, sameDay),
     '1.299 titik panas · 6,9 km barat daya Dusun Sungai Perlu · lokasi ±1 km · Desa Cinta Jaya · terakhir 14.20 WIB · prioritas sedang. Dekat sumber panas tetap. Titik panas perlu dicek di lapangan.');
-  assert.equal(cardText({ ...base, place: { name: 'Cinta Jaya', kind: 'village', distanceM: 120, bearingDeg: 10 } }),
+  assert.equal(cardText({ ...base, place: { name: 'Cinta Jaya', kind: 'village', distanceM: 120, bearingDeg: 10 } }, sameDay),
     '46 titik panas · dekat Desa Cinta Jaya · lahan gambut · terakhir 14.20 WIB · prioritas tinggi. Titik panas perlu dicek di lapangan.');
+  assert.match(cardText(base, new Date('2026-10-17T03:00:00Z')), / terakhir 16 Okt 14\.20 WIB · /, 'a detection from another day carries its date');
+  assert.deepEqual([700, 1000, 1001, 1600, 2600].map(uncertaintyText), ['lokasi ±1 km', 'lokasi ±1 km', 'lokasi ±1,5 km', 'lokasi ±2 km', 'lokasi ±3 km']);
 });
 
 test('pass windows are learned per satellite and the pending window is the next one to watch', () => {
@@ -334,7 +338,7 @@ test('MODIS joins the nearest VIIRS incident of the day, never merges two, and s
   const detail = (await call('GET', `/incidents/${alone}`)).json().data;
   assert.equal(detail.modisOnly, true);
   assert.equal(detail.locationUncertaintyM, 814);
-  assert.match(detail.card, /lokasi ±810 m/);
+  assert.match(detail.card, /lokasi ±1 km/);
   assert.deepEqual(detail.detections.map((d: any) => [d.sensor, d.confidence, d.confidencePct, d.scan]), [['MODIS', 'high', 90, 1.2], ['MODIS', 'nominal', 40, 1]]);
   // The afternoon VIIRS pass sees the same fire: the older MODIS-only incident keeps its id.
   await ingest(pool, { source: 'fixture', peat, texts: { ...empty, N21: csv('N21', [{ point: pt(4600, 4500), hoursAgo: 0.5 }]) } });
@@ -418,6 +422,10 @@ test('tasks: BPBD assigns a squad, the squad sets off, any field check closes it
   assert.equal(twice.json().error.code, 'ASSIGNMENT_OPEN');
   const assigned = (await call('GET', '/incidents?hours=24&status=assigned')).json().data as any[];
   assert.ok(assigned.some(item => item.id === target && item.assignment.status === 'ditugaskan' && item.assignment.assignee.id === mpaId));
+  const publicTask = assigned.find(item => item.id === target).assignment;
+  assert.deepEqual([publicTask.note, publicTask.assignedBy], ['', ''], 'the note and who assigned it are for signed-in teams');
+  const teamTask = ((await call('GET', '/incidents?hours=24&status=assigned', mpa)).json().data as any[]).find(item => item.id === target).assignment;
+  assert.deepEqual([teamTask.note, teamTask.assignedBy], ['Cek dari jalan kanal.', 'Petugas BPBD/Daops (demo)']);
   assert.ok(!(await call('GET', '/incidents?hours=24&status=open')).json().data.some((item: any) => item.id === target));
   const mine = (await call('GET', '/me/assignments', mpa)).json().data as any[];
   assert.equal(mine[0].id, task.id);
@@ -614,6 +622,40 @@ test('S-NPP switches off after its last day and a broken MODIS row does not stop
   const row = await incident(await incidentAt(good));
   assert.equal(row.modis_only, true);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM detections WHERE satellite = 'N'")).rows[0].n, 0);
+});
+
+test('an ingest notifies for a new alert or an incident that just became high priority, not for every pass', async () => {
+  // High confidence, 64 MW and three detections make 60 points before peat and settlements: high priority anywhere.
+  const strong = (x: number, y: number, hoursAgo: number) => ({ point: pt(x, y), hoursAgo, confidence: 'high', frp: 64 });
+  const row = (y: number, hoursAgo: number, xs = [300, 500, 700]) => xs.map(x => strong(x, y, hoursAgo));
+  const mine = (alerts: NewAlert[]) => alerts.filter(alert => alert.userId === mpaId).map(alert => [alert.incidentId, alert.fresh] as const).sort();
+  const pass1 = await ingest(pool, { source: 'fixture', peat, texts: { ...empty, N21: csv('N21', [...row(300, 1.4), ...row(1700, 1.4)]) } });
+  const x = await incidentAt(pt(300, 300)), y = await incidentAt(pt(300, 1700));
+  assert.notEqual(x, y);
+  assert.equal((await incident(x)).level, 'tinggi');
+  assert.deepEqual(mine(pass1.alerts), [[x, true], [y, true]].sort(), 'two new alerts for the volunteer who watches the village');
+  // X was already high priority and its alert was read; Y looked like medium priority before the next pass.
+  await pool.query('UPDATE alerts SET read_at = now() WHERE user_id = $1 AND incident_id = $2', [mpaId, x]);
+  await pool.query("UPDATE incidents SET level = 'sedang' WHERE id = $1", [y]);
+  const pass2 = await ingest(pool, { source: 'fixture', peat, texts: { ...empty,
+    N20: csv('N20', [...row(300, 0.4, [900]), ...row(1700, 0.4, [900]), ...row(2700, 0.4)]) } });
+  assert.equal(await incidentAt(pt(900, 300)), x);
+  const z = await incidentAt(pt(300, 2700));
+  assert.deepEqual(mine(pass2.alerts), [[y, false], [z, true]].sort(), 'Y became high priority and Z is new; X only gained detections');
+  assert.equal((await pool.query('SELECT read_at FROM alerts WHERE user_id = $1 AND incident_id = $2', [mpaId, x])).rows[0].read_at, null, 'X moved up the inbox, unread');
+  // One notification per user and run, for the highest-scoring alert, with the count in the title.
+  const sent: { endpoint: string; payload: any }[] = [];
+  await pushAlerts(pool, pass2.alerts.map(alert => alert.id), async (subscription, payload) => { sent.push({ endpoint: subscription.endpoint, payload: JSON.parse(payload) }); });
+  const toVolunteer = sent.filter(item => item.endpoint === 'https://push.example/abc');
+  assert.equal(toVolunteer.length, 1);
+  assert.equal(toVolunteer[0]!.payload.title, `2 peringatan baru · Desa ${village.name} dan 1 lainnya`);
+  assert.match(toVolunteer[0]!.payload.body, /titik panas · .* · prioritas tinggi\. Titik panas perlu dicek di lapangan\.$/);
+  // Another user who starts watching the village gets alerts; the volunteer's inbox stays as it was.
+  await pool.query('UPDATE alerts SET read_at = now() WHERE user_id = $1', [mpaId]);
+  const saved = await call('PUT', '/me/subscriptions', await demo('kades'), { villages: [{ villageId: village.id, radiusKm: 0 }] });
+  assert.equal(saved.statusCode, 200, saved.body);
+  assert.ok(saved.json().data.newAlerts >= 3);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM alerts WHERE user_id = $1 AND read_at IS NULL', [mpaId])).rows[0].n, 0);
 });
 
 test('a shared link shows the alert text in the preview', async () => {

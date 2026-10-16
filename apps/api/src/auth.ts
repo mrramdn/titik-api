@@ -71,7 +71,7 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const row = result.rows[0];
     const validPassword = await argon2.verify(row?.password_hash ?? await dummyPasswordHash, password);
-    requireCondition(row && validPassword, 401, 'INVALID_CREDENTIALS', 'Email atau kata sandi salah. Periksa lalu coba lagi.');
+    requireCondition(row && validPassword, 401, 'INVALID_CREDENTIALS', 'Email atau kata sandi salah. Periksa lalu masuk lagi.');
     return startSession(request, reply, userModel(row), client);
   });
 
