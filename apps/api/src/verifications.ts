@@ -7,8 +7,9 @@ import sharp from 'sharp';
 import { authenticated } from './auth.js';
 import { transaction } from './db.js';
 import { ApiError, choice, object, requireCondition, text, uuid } from './errors.js';
+import { closeOpenAssignment } from './assignments.js';
 import { falseAlarmLabel } from './geo.js';
-import { getIncident, refreshVerificationSummary } from './incidents.js';
+import { clearTileCache, getIncident, refreshVerificationSummary } from './incidents.js';
 
 export const statuses = ['api_aktif', 'asap_bara', 'bakar_terkendali', 'alarm_palsu', 'tidak_terjangkau'] as const;
 const falseAlarmKinds = ['industri', 'pembakaran_sampah', 'lainnya'] as const;
@@ -27,7 +28,7 @@ async function readReport(request: FastifyRequest) {
   let photo: Buffer | null = null;
   for await (const part of request.parts()) {
     if (part.type === 'file') {
-      requireCondition(part.fieldname === 'photo' && !photo, 400, 'INVALID_INPUT', 'Kirim satu foto saja.');
+      requireCondition(part.fieldname === 'photo' && !photo, 400, 'INVALID_INPUT', 'Laporan hanya bisa membawa satu foto. Pilih satu foto.');
       photo = await part.toBuffer();
     } else fields[part.fieldname] = part.value;
   }
@@ -37,7 +38,7 @@ async function readReport(request: FastifyRequest) {
 const optionalNumber = (value: unknown, name: string, min: number, max: number) => {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
-  requireCondition(Number.isFinite(number) && number >= min && number <= max, 400, 'INVALID_INPUT', `${name} tidak valid.`);
+  requireCondition(Number.isFinite(number) && number >= min && number <= max, 400, 'INVALID_INPUT', `${name} tidak valid. Periksa isian ini.`);
   return number;
 };
 
@@ -50,7 +51,7 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
     // The same report sent again after a lost connection is answered with the first copy.
     const existing = await pool.query('SELECT id, incident_id FROM verifications WHERE client_uuid = $1', [clientUuid]);
     if (existing.rows[0]) {
-      requireCondition(existing.rows[0].incident_id === incident.id, 409, 'CONFLICT', 'ID laporan sudah dipakai untuk kejadian lain.');
+      requireCondition(existing.rows[0].incident_id === incident.id, 409, 'CONFLICT', 'ID laporan sudah dipakai untuk kejadian lain. Buat laporan baru.');
       return { data: { id: existing.rows[0].id, duplicate: true } };
     }
     const status = choice(fields.status, statuses, 'Status');
@@ -58,22 +59,22 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
     const note = fields.note === undefined || fields.note === '' ? '' : text(fields.note, 'Catatan', 0, 600);
     const latitude = optionalNumber(fields.latitude, 'Lintang', -90, 90);
     const longitude = optionalNumber(fields.longitude, 'Bujur', -180, 180);
-    requireCondition((latitude === null) === (longitude === null), 400, 'INVALID_INPUT', 'Koordinat harus lengkap.');
+    requireCondition((latitude === null) === (longitude === null), 400, 'INVALID_INPUT', 'Koordinat belum lengkap. Isi lintang dan bujur.');
     const accuracy = optionalNumber(fields.accuracyM, 'Akurasi', 0, 100_000);
-    const observedAt = new Date(text(fields.observedAt, 'Waktu pemeriksaan', 10, 40));
-    requireCondition(!Number.isNaN(observedAt.getTime()), 400, 'INVALID_INPUT', 'Waktu pemeriksaan tidak valid.');
-    requireCondition(observedAt.getTime() <= Date.now() + 5 * 60_000, 400, 'INVALID_INPUT', 'Waktu pemeriksaan tidak boleh di masa depan.');
-    requireCondition(observedAt.getTime() >= incident.first_detected_at.getTime() - 60 * 60_000, 400, 'INVALID_INPUT', 'Waktu pemeriksaan sebelum titik panas terdeteksi.');
+    const observedAt = new Date(text(fields.observedAt, 'Waktu cek lapangan', 10, 40));
+    requireCondition(!Number.isNaN(observedAt.getTime()), 400, 'INVALID_INPUT', 'Waktu cek lapangan tidak valid. Periksa jam di ponsel.');
+    requireCondition(observedAt.getTime() <= Date.now() + 5 * 60_000, 400, 'INVALID_INPUT', 'Waktu cek lapangan ada di masa depan. Periksa jam di ponsel.');
+    requireCondition(observedAt.getTime() >= incident.first_detected_at.getTime() - 60 * 60_000, 400, 'INVALID_INPUT', 'Waktu cek lapangan lebih awal dari titik panas. Periksa jam di ponsel.');
 
     let photoUrl: string | null = null, thumbUrl: string | null = null;
     const written: string[] = [];
     if (photo) {
-      requireCondition(imageExtension(photo), 400, 'INVALID_IMAGE', 'Foto harus JPEG, PNG, atau WebP.');
+      requireCondition(imageExtension(photo), 400, 'INVALID_IMAGE', 'Foto harus berformat JPEG, PNG, atau WebP. Pilih foto lain.');
       // Re-encoding proves the bytes are a picture and drops what the camera adds, the GPS position included:
       // the location of a report is the one the volunteer chose to send, nothing more.
       const encode = (size: number, quality: number) => sharp(photo, { limitInputPixels: 50_000_000 }).rotate()
         .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true }).jpeg({ quality, mozjpeg: true }).toBuffer();
-      const [full, thumb] = await Promise.all([encode(1600, 80), encode(480, 74)]).catch(() => { throw new ApiError(400, 'INVALID_IMAGE', 'Foto tidak bisa dibaca. Coba foto lain.'); });
+      const [full, thumb] = await Promise.all([encode(1600, 80), encode(480, 74)]).catch(() => { throw new ApiError(400, 'INVALID_IMAGE', 'Foto tidak bisa dibaca. Pilih foto lain.'); });
       const name = randomUUID();
       await writeFile(join(uploadsDir, `${name}.jpg`), full, { flag: 'wx' });
       await writeFile(join(uploadsDir, `${name}.thumb.jpg`), thumb, { flag: 'wx' });
@@ -81,7 +82,7 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
       photoUrl = `/uploads/${name}.jpg`; thumbUrl = `/uploads/${name}.thumb.jpg`;
     }
     try {
-      const id = await transaction(pool, async client => {
+      const saved = await transaction(pool, async client => {
         const inserted = await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, note, latitude, longitude, accuracy_m,
             distance_m, observed_at, photo_url, photo_thumb_url, is_demo)
           SELECT $1, $2, $3, $4, $5, $6, $7::float8, $8::float8, $9,
@@ -91,22 +92,25 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
         [incident.id, user.id, clientUuid, status, falseAlarmKind, note, latitude, longitude, accuracy, observedAt, photoUrl, thumbUrl, user.demo]);
         requireCondition(inserted.rows[0], 409, 'CONFLICT', 'Laporan ini sudah diterima.');
         await refreshVerificationSummary(client, [incident.id]);
+        // Any field check finishes the open task of the incident, whoever filed it.
+        const closedAssignment = await closeOpenAssignment(client, incident.id, observedAt);
         // A verified false alarm teaches the triage: later detections at the same spot are flagged for 30 days.
         if (status === 'alarm_palsu') {
           await client.query(`INSERT INTO static_sources (kind, label, geom, radius_m, verification_id, expires_at)
             SELECT 'alarm_palsu', $2, centroid, 375, $3, now() + interval '30 days' FROM incidents WHERE id = $1`,
-          [incident.id, `Alarm palsu terverifikasi (${falseAlarmLabel[falseAlarmKind!]})`, inserted.rows[0].id]);
+          [incident.id, `Alarm palsu dari cek lapangan (${falseAlarmLabel[falseAlarmKind!]})`, inserted.rows[0].id]);
           await client.query('UPDATE incidents SET near_static = true WHERE id = $1', [incident.id]);
         }
-        return inserted.rows[0].id as string;
+        return { id: inserted.rows[0].id as string, closedAssignment };
       });
       if (status === 'alarm_palsu') {
         const { refreshIncidents } = await import('./ingest.js');
         await pool.query(`UPDATE detections d SET near_static = true WHERE d.incident_id = $1`, [incident.id]);
         await refreshIncidents(pool, [incident.id]);
       }
+      clearTileCache();
       reply.code(201);
-      return { data: { id, duplicate: false } };
+      return { data: { id: saved.id, duplicate: false, closedAssignment: saved.closedAssignment } };
     } catch (error) {
       for (const file of written) await unlink(file).catch(() => {});
       throw error;

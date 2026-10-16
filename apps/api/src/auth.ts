@@ -13,7 +13,7 @@ const hashToken = (token: string) => createHash('sha256').update(token).digest('
 const dummyPasswordHash = argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id });
 
 function passwordInput(value: unknown, minimum: number) {
-  requireCondition(typeof value === 'string' && value.length >= minimum && value.length <= 128, 400, 'INVALID_INPUT', `Password harus ${minimum}–128 karakter.`);
+  requireCondition(typeof value === 'string' && value.length >= minimum && value.length <= 128, 400, 'INVALID_INPUT', `Kata sandi harus ${minimum}–128 karakter.`);
   return value;
 }
 
@@ -24,7 +24,7 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
   app.decorateRequest('sessionHash', null);
 
   function checkOrigin(request: FastifyRequest) {
-    requireCondition(typeof request.headers.origin === 'string' && origins.has(request.headers.origin), 403, 'INVALID_ORIGIN', 'Asal permintaan tidak diizinkan.');
+    requireCondition(typeof request.headers.origin === 'string' && origins.has(request.headers.origin), 403, 'INVALID_ORIGIN', 'Permintaan ditolak. Muat ulang halaman.');
   }
 
   const sessionCookie = { httpOnly: true, secure: production, sameSite: 'lax', path: '/', maxAge: SESSION_SECONDS } as const;
@@ -32,7 +32,7 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
   app.addHook('onRequest', async (request, reply) => {
     if (!request.url.startsWith('/api/')) return;
     const origin = request.headers.origin;
-    if (origin && !origins.has(origin)) throw new ApiError(403, 'INVALID_ORIGIN', 'Asal permintaan tidak diizinkan.');
+    if (origin && !origins.has(origin)) throw new ApiError(403, 'INVALID_ORIGIN', 'Permintaan ditolak. Muat ulang halaman.');
     const authorization = request.headers.authorization;
     const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
     const token = bearer ?? request.cookies[cookieName];
@@ -71,19 +71,19 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     const row = result.rows[0];
     const validPassword = await argon2.verify(row?.password_hash ?? await dummyPasswordHash, password);
-    requireCondition(row && validPassword, 401, 'INVALID_CREDENTIALS', 'Email atau password salah.');
+    requireCondition(row && validPassword, 401, 'INVALID_CREDENTIALS', 'Email atau kata sandi salah. Periksa lalu masuk lagi.');
     return startSession(request, reply, userModel(row), client);
   });
 
-  // The judges and anyone trying the prototype sign in with one tap. Only the shared demo accounts can be
-  // opened this way, and the switch turns it off for a real deployment.
+  // The shared demo accounts open without a password. Only they can be opened this way, and DEMO_LOGIN=false
+  // turns it off for a real deployment.
   app.post('/api/v1/auth/demo', { config: { rateLimit } }, async (request, reply) => {
-    requireCondition(demoLogin, 404, 'NOT_FOUND', 'Masuk demo tidak tersedia.');
+    requireCondition(demoLogin, 404, 'NOT_FOUND', 'Akun demo tidak tersedia di server ini. Masuk dengan email.');
     const body = object(request.body);
     const role = choice(body.role, ['mpa', 'kades', 'bpbd'] as const, 'Peran');
     const client = body.client === undefined ? 'web' : choice(body.client, ['mobile', 'web'] as const, 'Client');
     const row = (await pool.query('SELECT * FROM users WHERE email = $1', [`${role}${demoDomain}`])).rows[0];
-    requireCondition(row, 404, 'NOT_FOUND', 'Akun demo belum disiapkan.');
+    requireCondition(row, 404, 'NOT_FOUND', 'Akun demo belum disiapkan. Jalankan pnpm db:reset-demo.');
     return startSession(request, reply, userModel(row), client);
   });
 
@@ -98,7 +98,7 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
 }
 
 export function authenticated(request: FastifyRequest, ...roles: Role[]) {
-  requireCondition(request.user, 401, 'UNAUTHENTICATED', 'Silakan masuk terlebih dahulu.');
-  if (roles.length) requireCondition(roles.includes(request.user.role) || request.user.role === 'admin', 403, 'FORBIDDEN', 'Akses tidak diizinkan untuk peran ini.');
+  requireCondition(request.user, 401, 'UNAUTHENTICATED', 'Sesi berakhir. Masuk lagi untuk melanjutkan.');
+  if (roles.length) requireCondition(roles.includes(request.user.role) || request.user.role === 'admin', 403, 'FORBIDDEN', 'Peran ini tidak punya akses. Masuk dengan akun yang sesuai.');
   return request.user;
 }
