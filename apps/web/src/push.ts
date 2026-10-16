@@ -1,4 +1,10 @@
+// Web Push for tasks and alerts. Failures carry a reason the page turns into text in the visitor's language.
 import { api } from './api';
+
+export type PushProblem = 'unsupported' | 'disabled' | 'denied';
+export class PushError extends Error {
+  constructor(public problem: PushProblem) { super(problem); }
+}
 
 const toKey = (base64: string) => {
   const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
@@ -15,12 +21,14 @@ export async function currentSubscription() {
 
 /** Asks for permission, subscribes this browser and tells the server. */
 export async function enablePush() {
-  if (!pushSupported()) throw new Error('Peramban ini belum mendukung notifikasi push. Coba Chrome di Android.');
+  if (!pushSupported()) throw new PushError('unsupported');
   const { data } = await api<{ data: { enabled: boolean; publicKey: string } }>('/push/public-key');
-  if (!data.enabled || !data.publicKey) throw new Error('Notifikasi push belum diaktifkan di server ini.');
+  if (!data.enabled || !data.publicKey) throw new PushError('disabled');
   const permission = await Notification.requestPermission();
-  if (permission !== 'granted') throw new Error('Izin notifikasi ditolak. Aktifkan lewat pengaturan situs di peramban.');
-  const registration = await navigator.serviceWorker.ready;
+  if (permission !== 'granted') throw new PushError('denied');
+  // `ready` never settles where no service worker is registered (a dev server, a blocked worker).
+  const registration = await Promise.race([navigator.serviceWorker.ready, new Promise<null>(resolve => setTimeout(() => resolve(null), 10_000))]);
+  if (!registration) throw new PushError('unsupported');
   const subscription = (await registration.pushManager.getSubscription())
     ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(data.publicKey) });
   const json = subscription.toJSON();
@@ -34,3 +42,6 @@ export async function disablePush() {
   await api('/me/push', { method: 'DELETE', json: { endpoint: subscription.endpoint } }).catch(() => {});
   await subscription.unsubscribe();
 }
+
+/** Sends the newest alert again as a notification to this account's devices. */
+export const testPush = () => api<{ data: { delivered: number } }>('/me/push/test', { method: 'POST' });

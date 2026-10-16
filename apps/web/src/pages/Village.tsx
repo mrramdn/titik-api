@@ -1,49 +1,93 @@
-import { useParams, useNavigate, Link } from 'react-router';
+// One village: its map, hotspots per day over seven days and every incident of the week with where it stands.
+import { useMemo } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import { ChevronLeft, Share2 } from 'lucide-react';
 import type { Incident } from '../api';
 import { Shell } from '../components/Shell';
-import { Banner, FlameTile, LevelBadge, StatusText, shareCard, useApi } from '../components/ui';
+import { Banner, PriorityMark, shareText, StatusLine, useApi, useDataVersion } from '../components/ui';
+import { Bars7 } from '../components/volunteer/Bars7';
+import { incidentLimit, villageSummaryText } from '../components/volunteer/villageSummary';
+import { useFormat } from '../format';
+import { dict, useLang, useT } from '../i18n';
 import { MapView } from '../map/MapView';
-import { statusLabel, timeSpan } from '../format';
+import { useSession } from '../session';
+
+const text = dict({
+  id: {
+    back: 'Peta', loading: 'Memuat desa…', village: 'Desa {name}', where: 'Kec. {district} · {regency} · {province}',
+    size: '{area} ha · {peat}% lahan gambut', share: 'Bagikan ringkasan',
+    bars: 'Titik panas 7 hari', forest: 'Peringatan gangguan hutan (GLAD-L, GLAD-S2, RADD) tampil di peta. Matikan lewat Lapisan.',
+    incidents: 'Kejadian 7 hari', empty: 'Tidak ada titik panas dalam 7 hari terakhir.', watch: 'Pantau desa ini lewat Desa saya.',
+    hotspots: '{n} titik panas', hotspot: '1 titik panas', peat: 'lahan gambut', priority: 'Prioritas {level}', more: '{n} kejadian lain tidak ditampilkan.',
+  },
+  en: {
+    back: 'Map', loading: 'Loading the village…', village: '{name}', where: '{district} district · {regency} · {province}',
+    size: '{area} ha · {peat}% peatland', share: 'Share summary',
+    bars: 'Hotspots, 7 days', forest: 'Forest disturbance alerts (GLAD-L, GLAD-S2, RADD) are shown on the map. Turn them off under Layers.',
+    incidents: 'Incidents, 7 days', empty: 'No hotspots in the last 7 days.', watch: 'Watch this village from My villages.',
+    hotspots: '{n} hotspots', hotspot: '1 hotspot', peat: 'peatland', priority: '{level} priority', more: '{n} more incidents not shown.',
+  },
+});
 
 interface VillageDetail { id: string; name: string; district: string; regency: string; province: string; peatShare: number; areaHa: number; center: [number, number]; geometry: GeoJSON.Geometry; incidents: Incident[]; daily: { day: string; detections: number }[] }
+const shown = 30;
+
+function IncidentRow({ incident }: { incident: Incident }) {
+  const t = useT(text), f = useFormat();
+  const level = f.lang === 'id' ? f.level(incident.level).toLowerCase() : f.level(incident.level);
+  return (
+    <Link to={`/kejadian/${incident.id}`} className="v-row v-row-link">
+      <PriorityMark level={incident.level} />
+      <span className="v-body">
+        <span className="v-place">{incident.detectionCount === 1 ? t('hotspot') : t('hotspots', { n: f.num(incident.detectionCount) })}{incident.onPeat ? ` · ${t('peat')}` : ''}</span>
+        <span className="v-facts">{[t('priority', { level }), f.span(incident.firstDetectedAt, incident.lastDetectedAt), incident.nearestPlace ? f.place(incident.nearestPlace) : null].filter(Boolean).join(' · ')}</span>
+        <StatusLine incident={incident} />
+      </span>
+    </Link>
+  );
+}
 
 export function VillagePage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const village = useApi<VillageDetail>(`/villages/${id}`);
+  const t = useT(text), f = useFormat();
+  const { lang } = useLang();
+  const { user } = useSession();
+  const { version } = useDataVersion();
+  const village = useApi<VillageDetail>(`/villages/${id}`, version);
   const d = village.data;
-  if (!d) return <Shell><main className="page">{village.error ? <Banner tone="warn">{village.error}</Banner> : <div className="empty">Memuat desa…</div>}</main></Shell>;
-  const max = Math.max(1, ...d.daily.map(x => x.detections));
-  const today = d.incidents.filter(i => Date.now() - new Date(i.lastDetectedAt).getTime() < 24 * 3600_000);
-  const summary = `Ringkasan 24 jam Desa ${d.name} (Kec. ${d.district}, ${d.regency}): ${today.length} kejadian titik panas, ${today.filter(i => i.level === 'tinggi').length} prioritas tinggi, ${today.filter(i => i.firstVerifiedAt).length} sudah dicek${today.length ? ` (${today.map(i => (i.latestStatus ? statusLabel[i.latestStatus] : 'belum dicek')).join(', ')})` : ''}. Titik panas belum tentu api; tidak ada titik juga belum tentu aman.`;
+  // The outline only changes with the village; a data refresh must not zoom the map back while someone reads it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const outline = useMemo(() => d?.geometry ?? null, [d?.id]);
+  if (!d) return <Shell><main className="page">{village.error ? <Banner tone="warn">{village.error}</Banner> : <div className="empty">{t('loading')}</div>}</main></Shell>;
+  const canWatch = Boolean(user) && user?.role !== 'bpbd';
   return (
     <Shell>
-      <main className="page">
-        <Link to="/" className="back" style={{ color: 'var(--text-2)' }}><ChevronLeft size={14} />Peta</Link>
+      <main className="page v-page">
+        <Link to="/" className="back v-back"><ChevronLeft size={14} aria-hidden="true" />{t('back')}</Link>
         <div className="page-head">
-          <div><h1 className="title-24">Desa {d.name}</h1><p>Kec. {d.district} · {d.regency} · {d.province} · {Math.round(d.areaHa).toLocaleString('id-ID')} ha · {Math.round(d.peatShare * 100)}% bergambut</p></div>
-          <button type="button" className="btn btn-wa btn-sm" onClick={() => void shareCard(summary, `/desa/${d.id}`)}><Share2 size={16} />Bagikan ringkasan desa</button>
+          <div>
+            <h1 className="title-24">{t('village', { name: d.name })}</h1>
+            <p>{t('where', { district: d.district, regency: d.regency, province: d.province })}</p>
+            <p className="v-muted">{t('size', { area: f.num(Math.round(d.areaHa)), peat: f.num(Math.round(d.peatShare * 100)) })}</p>
+          </div>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => void shareText(villageSummaryText(d, d.incidents, lang))}><Share2 size={16} aria-hidden="true" />{t('share')}</button>
         </div>
         <div className="dash-grid">
-          <div className="dash-map"><MapView hours={168} focus={d.geometry} initialLayers={{ deteksi: true, deforestasi: true }} onSelect={x => navigate(`/kejadian/${x}`)} legend={false} /></div>
-          <div className="card" style={{ padding: 16, display: 'grid', gap: 12, alignContent: 'start' }}>
-            <span className="heading-16">Deteksi satelit 7 hari</span>
-            <div className="bars7">{d.daily.map(x => <div key={x.day}><i style={{ height: `${(x.detections / max) * 100}%` }} /><b>{x.detections}</b><span>{x.day.slice(8)}/{x.day.slice(5, 7)}</span></div>)}</div>
-            <p className="note">Lapisan alert gangguan hutan (GLAD-L, GLAD-S2, RADD) aktif di peta untuk memantau alih fungsi lahan. Matikan lewat tombol Lapisan.</p>
+          <div className="dash-map"><MapView hours={168} focus={outline} initialLayers={{ deteksi: true, deforestasi: true }} onSelect={x => navigate(`/kejadian/${x}`)} legend={false} /></div>
+          <div className="card v-side">
+            <span className="heading-16">{t('bars')}</span>
+            <Bars7 daily={d.daily} />
+            <p className="note">{t('forest')}</p>
           </div>
         </div>
-        <div className="card list-card">
-          <div className="queue-head"><span className="heading-16">Kejadian 7 hari</span><span className="caption muted">{d.incidents.length}</span></div>
-          {!d.incidents.length && <div className="empty">Tidak ada titik panas dalam 7 hari. Tetap waspada: awan dan asap bisa menutupi api.</div>}
-          {d.incidents.slice(0, 30).map(i => (
-            <Link key={i.id} to={`/kejadian/${i.id}`} className="alert-row">
-              <FlameTile level={i.level} checked={Boolean(i.firstVerifiedAt)} size={20} />
-              <span className="main"><span className="title">{i.detectionCount} titik panas</span><span className="summary">{timeSpan(i.firstDetectedAt, i.lastDetectedAt)}{i.onPeat ? ' · gambut' : ''}</span>
-                <span className="meta"><LevelBadge level={i.level} /><StatusText status={i.latestStatus} /></span></span>
-            </Link>
-          ))}
-        </div>
+        <section className="v-section" aria-labelledby="v-village-incidents">
+          <div className="v-section-head"><h2 id="v-village-incidents" className="heading-16">{t('incidents')}</h2>{d.incidents.length > 0 && <span className="v-count">{f.num(d.incidents.length)}{d.incidents.length >= incidentLimit ? '+' : ''}</span>}</div>
+          {d.incidents.length
+            ? <div className="v-list">{d.incidents.slice(0, shown).map(incident => <IncidentRow key={incident.id} incident={incident} />)}</div>
+            : <p className="v-empty">{t('empty')} {canWatch && <Link to="/desa-saya" className="link">{t('watch')}</Link>}</p>}
+          {d.incidents.length > shown && <p className="note">{t('more', { n: d.incidents.length - shown })}</p>}
+        </section>
       </main>
     </Shell>
   );

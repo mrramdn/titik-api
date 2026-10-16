@@ -1,1 +1,163 @@
-/* volunteer screens. Owned by one build slice; shared tokens and base classes live in ../styles.css. */
+/* Volunteer screens: Tugas, field check, Desa saya, village page. Shared tokens and base classes live in ../styles.css.
+   Colour carries meaning only: priority bars, green for checked, blue for assigned. Main steps on cards are ink;
+   brand orange is left for the one primary action of a screen (send the report, save villages). */
+
+/* ---------- page frame ---------- */
+.v-page { gap: 18px; }
+.v-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.v-intro { margin-top: 2px; color: var(--text-2); }
+.v-muted { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.v-empty { font-size: 14px; line-height: 20px; color: var(--text-2); }
+.v-error { font-size: 12px; line-height: 16px; color: #9a3b0a; }
+.v-stack { display: grid; gap: 8px; }
+.v-back { color: var(--text-2); }
+.v-back:hover { color: var(--text); }
+.v-linkbtn { padding: 0; margin-left: 4px; background: none; border: 0; font: inherit; font-weight: 500; color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+/* Ink: the next step on a card. Neutral, so it never competes with priority colour. */
+.btn-ink { background: var(--text); color: var(--surface-card); }
+.btn-ink:hover:not(:disabled) { background: #000; }
+.v-btn { height: 36px; padding: 0 12px; gap: 6px; font-size: 13px; }
+.v-btn svg { flex: none; }
+
+/* ---------- notifications switch ---------- */
+.v-push-wrap { display: grid; justify-items: end; gap: 2px; }
+.v-push { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--text-2); font-size: 13px; }
+.v-switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.v-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.v-switch i { position: relative; width: 36px; height: 22px; flex: none; border-radius: 11px; background: var(--surface-line); transition: background 0.15s; }
+.v-switch i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); transition: transform 0.15s; }
+.v-switch input:checked + i { background: var(--text); }
+.v-switch input:checked + i::after { transform: translateX(14px); }
+.v-switch input:disabled + i { opacity: 0.5; }
+.v-switch input:focus-visible + i { outline: 2px solid var(--text); outline-offset: 2px; }
+.v-push-msg { max-width: 300px; font-size: 12px; line-height: 16px; color: var(--text-2); text-align: right; }
+
+/* ---------- order switch and GPS line ---------- */
+.v-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.v-toolbar .chip { height: 32px; padding: 0 12px; font-size: 13px; }
+.v-fixnote { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; font-size: 12px; line-height: 16px; color: var(--text-2); }
+.v-fixnote svg { flex: none; color: var(--text-3); }
+
+/* ---------- sections and plain lists ---------- */
+.v-section { display: grid; gap: 10px; }
+.v-section-head { display: flex; align-items: center; gap: 8px; }
+.v-count { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--surface-subtle); color: var(--text-2); font-size: 12px; font-weight: 600; }
+.v-section-link { margin-left: auto; font-size: 13px; color: var(--text-2); text-decoration: underline; text-underline-offset: 2px; }
+.v-section-link:hover { color: var(--text); }
+.v-list { background: var(--surface-card); border: 1px solid var(--surface-line); border-radius: var(--radius-lg); overflow: hidden; }
+.v-row { display: flex; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--surface-line); color: var(--text); }
+.v-row:last-child { border-bottom: 0; }
+.v-row-compact { padding: 10px 16px; }
+.v-row-link:hover { background: #fbfaf8; }
+.v-body { flex: 1; min-width: 0; display: grid; gap: 3px; align-content: start; }
+.v-title { display: grid; gap: 1px; color: var(--text); }
+.v-title:hover .v-place { text-decoration: underline; text-underline-offset: 2px; }
+.v-place { font-size: 15px; line-height: 20px; font-weight: 600; }
+.v-sub { font-size: 13px; line-height: 18px; color: var(--text-2); }
+.v-facts { font-size: 13px; line-height: 18px; color: var(--text-2); }
+.v-note { justify-self: start; margin: 2px 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-subtle); font-size: 13px; line-height: 18px; color: var(--text); }
+.v-checkline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 1px; }
+.v-ready { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; color: var(--text-2); }
+.v-ready svg { flex: none; }
+.v-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.v-done > summary { display: flex; align-items: center; gap: 6px; width: max-content; padding: 4px 0; font-weight: 500; color: var(--text-2); cursor: pointer; list-style: none; }
+.v-done > summary::-webkit-details-marker { display: none; }
+.v-done > summary:hover { color: var(--text); }
+.v-chevron { flex: none; transition: transform 0.15s; }
+.v-done[open] .v-chevron { transform: rotate(90deg); }
+.v-done[open] > summary { margin-bottom: 8px; }
+.v-group { display: grid; gap: 6px; }
+.v-group + .v-group { margin-top: 10px; }
+.v-group-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+.v-group-name { font-weight: 600; color: var(--text); }
+.v-group-name:hover { text-decoration: underline; text-underline-offset: 2px; }
+.v-more { justify-self: start; }
+
+/* ---------- field check ---------- */
+.v-appbar-btn { background: transparent; color: var(--chrome-text); }
+.v-appbar-btn:hover { background: var(--chrome-900); color: var(--chrome-text); }
+.v-form { padding-bottom: 0; }
+.v-incident { display: grid; gap: 4px; }
+.v-code { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+.v-target { gap: 14px; padding: 14px; }
+.v-target-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.v-target .caption { line-height: 17px; }
+.v-dial { position: relative; width: 64px; height: 64px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--chrome-line); background: var(--chrome-900); color: var(--chrome-text); }
+.v-rose { position: absolute; inset: 0; transition: transform 0.3s ease-out; }
+.v-rose::before { content: ''; position: absolute; top: 0; left: 50%; width: 2px; height: 6px; margin-left: -1px; background: var(--chrome-text-2); border-radius: 1px; }
+.v-rose b { position: absolute; top: 6px; left: 0; right: 0; text-align: center; font-size: 10px; line-height: 12px; font-weight: 700; color: var(--chrome-text-2); }
+.v-arrow { transition: transform 0.3s ease-out, opacity 0.2s; }
+.v-compass { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--chrome-line); background: var(--chrome-900); color: var(--chrome-text); font-size: 12px; cursor: pointer; }
+.v-route { align-self: center; }
+.v-coords { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: -8px; font-size: 13px; color: var(--text-2); }
+.v-coord-value { font-variant-numeric: tabular-nums; color: var(--text); user-select: all; }
+.v-coords .btn { margin-left: auto; }
+.v-fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 6px; min-width: 0; }
+.v-fieldset legend { padding: 0; margin-bottom: 6px; }
+.v-verify .option.on { background: var(--surface-subtle); box-shadow: inset 3px 0 0 var(--text); }
+.v-verify .option.on .radio { border: 5px solid var(--text); }
+.v-verify .option input:focus-visible ~ .radio { outline: 2px solid var(--text); outline-offset: 2px; }
+.v-submit { display: grid; gap: 6px; margin: 0 -32px; padding-left: 32px; padding-right: 32px; }
+.v-submit .v-muted { text-align: center; }
+.v-result { padding: 16px; }
+.v-result > div { display: grid; gap: 4px; }
+
+/* ---------- Desa saya ---------- */
+.v-vrow { display: grid; gap: 10px; padding: 16px; border-bottom: 1px solid var(--surface-line); }
+.v-vrow:last-child { border-bottom: 0; }
+.v-vrow-head { display: grid; gap: 2px; }
+.v-vname { font-size: 16px; line-height: 22px; font-weight: 600; color: var(--text); }
+.v-vname:hover { text-decoration: underline; text-underline-offset: 2px; }
+.v-vrow-body { display: grid; grid-template-columns: 148px 1fr; gap: 16px; align-items: end; }
+.v-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.v-stats div { display: grid; gap: 2px; min-width: 0; }
+.v-stats dt { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.v-stats dd { margin: 0; font-size: 20px; line-height: 24px; font-weight: 600; letter-spacing: -0.3px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v-stats dd.v-checked { color: var(--status-checked); font-size: 15px; }
+.v-stats dd.v-none { color: var(--text-3); font-size: 15px; font-weight: 500; }
+.v-vrow .v-actions { margin-top: 0; }
+.v-manage { display: grid; gap: 12px; padding: 16px; }
+.v-picks { display: grid; gap: 6px; }
+.v-pick { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--surface-line); }
+.v-pick:last-child { border-bottom: 0; }
+.v-pick-name { flex: 1; min-width: 0; display: grid; gap: 1px; text-align: left; }
+.v-pick-name b { font-weight: 500; color: var(--text); }
+.v-pick-name small { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.v-radius { width: auto; max-width: 150px; padding: 6px 8px; font-size: 13px; }
+.v-search { position: relative; display: block; }
+.v-search svg { position: absolute; left: 12px; top: 12px; color: var(--text-3); }
+.v-search .input { padding-left: 36px; }
+.v-hits { display: grid; max-height: 420px; overflow-y: auto; border: 1px solid var(--surface-line); border-radius: var(--radius-md); }
+.v-hit { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; background: var(--surface-card); border: 0; border-bottom: 1px solid var(--surface-line); color: var(--text); cursor: pointer; }
+.v-hit:last-child { border-bottom: 0; }
+.v-hit:hover:not(:disabled) { background: #fbfaf8; }
+.v-hit:disabled { cursor: not-allowed; opacity: 0.5; }
+.v-hit .v-toggle { display: inline-flex; align-items: center; gap: 4px; flex: none; height: 28px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--surface-line); font-size: 12px; font-weight: 500; color: var(--text-2); }
+.v-hit.on .v-toggle { background: var(--text); border-color: var(--text); color: var(--surface-card); }
+.v-hits .v-empty { padding: 12px; }
+.v-manage-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ---------- seven-day bars (ink) ---------- */
+.v-bars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 120px; }
+.v-bars div { display: grid; grid-template-rows: 1fr auto auto; height: 100%; gap: 2px; text-align: center; font-size: 11px; line-height: 14px; color: var(--text-3); min-width: 0; }
+.v-bars i { align-self: end; min-height: 2px; border-radius: 3px 3px 0 0; background: var(--text-2); }
+.v-bars i.zero { background: var(--surface-line); }
+.v-bars b { font-size: 12px; font-weight: 600; color: var(--text); }
+.v-bars-compact { height: 56px; gap: 4px; }
+.v-bars-compact div { grid-template-rows: 1fr auto; font-size: 10px; line-height: 12px; }
+.v-side { padding: 16px; display: grid; gap: 12px; align-content: start; }
+
+@media (max-width: 720px) {
+  .v-page { gap: 14px; }
+  .v-list { margin: 0 -16px; border-radius: 0; border-left: 0; border-right: 0; }
+  .v-submit { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+  .v-vrow-body { grid-template-columns: 1fr; gap: 12px; }
+  .v-bars-compact { max-width: 220px; }
+}
+@media (max-width: 400px) {
+  .v-row { gap: 10px; padding: 12px 14px; }
+  .v-btn { padding: 0 10px; }
+  .v-target { gap: 10px; padding: 12px; }
+  .v-dial { width: 56px; height: 56px; }
+}
