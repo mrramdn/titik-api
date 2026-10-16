@@ -82,7 +82,7 @@ function Dashboard() {
     return {
       action: `/incidents${incidentQuery({ hours, levels: ['tinggi'], status: 'open', sort: 'priority', regency }, extra)}`,
       active: `/incidents${incidentQuery({ hours, status: 'assigned', sort: 'priority', regency }, extra)}`,
-      done: `/incidents${incidentQuery({ hours, status: 'checked', sort: 'recent', regency }, extra)}`,
+      done: `/incidents${incidentQuery({ hours, status: 'checked', sort: 'checked', regency }, extra)}`,
     };
   }, [hours, regency, query]);
   const lanes = useLanes(lanePaths, dataVersion);

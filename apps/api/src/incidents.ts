@@ -111,6 +111,7 @@ const sorts = {
   priority: `(i.first_verified_at IS NULL AND i.level = 'tinggi') DESC, i.score DESC, i.last_detected_at DESC, i.id`,
   recent: 'i.last_detected_at DESC, i.score DESC, i.id',
   size: 'i.detection_count DESC, i.score DESC, i.id',
+  checked: 'lc.observed_at DESC NULLS LAST, i.score DESC, i.id',
 } as const;
 const levels = ['tinggi', 'sedang', 'rendah'] as const;
 
@@ -267,7 +268,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const peat = choice(query.peat === undefined || query.peat === '' ? '0' : String(query.peat), ['0', '1', 'true', 'false'] as const, 'Filter gambut');
     if (peat === '1' || peat === 'true') where += ' AND i.on_peat';
     if (query.village !== undefined) { params.push(String(query.village)); where += ` AND i.village_id = $${params.length}`; }
-    const sort = choice(query.sort ?? 'priority', ['priority', 'recent', 'size'] as const, 'Urutan');
+    const sort = choice(query.sort ?? 'priority', ['priority', 'recent', 'size', 'checked'] as const, 'Urutan');
     const limit = query.limit === undefined || query.limit === '' ? 100 : Number(query.limit);
     requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 500, 400, 'INVALID_INPUT', 'Batas daftar harus 1–500.');
     const result = await pool.query(`${incidentSelect} WHERE i.village_id IS NOT NULL AND i.last_detected_at > now() - make_interval(hours => $1)${where}

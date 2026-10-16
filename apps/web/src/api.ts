@@ -104,7 +104,8 @@ export interface IngestStatus {
   satellites: IngestSatellite[];
 }
 
-export type IncidentSort = 'priority' | 'recent' | 'size';
+/** `checked` orders by the latest field check, newest first. */
+export type IncidentSort = 'priority' | 'recent' | 'size' | 'checked';
 export type StatusFilter = 'all' | 'open' | 'assigned' | 'checked';
 export interface IncidentFilters { hours: number; levels: Level[]; status: StatusFilter; peat: boolean; regency: string; sort: IncidentSort }
 export const defaultFilters: IncidentFilters = { hours: 24, levels: [], status: 'all', peat: false, regency: '', sort: 'priority' };
