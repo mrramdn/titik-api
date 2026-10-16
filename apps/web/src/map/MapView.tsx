@@ -49,7 +49,7 @@ const text = dict({
     map: 'Peta titik panas', layers: 'Lapisan', layersTitle: 'Lapisan peta', legend: 'Legenda', close: 'Tutup',
     deteksi: 'Titik panas satelit', deteksiSource: 'NASA FIRMS, VIIRS 375 m dan MODIS 1 km', gambut: 'Lahan gambut', gambutSource: 'Global peatland extent',
     deforestasi: 'Peringatan gangguan hutan', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Citra satelit harian', harianSource: '{satellite}, {date} {part} · NASA GIBS',
-    morning: 'pagi', midday: 'siang', citra: 'Citra detail', citraSource: 'Sentinel-2 cloudless 2023, EOX',
+    morning: 'pagi', midday: 'siang', citra: 'Citra detail', citraSource: 'Sentinel-2 cloudless 2023, EOX', satellite: 'Tampilan satelit',
     incidents: 'Prioritas kejadian', checked: 'Sudah dicek', assigned: 'Ditugaskan', sizeNote: 'titik panas per kejadian', modisOnly: 'Hanya MODIS, lokasi ±1 km',
     hotspots: 'Titik panas menurut umur', hotspotsConfidence: 'Titik panas menurut keyakinan', newest: '≤ 3 jam', today: 'Hari ini', older: 'Lebih lama',
     confHigh: 'Tinggi', confNominal: 'Sedang', confLow: 'Rendah', modisRing: 'Piksel MODIS, lokasi ±1 km',
@@ -60,7 +60,7 @@ const text = dict({
     map: 'Hotspot map', layers: 'Layers', layersTitle: 'Map layers', legend: 'Legend', close: 'Close',
     deteksi: 'Satellite hotspots', deteksiSource: 'NASA FIRMS, VIIRS 375 m and MODIS 1 km', gambut: 'Peatland', gambutSource: 'Global peatland extent',
     deforestasi: 'Forest disturbance alerts', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Daily satellite image', harianSource: '{satellite}, {date} {part} · NASA GIBS',
-    morning: 'morning', midday: 'midday', citra: 'Detailed imagery', citraSource: 'Sentinel-2 cloudless 2023, EOX',
+    morning: 'morning', midday: 'midday', citra: 'Detailed imagery', citraSource: 'Sentinel-2 cloudless 2023, EOX', satellite: 'Satellite view',
     incidents: 'Incident priority', checked: 'Checked', assigned: 'Assigned', sizeNote: 'hotspots per incident', modisOnly: 'MODIS only, location ±1 km',
     hotspots: 'Hotspots by age', hotspotsConfidence: 'Hotspots by confidence', newest: '≤ 3 h', today: 'Today', older: 'Older',
     confHigh: 'High', confNominal: 'Nominal', confLow: 'Low', modisRing: 'MODIS pixel, location ±1 km',
@@ -142,10 +142,11 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
       const today = hoursSinceMidnightWib();
       const firstSymbol = instance.getStyle().layers?.find(layer => layer.type === 'symbol')?.id;
       instance.addSource('citra', { type: 'raster', tileSize: 256, maxzoom: 15, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg'], attribution: 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)' });
-      instance.addLayer({ id: 'citra', type: 'raster', source: 'citra', layout: { visibility: 'none' } }, firstSymbol);
+      instance.addLayer({ id: 'citra', type: 'raster', source: 'citra', minzoom: 9, layout: { visibility: 'none' } }, firstSymbol);
       const day = state.current.daily;
       instance.addSource('harian', { type: 'raster', tileSize: 256, maxzoom: day.maxzoom, tiles: [day.tiles], attribution: 'NASA EOSDIS GIBS' });
-      instance.addLayer({ id: 'harian', type: 'raster', source: 'harian', layout: { visibility: 'none' } }, firstSymbol);
+      // GIBS tiles stop at zoom 9; past that the Sentinel-2 layer (minzoom 9) takes over.
+      instance.addLayer({ id: 'harian', type: 'raster', source: 'harian', maxzoom: 9, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('gambut', { type: 'raster', tileSize: 256, maxzoom: 12, tiles: ['https://tiles.globalforestwatch.org/gfw_peatlands/v20230315/is/{z}/{x}/{y}.png'], attribution: 'Global peatland extent · Global Nature Watch (CC BY 4.0)' });
       instance.addLayer({ id: 'gambut', type: 'raster', source: 'gambut', paint: { 'raster-opacity': 0.3 }, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('deforestasi', { type: 'raster', tileSize: 256, maxzoom: 14, tiles: ['https://tiles.globalforestwatch.org/gfw_integrated_alerts/latest/dynamic/{z}/{x}/{y}.png'], attribution: 'Integrated deforestation alerts (UMD/GLAD, WUR) · Global Nature Watch' });
@@ -294,6 +295,8 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
     else m.fitBounds(box, { padding: pad, duration: ready.current ? 700 : 0 });
   }, [bounds?.join(',')]);
 
+  // Satellite view: today's NASA image when zoomed out, the sharper Sentinel-2 mosaic when zoomed in.
+  const satellite = layers.harian && layers.citra;
   const close = () => { if (panel === 'legend') rememberLegend(true); setPanel(null); };
   const closeButton = <button type="button" className="mapcard-close" aria-label={t('close')} onClick={close}><X size={16} /></button>;
   const toggle = (next: 'layers' | 'legend') => {
@@ -307,6 +310,8 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
       {host && createPortal(<>
         <button type="button" className={`mapctl-btn ${panel === 'layers' ? 'on' : ''}`} aria-label={t('layers')} title={t('layers')} aria-expanded={panel === 'layers'} onClick={() => toggle('layers')}><Layers size={18} /></button>
         <button type="button" className={`mapctl-btn ${panel === 'legend' ? 'on' : ''}`} aria-label={t('legend')} title={t('legend')} aria-expanded={panel === 'legend'} onClick={() => toggle('legend')}><List size={18} /></button>
+        <button type="button" className={`mapctl-btn ${satellite ? 'on' : ''}`} aria-label={t('satellite')} title={t('satellite')} aria-pressed={satellite}
+          onClick={() => setLayers(previous => ({ ...previous, harian: !satellite, citra: !satellite }))}><Earth size={18} /></button>
       </>, host)}
       {panel === 'layers' && (
         <div className="mapcard" role="dialog" aria-label={t('layersTitle')}>
