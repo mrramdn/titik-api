@@ -4,10 +4,13 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, type Incident, type RegionSummary, type Status } from '../../api';
 import { useErrorText } from '../ui';
 
-/** GET /dashboard as these screens read it. Every part is optional, so an older or newer server never breaks the page. */
+/**
+ * GET /dashboard as these screens read it. Every part is optional, so an older or newer server never breaks the page.
+ * `needsAction` (high, not checked, no open task) and `assigned` (open task) count the same incidents as the lanes.
+ */
 export interface DashboardSummary {
-  incidents: number; verified: number; verifiedShare: number | null; high: number; openHigh: number; falseAlarms: number; onPeat: number;
-  medianMinutesToVerification: number | null; medianMinutes: number | null; detections: number;
+  incidents: number; verified: number; verifiedShare: number | null; high: number; openHigh: number; needsAction: number; assigned: number;
+  falseAlarms: number; onPeat: number; medianMinutesToVerification: number | null; medianMinutes: number | null; detections: number;
 }
 export interface DashboardVillage {
   id: string; name: string; district: string; regency: string; incidents: number; detections: number; verified: number; openHigh: number;
@@ -81,14 +84,17 @@ export function splitLanes(lists: LaneLists): Record<LaneKey, Incident[]> {
 export interface Count { value: number; more: boolean }
 
 /**
- * The one number a lane and its KPI both show, so they never disagree. A list shorter than the limit is complete;
- * a full list falls back to the server total when there is one, or reads "300+".
+ * The one number a lane and its KPI both show, so they never disagree. A list shorter than the limit is complete and
+ * counts exactly. A full list takes the server total from GET /dashboard (never less than the rows on screen), or
+ * reads "300+" while it still has rows in this lane; a full list with no rows in this lane comes from a server that
+ * ignored the status filter, so the lane is empty. Before the list arrives the server total stands in.
  */
 export function laneCount(shown: number, fetched: number | null, total?: number | null): Count | null {
-  if (fetched === null) return null;
+  const known = typeof total === 'number' && Number.isFinite(total) ? total : null;
+  if (fetched === null) return known === null ? null : { value: known, more: false };
   if (fetched < LANE_LIMIT) return { value: shown, more: false };
-  if (typeof total === 'number' && total >= shown) return { value: total, more: false };
-  return { value: shown, more: true };
+  if (known !== null) return { value: Math.max(known, shown), more: false };
+  return { value: shown, more: shown > 0 };
 }
 
 export interface Lanes { lists: LaneLists; errors: Partial<Record<LaneKey, string>>; loading: boolean; reload(): void }

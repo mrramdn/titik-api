@@ -36,10 +36,13 @@ describe('dashboard lanes', () => {
 
   it('counts a complete list exactly and falls back to the server total for a full one', () => {
     expect(laneCount(3, null)).toBeNull();
+    expect(laneCount(0, null, 7)).toEqual({ value: 7, more: false });
     expect(laneCount(12, 40, 99)).toEqual({ value: 12, more: false });
     expect(laneCount(280, LANE_LIMIT, 412)).toEqual({ value: 412, more: false });
+    expect(laneCount(280, LANE_LIMIT, 100)).toEqual({ value: 280, more: false });
     expect(laneCount(280, LANE_LIMIT)).toEqual({ value: 280, more: true });
-    expect(laneCount(280, LANE_LIMIT, 100)).toEqual({ value: 280, more: true });
+    // An older server ignores status=assigned and sends 300 incidents, none of them assigned: the lane is empty.
+    expect(laneCount(0, LANE_LIMIT)).toEqual({ value: 0, more: false });
   });
 
   it('reads open high priority per regency whichever field carries it', () => {

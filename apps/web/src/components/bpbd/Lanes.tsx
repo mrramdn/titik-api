@@ -15,7 +15,7 @@ const text = dict({
     active: 'Sedang berjalan', activeNote: 'Regu sudah ditugaskan atau menuju lokasi.',
     done: 'Selesai', doneNote: 'Sudah dicek di lapangan, terbaru di atas.',
     village: 'Desa {name}', where: 'Kec. {district}, {regency}', hotspots: '{n} titik panas', peat: 'lahan gambut',
-    score: 'Skor {n}', scoreTitle: 'Skor prioritas', seen: 'Terdeteksi {ago}', since: '{time} sejak ditugaskan', response: 'Waktu tanggap {time}',
+    score: 'Skor {n}', scoreTitle: 'Skor prioritas', seen: 'Titik panas terakhir {ago}', since: '{time} sejak ditugaskan', justAssigned: 'Baru ditugaskan', response: 'Waktu tanggap {time}',
     assign: 'Tugaskan', cancel: 'Batalkan', cancelAsk: 'Batalkan tugas {name}?', cancelYes: 'Ya, batalkan', cancelNo: 'Kembali',
     showAll: 'Tampilkan semua ({n})', showLess: 'Tampilkan lebih sedikit', loading: 'Memuat…',
     emptyAction: 'Semua kejadian prioritas tinggi sudah dicek atau ditugaskan.',
@@ -28,7 +28,7 @@ const text = dict({
     active: 'In progress', activeNote: 'A team is assigned or on the way.',
     done: 'Done', doneNote: 'Checked in the field, newest first.',
     village: '{name}', where: '{district}, {regency}', hotspots: '{n} hotspots', peat: 'peatland',
-    score: 'Score {n}', scoreTitle: 'Priority score', seen: 'Detected {ago}', since: '{time} since assigned', response: 'Response time {time}',
+    score: 'Score {n}', scoreTitle: 'Priority score', seen: 'Last hotspot {ago}', since: '{time} since assigned', justAssigned: 'Just assigned', response: 'Response time {time}',
     assign: 'Assign', cancel: 'Cancel', cancelAsk: 'Cancel the task for {name}?', cancelYes: 'Yes, cancel', cancelNo: 'Back',
     showAll: 'Show all ({n})', showLess: 'Show fewer', loading: 'Loading…',
     emptyAction: 'Every high-priority incident is checked or assigned.',
@@ -127,10 +127,11 @@ function Row({ incident, lane, photo, onAssign, onCancelled, onFailed }: RowProp
   const t = useT(text), f = useFormat();
   const village = incident.village;
   const task = incident.assignment;
+  const elapsed = (minutes: number) => (minutes < 1 ? t('justAssigned') : t('since', { time: f.duration(minutes) }));
   const reason = [t('hotspots', { n: f.num(incident.detectionCount) }), incident.onPeat ? t('peat') : '', incident.nearestPlace ? f.place(incident.nearestPlace) : '']
     .filter(Boolean).join(', ');
   const when = lane === 'action' ? t('seen', { ago: f.ago(incident.lastDetectedAt) })
-    : lane === 'active' && task ? t('since', { time: f.duration(minutesBetween(task.createdAt ?? task.updatedAt)) })
+    : lane === 'active' && task ? elapsed(minutesBetween(task.createdAt ?? task.updatedAt))
     : lane === 'done' ? t('response', { time: f.duration(minutesBetween(incident.firstDetectedAt, incident.firstVerifiedAt ?? incident.latestCheck?.observedAt)) })
     : '';
   return (

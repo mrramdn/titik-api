@@ -45,7 +45,7 @@ export function VillageTable({ villages, focus, loading }: { villages: Dashboard
         {!villages && <p className="bd-quiet">{loading ? t('loading') : t('empty')}</p>}
         {villages && !rows.length && <p className="bd-quiet">{t('empty')}</p>}
         {rows.length > 0 && (
-          <table className="bd-table">
+          <table className="bd-table bd-villages">
             <thead>
               <tr>
                 <th>{t('village')}</th><th>{t('regency')}</th><th className="num">{t('incidents')}</th><th>{t('checked')}</th>
@@ -55,7 +55,10 @@ export function VillageTable({ villages, focus, loading }: { villages: Dashboard
             <tbody>
               {(all ? rows : rows.slice(0, FIRST)).map(v => (
                 <tr key={v.id} className="link" onClick={() => navigate(`/desa/${v.id}`)}>
-                  <td className="name"><Link to={`/desa/${v.id}`} onClick={event => event.stopPropagation()}>{v.name}</Link><small>{t('district', { name: v.district })}</small></td>
+                  <td className="name">
+                    <Link to={`/desa/${v.id}`} onClick={event => event.stopPropagation()}>{v.name}</Link>
+                    <small>{t('district', { name: v.district })}<span className="bd-phone">, {v.regency}</span></small>
+                  </td>
                   <td>{v.regency}</td>
                   <td className="num">{f.num(v.incidents)}</td>
                   <td><span className="checkbar"><span className="track"><i style={{ width: `${v.incidents ? Math.min(100, (v.verified / v.incidents) * 100) : 0}%` }} /></span>{f.num(v.verified)}/{f.num(v.incidents)}</span></td>

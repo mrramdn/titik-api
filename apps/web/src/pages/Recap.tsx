@@ -19,13 +19,13 @@ const text = dict({
     back: 'Dasbor', title: 'Rekap harian', both: 'Sumatera Selatan dan Kalimantan Tengah',
     dates: 'Tanggal rekap', today: 'Hari ini', yesterday: 'Kemarin', pick: 'Pilih tanggal',
     share: 'Bagikan ke WhatsApp', print: 'Cetak / PDF', loading: 'Memuat rekap…',
-    totals: 'Ringkasan hari ini', incidents: 'Kejadian', high: 'Prioritas tinggi', checked: 'Sudah dicek', share_: '{p} dari kejadian',
+    totals: 'Ringkasan', incidents: 'Kejadian', high: 'Prioritas tinggi', checked: 'Sudah dicek', share_: '{p} dari kejadian',
     response: 'Waktu tanggap', responseNote: 'Median deteksi ke cek', falseAlarms: 'Alarm palsu', detections: 'Titik panas',
     regencies: 'Per kabupaten', regency: 'Kabupaten', openHigh: 'Tinggi belum dicek',
     villages: 'Desa dengan kejadian terbanyak', village: 'Desa', where: 'Kec. {district}, {regency}',
-    checks: 'Hasil cek lapangan', checksTotal: '{n} laporan', noChecks: 'Belum ada cek lapangan pada tanggal ini.',
+    checks: 'Hasil cek lapangan', checksTotal: '{n} kejadian dicek', noChecks: 'Belum ada cek lapangan pada tanggal ini.',
     assignments: 'Penugasan', assignmentsTotal: '{n} tugas', noAssignments: 'Belum ada penugasan pada tanggal ini.',
-    missingTitle: 'Rekap belum tersedia', missing: 'Rekap untuk tanggal ini belum bisa dimuat. Pilih tanggal lain atau buka dasbor.',
+    missingTitle: 'Rekap belum tersedia', missing: 'Server belum menyediakan rekap harian. Angka 24 jam terakhir ada di dasbor.',
     emptyTitle: 'Tidak ada kejadian', empty: 'Tidak ada kejadian pada {date} di {place}. Pilih tanggal lain.', dashboard: 'Buka dasbor',
     note: 'Waktu tanggap adalah median dari deteksi satelit sampai cek lapangan pertama. Tanggal mengikuti WIB.',
     printed: 'Dicetak dari Titik Api, {time} WIB.',
@@ -34,13 +34,13 @@ const text = dict({
     back: 'Dashboard', title: 'Daily recap', both: 'Sumatera Selatan and Kalimantan Tengah',
     dates: 'Recap date', today: 'Today', yesterday: 'Yesterday', pick: 'Choose a date',
     share: 'Share on WhatsApp', print: 'Print / PDF', loading: 'Loading the recap…',
-    totals: 'Summary of the day', incidents: 'Incidents', high: 'High priority', checked: 'Checked', share_: '{p} of incidents',
+    totals: 'Summary', incidents: 'Incidents', high: 'High priority', checked: 'Checked', share_: '{p} of incidents',
     response: 'Response time', responseNote: 'Median detection to check', falseAlarms: 'False alarms', detections: 'Hotspots',
     regencies: 'By regency', regency: 'Regency', openHigh: 'High, not checked',
     villages: 'Villages with the most incidents', village: 'Village', where: '{district}, {regency}',
-    checks: 'Field check results', checksTotal: '{n} reports', noChecks: 'No field checks on this date yet.',
+    checks: 'Field check results', checksTotal: '{n} incidents checked', noChecks: 'No field checks on this date yet.',
     assignments: 'Assignments', assignmentsTotal: '{n} tasks', noAssignments: 'No assignments on this date yet.',
-    missingTitle: 'Recap not available', missing: 'The recap for this date could not be loaded. Choose another date or open the dashboard.',
+    missingTitle: 'Recap not available', missing: 'The server does not provide the daily recap yet. The dashboard shows the last 24 hours.',
     emptyTitle: 'No incidents', empty: 'No incidents on {date} in {place}. Choose another date.', dashboard: 'Open the dashboard',
     note: 'Response time is the median from the satellite detection to the first field check. Dates follow WIB.',
     printed: 'Printed from Titik Api, {time} WIB.',
@@ -71,6 +71,8 @@ function RecapView() {
   const totals = data?.totals;
   const missing = recap.status === 404;
   const empty = Boolean(totals && !totals.incidents && !totals.detections && !hasAny(data?.checks) && !hasAny(data?.assignments));
+  // Share and print only when there is a recap to pass on.
+  const ready = Boolean(data && totals && !missing && !empty);
   const share = () => { if (data) void shareText(recapText({ ...data, date }, lang, place, `${location.origin}/rekap?date=${date}`)); };
 
   return (
@@ -82,10 +84,12 @@ function RecapView() {
             <h1 className="title-24">{t('title')}</h1>
             <p>{place} · {longDate(date, lang)}</p>
           </div>
-          <div className="bd-actions no-print">
-            <button type="button" className="btn btn-primary btn-sm" disabled={!totals || missing || empty} onClick={share}><Share2 size={16} />{t('share')}</button>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={() => window.print()}><Printer size={16} />{t('print')}</button>
-          </div>
+          {ready && (
+            <div className="bd-actions no-print">
+              <button type="button" className="btn btn-primary btn-sm" onClick={share}><Share2 size={16} />{t('share')}</button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => window.print()}><Printer size={16} />{t('print')}</button>
+            </div>
+          )}
         </div>
         <div className="recap-dates no-print" role="group" aria-label={t('dates')}>
           <div className="bd-window">
@@ -100,7 +104,7 @@ function RecapView() {
         {missing && <Empty title={t('missingTitle')} action={t('dashboard')}>{t('missing')}</Empty>}
         {!missing && empty && <Empty title={t('emptyTitle')} action={t('dashboard')}>{t('empty', { date: longDate(date, lang), place })}</Empty>}
 
-        {data && totals && !missing && !empty && (
+        {ready && data && totals && (
           <div className={`recap-body ${recap.loading ? 'loading' : ''}`}>
             <section className="recap-totals" aria-label={t('totals')}>
               <div className="recap-total"><span>{t('incidents')}</span><b>{f.num(totals.incidents)}</b></div>
@@ -115,7 +119,7 @@ function RecapView() {
               <section className="bd-section" aria-labelledby="recap-regencies">
                 <h2 id="recap-regencies" className="heading-16">{t('regencies')}</h2>
                 <div className="bd-table-wrap">
-                  <table className="bd-table">
+                  <table className="bd-table recap-regencies">
                     <thead>
                       <tr><th>{t('regency')}</th><th className="num">{t('incidents')}</th><th className="num">{t('high')}</th><th className="num">{t('checked')}</th>
                         <th className="num">{t('openHigh')}</th><th className="num">{t('response')}</th></tr>
@@ -141,7 +145,7 @@ function RecapView() {
               <section className="bd-section" aria-labelledby="recap-villages">
                 <h2 id="recap-villages" className="heading-16">{t('villages')}</h2>
                 <div className="bd-table-wrap">
-                  <table className="bd-table">
+                  <table className="bd-table recap-villages">
                     <thead>
                       <tr><th>{t('village')}</th><th className="num">{t('incidents')}</th><th className="num">{t('high')}</th><th className="num">{t('checked')}</th><th className="num">{t('detections')}</th></tr>
                     </thead>
@@ -162,9 +166,9 @@ function RecapView() {
             )}
 
             <div className="recap-two">
-              <Breakdown title={t('checks')} total={t('checksTotal', { n: f.num(sum(data.checks)) })} none={t('noChecks')}
+              <Breakdown title={t('checks')} total={t('checksTotal', { n: f.num(sum(data.checks)) })} none={t('noChecks')} num={f.num}
                 rows={statusOrder.map(status => ({ key: status, label: f.status(status), value: data.checks?.[status] ?? 0 }))} />
-              <Breakdown title={t('assignments')} total={t('assignmentsTotal', { n: f.num(sum(data.assignments)) })} none={t('noAssignments')}
+              <Breakdown title={t('assignments')} total={t('assignmentsTotal', { n: f.num(sum(data.assignments)) })} none={t('noAssignments')} num={f.num}
                 rows={assignmentOrder.map(status => ({ key: status, label: assignmentLabel[lang][status], value: data.assignments?.[status] ?? 0 }))} />
             </div>
 
@@ -179,7 +183,9 @@ function RecapView() {
 
 const sum = (counts?: Partial<Record<string, number>> | null) => Object.values(counts ?? {}).reduce<number>((total, value) => total + (value ?? 0), 0);
 
-function Breakdown({ title, total, none, rows }: { title: string; total: string; none: string; rows: { key: string; label: string; value: number }[] }) {
+interface BreakdownProps { title: string; total: string; none: string; rows: { key: string; label: string; value: number }[]; num(value: number): string }
+
+function Breakdown({ title, total, none, rows, num }: BreakdownProps) {
   const shown = rows.filter(row => row.value > 0);
   const top = Math.max(1, ...shown.map(row => row.value));
   return (
@@ -188,7 +194,7 @@ function Breakdown({ title, total, none, rows }: { title: string; total: string;
       {shown.length ? (
         <div className="recap-bars">
           {shown.map(row => (
-            <div key={row.key} className="recap-bar"><span>{row.label}</span><i><em style={{ width: `${(row.value / top) * 100}%` }} /></i><b>{row.value.toLocaleString()}</b></div>
+            <div key={row.key} className="recap-bar"><span>{row.label}</span><i><em style={{ width: `${(row.value / top) * 100}%` }} /></i><b>{num(row.value)}</b></div>
           ))}
         </div>
       ) : <p className="recap-none">{none}</p>}

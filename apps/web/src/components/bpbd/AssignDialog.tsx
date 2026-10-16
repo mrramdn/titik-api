@@ -13,14 +13,14 @@ const text = dict({
     pick: 'Pilih regu', villages: 'Wilayah: {list}', distance: '{km} dari kejadian', noDistance: 'Jarak belum diketahui',
     open1: '1 tugas berjalan', openN: '{n} tugas berjalan', free: 'Tidak ada tugas berjalan',
     note: 'Catatan untuk regu (opsional)', submit: 'Tugaskan', cancel: 'Batal', close: 'Tutup',
-    loading: 'Memuat daftar regu…', empty: 'Belum ada regu MPA yang bisa ditugaskan.', missing: 'Daftar regu belum tersedia di server ini.',
+    loading: 'Memuat daftar regu…', empty: 'Belum ada regu MPA yang bisa ditugaskan.', missing: 'Daftar regu belum tersedia. Muat ulang halaman nanti.',
   },
   en: {
     title: 'Assign an MPA team', where: '{village}, {district}, {regency}', facts: '{n} hotspots, priority score {score}',
     pick: 'Choose a team', villages: 'Area: {list}', distance: '{km} from the incident', noDistance: 'Distance unknown',
     open1: '1 open task', openN: '{n} open tasks', free: 'No open tasks',
     note: 'Note for the team (optional)', submit: 'Assign', cancel: 'Cancel', close: 'Close',
-    loading: 'Loading teams…', empty: 'No MPA team can be assigned yet.', missing: 'The team list is not available on this server.',
+    loading: 'Loading teams…', empty: 'No MPA team can be assigned yet.', missing: 'The team list is not available yet. Reload the page later.',
   },
 });
 
@@ -44,13 +44,15 @@ export function AssignDialog({ incident, onClose, onAssigned, onStale }: Props) 
   // Opens as a modal (focus trap, Escape closes); the parent unmounts it on close.
   useEffect(() => { const dialog = ref.current; if (dialog && !dialog.open) dialog.showModal(); }, [incident.id]);
   const list = Array.isArray(options.data) ? options.data : [];
+  // The nearest team comes first; it is chosen until the officer picks another one.
+  const picked = choice && list.some(option => option.id === choice) ? choice : list[0]?.id ?? '';
   const village = incident.village;
   const distance = (option: AssigneeOption) => (typeof option.distanceM === 'number' ? t('distance', { km: f.km(option.distanceM) }) : t('noDistance'));
   const tasks = (option: AssigneeOption) => (!option.openAssignments ? t('free') : option.openAssignments === 1 ? t('open1') : t('openN', { n: option.openAssignments }));
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const team = list.find(option => option.id === choice);
+    const team = list.find(option => option.id === picked);
     if (!team || busy) return;
     setBusy(true); setError(null);
     try {
@@ -84,8 +86,8 @@ export function AssignDialog({ incident, onClose, onAssigned, onStale }: Props) 
             {list.length > 0 && (
               <div className="bd-assignee-list">
                 {list.map(option => (
-                  <label key={option.id} className={`bd-assignee ${choice === option.id ? 'on' : ''}`}>
-                    <input type="radio" name="assignee" value={option.id} checked={choice === option.id} onChange={() => setChoice(option.id)} />
+                  <label key={option.id} className={`bd-assignee ${picked === option.id ? 'on' : ''}`}>
+                    <input type="radio" name="assignee" value={option.id} checked={picked === option.id} onChange={() => setChoice(option.id)} />
                     <span className="bd-assignee-text">
                       <b>{option.name}</b>
                       <small>{option.villages?.length ? t('villages', { list: option.villages.join(', ') }) : option.organization}</small>
@@ -108,7 +110,7 @@ export function AssignDialog({ incident, onClose, onAssigned, onStale }: Props) 
         </div>
         <div className="bd-dialog-foot">
           <button type="button" className="btn btn-secondary" onClick={() => ref.current?.close()}>{t('cancel')}</button>
-          <button type="submit" className="btn btn-primary" disabled={!choice || busy}>{t('submit')}</button>
+          <button type="submit" className="btn btn-primary" disabled={!picked || busy}>{t('submit')}</button>
         </div>
       </form>
     </dialog>

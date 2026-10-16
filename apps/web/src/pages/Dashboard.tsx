@@ -1,6 +1,6 @@
 // Dasbor BPBD/Daops: what needs action now, what is in progress, what is done. Four numbers over one time window filter
 // the lanes, the map and the village table; the kabupaten column narrows everything to one regency.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { CalendarDays, Download, Info, X } from 'lucide-react';
 import { incidentQuery, type RegionSummary } from '../api';
@@ -36,10 +36,10 @@ const text = dict({
 });
 
 const lanesFor: Record<Focus, LaneKey[]> = { all: ['action', 'active', 'done'], action: ['action'], checked: ['done'], response: ['active', 'done'] };
-// Module constants, so the map sees the same object until the focus changes.
 const mapFiltersFor: Record<Focus, MapFilters | undefined> = {
   all: undefined, action: { levels: ['tinggi'], status: 'open' }, checked: { status: 'checked' }, response: { status: 'checked' },
 };
+type Bbox = [number, number, number, number];
 
 export function DashboardPage() {
   const { user } = useSession();
@@ -52,6 +52,9 @@ function Dashboard() {
   const navigate = useNavigate();
   const { province, provinces, bbox, query } = useRegion();
   const { version } = useDataVersion();
+  // Bumped after an assignment changes, so the numbers, the lanes and the map tiles all reload together.
+  const [changes, setChanges] = useState(0);
+  const dataVersion = version * 1000 + changes;
   const [params, setParams] = useSearchParams();
 
   // Window, focus and regency live in the address, so going back from an incident restores the same view.
@@ -63,17 +66,17 @@ function Dashboard() {
   const askedRegency = params.get('regency') ?? '';
   // After a province switch in the top bar, a regency from the other province no longer applies.
   const regency = askedRegency && (!provinces.length || regencies.some(r => r.name === askedRegency)) ? askedRegency : '';
-  const update = (changes: { range?: string; focus?: Focus; regency?: string }) => setParams(previous => {
-    const next = new URLSearchParams(previous);
-    for (const [key, value] of Object.entries(changes)) {
-      if (value && value !== 'all' && value !== '24h') next.set(key, value); else next.delete(key);
+  const update = (next: { range?: string; focus?: Focus; regency?: string }) => setParams(previous => {
+    const result = new URLSearchParams(previous);
+    for (const [key, value] of Object.entries(next)) {
+      if (value && value !== 'all' && value !== '24h') result.set(key, value); else result.delete(key);
     }
-    return next;
+    return result;
   }, { replace: true });
 
   const regencyParam = regency ? `&regency=${encodeURIComponent(regency)}` : '';
-  const dash = useLoad<DashboardData>(`/dashboard?range=${range}&hours=${hours}${query}${regencyParam}`, version);
-  const regions = useLoad<RegionSummary[]>(`/regions/summary?hours=${hours}${query}`, version);
+  const dash = useLoad<DashboardData>(`/dashboard?range=${range}&hours=${hours}${query}${regencyParam}`, dataVersion);
+  const regions = useLoad<RegionSummary[]>(`/regions/summary?hours=${hours}${query}`, dataVersion);
   const lanePaths = useMemo(() => {
     const extra = `&limit=${LANE_LIMIT}${query}`;
     return {
@@ -82,14 +85,14 @@ function Dashboard() {
       done: `/incidents${incidentQuery({ hours, status: 'checked', sort: 'recent', regency }, extra)}`,
     };
   }, [hours, regency, query]);
-  const lanes = useLanes(lanePaths, version);
+  const lanes = useLanes(lanePaths, dataVersion);
   const split = useMemo(() => splitLanes(lanes.lists), [lanes.lists]);
 
   const summary = dash.data?.summary;
-  // The KPIs show the lane counts themselves, so a number on top never contradicts the lane below it.
+  // One count per lane, shared with the numbers on top, so the KPI and the lane under it never disagree.
   const counts = {
-    action: laneCount(split.action.length, lanes.lists.action?.length ?? null, summary?.openHigh),
-    active: laneCount(split.active.length, lanes.lists.active?.length ?? null),
+    action: laneCount(split.action.length, lanes.lists.action?.length ?? null, summary?.needsAction),
+    active: laneCount(split.active.length, lanes.lists.active?.length ?? null, summary?.assigned),
     done: laneCount(split.done.length, lanes.lists.done?.length ?? null, summary?.verified),
   };
   const photos = useMemo(() => {
@@ -99,11 +102,12 @@ function Dashboard() {
     }
     return byIncident;
   }, [dash.data]);
+  // The kabupaten column needs GET /regions/summary; without it (an older server) the column stays away.
   const regionRows = Array.isArray(regions.data) && regions.data.length ? regions.data : null;
   const regencyBox = regency ? regencies.find(r => r.name === regency)?.bbox : undefined;
-  const bounds = (regencyBox?.length === 4 ? regencyBox : bbox) as [number, number, number, number];
+  const bounds: Bbox = regencyBox?.length === 4 ? (regencyBox as Bbox) : bbox;
   const demo = dash.data?.verificationsFromDemoAccounts;
-  const reloadAll = () => { lanes.reload(); dash.reload(); regions.reload(); };
+  const changed = () => setChanges(value => value + 1);
 
   return (
     <Shell>
@@ -122,7 +126,7 @@ function Dashboard() {
               ))}
             </div>
             <Link to="/rekap" className="btn btn-secondary btn-sm"><CalendarDays size={16} />{t('recap')}</Link>
-            <a className="btn btn-secondary btn-sm" href={`/api/v1/export/groundcheck.csv?range=${range}${query}${regencyParam}`}><Download size={16} />{t('csv')}</a>
+            <a className="btn btn-secondary btn-sm" href={`/api/v1/export/groundcheck.csv?range=${range}${query}${regencyParam}`} download><Download size={16} />{t('csv')}</a>
           </div>
         </div>
         {demo && demo.demo > 0 && <p className="note bd-demo"><Info size={14} className="icon" />{t('demo', { demo: f.num(demo.demo), total: f.num(demo.total) })}</p>}
@@ -139,13 +143,13 @@ function Dashboard() {
         )}
         <div className={`bd-body ${regionRows ? '' : 'no-side'}`}>
           {regionRows && <RegencyList rows={regionRows} selected={regency} onSelect={name => update({ regency: name })}
-            selectedCount={regency && counts.action && !counts.action.more && !lanes.loading ? counts.action.value : undefined} />}
+            selectedCount={regency && counts.action && !counts.action.more && !lanes.loading && !dash.loading ? counts.action.value : undefined} />}
           <div className="bd-centre">
             <div className="bd-map">
-              <MapView hours={hours} bounds={bounds} filters={mapFiltersFor[focus]} version={version} initialLayers={{ deteksi: false }} legend={false}
+              <MapView hours={hours} bounds={bounds} filters={mapFiltersFor[focus]} version={dataVersion} initialLayers={{ deteksi: false }} legend={false}
                 onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} />
             </div>
-            <Lanes lanes={split} counts={counts} errors={lanes.errors} visible={lanesFor[focus]} loading={lanes.loading} photos={photos} onChanged={reloadAll}
+            <Lanes lanes={split} counts={counts} errors={lanes.errors} visible={lanesFor[focus]} loading={lanes.loading} photos={photos} onChanged={changed}
               loaded={{ action: lanes.lists.action !== null, active: lanes.lists.active !== null, done: lanes.lists.done !== null }} />
           </div>
         </div>
