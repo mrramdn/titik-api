@@ -57,6 +57,8 @@ h1, h2, h3, p { margin: 0; }
 
 /* ---------- app shell ---------- */
 .app { min-height: 100dvh; display: flex; flex-direction: column; }
+/* The page fills the screen so the phone tab bar always sits at the bottom, even on short pages. */
+.app > main, .app > .page { flex: 1 0 auto; }
 .topbar { position: sticky; top: 0; z-index: 30; height: 48px; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: var(--chrome-950); color: var(--chrome-text); border-bottom: 1px solid var(--chrome-line); }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; letter-spacing: -0.1px; }
 .region-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--radius-sm); background: var(--chrome-900); border: 1px solid var(--chrome-line); color: var(--chrome-text); font-size: 12px; }
