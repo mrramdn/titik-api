@@ -15,9 +15,9 @@ export default defineConfig({
       injectRegister: false,
       injectManifest: { globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
       manifest: {
-        name: 'Titik Api · peringatan titik panas per desa',
+        name: 'Titik Api · peringatan titik panas tingkat desa',
         short_name: 'Titik Api',
-        description: 'Titik panas satelit per desa, verifikasi lapangan oleh Masyarakat Peduli Api, dan dasbor BPBD. Sumatera Selatan dan Kalimantan Tengah.',
+        description: 'Peringatan titik panas tingkat desa untuk pengendalian kebakaran hutan dan lahan di Sumatera Selatan dan Kalimantan Tengah.',
         lang: 'id',
         start_url: '/',
         scope: '/',

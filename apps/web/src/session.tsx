@@ -49,4 +49,5 @@ export function useSession() {
   return session;
 }
 
-export const homeFor = (user: User | null) => (!user ? '/' : user.role === 'bpbd' || user.role === 'admin' ? '/dasbor' : '/peringatan');
+/** Where each role starts: volunteers on their tasks, village heads on their village, agencies on the dashboard. */
+export const homeFor = (user: User | null) => (!user ? '/' : user.role === 'bpbd' || user.role === 'admin' ? '/dasbor' : user.role === 'kades' ? '/desa-saya' : '/tugas');

@@ -26,7 +26,7 @@ function PushRow() {
   );
 }
 
-export function AlertsPage() {
+export function TugasPage() {
   const { user, ready } = useSession();
   const [alerts, setAlerts] = useState<Alert[] | null>(null);
   const [error, setError] = useState<string | null>(null);

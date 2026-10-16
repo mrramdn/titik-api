@@ -3,12 +3,19 @@ import * as maplibregl from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Droplets, Image, Layers, List, Satellite, Trees } from 'lucide-react';
+import type { Level, StatusFilter } from '../api';
 
 maplibregl.setWorkerUrl(workerUrl);
 
 export type LayerKey = 'deteksi' | 'gambut' | 'deforestasi' | 'citra';
 export interface Selected { id: string; centroid: [number, number]; detections?: [number, number][] }
+/** Filters applied to the incident layer on the map (same meaning as the list filters). */
+export interface MapFilters { levels?: Level[]; status?: StatusFilter; peat?: boolean }
 interface Props {
+  /** Map filters; optional so existing callers keep working. */
+  filters?: MapFilters;
+  /** Changes when a new ingest run lands; tile URLs carry it so the map refreshes. */
+  version?: number;
   hours?: number;
   bounds?: [number, number, number, number];
   selected?: Selected | null;
