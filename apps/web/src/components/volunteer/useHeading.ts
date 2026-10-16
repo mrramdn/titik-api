@@ -15,10 +15,11 @@ export function useHeading() {
   const [askable, setAskable] = useState(false);
   const latest = useRef<number | null>(null);
   const frame = useRef(0);
+  const tried = useRef(false);
 
-  // Safari on iPhone sends nothing until a tap grants access; offer that tap on touch screens when no heading comes.
+  // Safari on iPhone sends nothing until a tap grants access; offer that tap once, on touch screens, when no heading comes.
   useEffect(() => {
-    if (heading !== null || typeof window === 'undefined' || !('DeviceOrientationEvent' in window)) return;
+    if (heading !== null || tried.current || typeof window === 'undefined' || !('DeviceOrientationEvent' in window)) return;
     if (typeof (DeviceOrientationEvent as OrientationStatic).requestPermission !== 'function' || !matchMedia('(pointer: coarse)').matches) return;
     const timer = setTimeout(() => setAskable(true), 1500);
     return () => clearTimeout(timer);
@@ -59,9 +60,10 @@ export function useHeading() {
   /** Asks for the compass (must run from a tap), then listens again. */
   const request = useCallback(async () => {
     const ask = (DeviceOrientationEvent as OrientationStatic).requestPermission;
+    tried.current = true;
     setAskable(false);
     if (!ask) return;
-    try { await ask(); } catch { /* refused: the arrow stays north-up */ }
+    try { await ask(); } catch { /* refused, or a phone without a compass: the arrow stays north-up */ }
     setAttempt(value => value + 1);
   }, []);
 

@@ -62,7 +62,7 @@ describe('village summary', () => {
       incident('2', { lastDetectedAt: '2026-10-13T01:00:00Z', firstVerifiedAt: '2026-10-13T05:00:00Z', latestStatus: 'alarm_palsu' }),
       incident('3', { lastDetectedAt: '2026-10-12T01:00:00Z' }),
     ];
-    expect(villageStats(items, now)).toEqual({ total: 3, day: 1, high: 1, checked: 2, open: 1, lastCheck: { at: '2026-10-16T03:00:00Z', status: 'api_aktif' } });
+    expect(villageStats(items, now)).toEqual({ total: 3, day: 1, high: 1, checked: 2, open: 1, lastCheck: { at: '2026-10-16T03:00:00Z', status: 'api_aktif' }, capped: false });
     const id = villageSummaryText(items[0]!.village!, items, 'id');
     expect(id).toContain('Ringkasan Desa Cengal');
     expect(id).toContain('Titik panas perlu dicek di lapangan.');

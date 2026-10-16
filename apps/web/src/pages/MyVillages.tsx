@@ -65,8 +65,8 @@ function VillageCard({ subscription, version }: { subscription: Subscription; ve
         <div className="v-vrow-body">
           <Bars7 daily={d.daily} compact />
           <dl className="v-stats">
-            <div><dt>{t('week')}</dt><dd>{f.num(stats.total)}</dd></div>
-            <div><dt>{t('open')}</dt><dd>{f.num(stats.open)}</dd></div>
+            <div><dt>{t('week')}</dt><dd>{f.num(stats.total)}{stats.capped ? '+' : ''}</dd></div>
+            <div><dt>{t('open')}</dt><dd>{f.num(stats.open)}{stats.capped ? '+' : ''}</dd></div>
             <div><dt>{t('lastCheck')}</dt><dd className={stats.lastCheck ? 'v-checked' : 'v-none'}>{stats.lastCheck ? when(stats.lastCheck.at) : t('none')}</dd></div>
           </dl>
         </div>

@@ -29,7 +29,7 @@ const text = dict({
     goNow: 'Menuju lokasi', check: 'Cek lapangan', share: 'Bagikan ke WhatsApp',
     from: 'Dari {who} · {time}', assignedAt: 'Ditugaskan {time}', note: 'Catatan BPBD: {note}',
     done: 'Selesai 7 hari terakhir', closed: 'Selesai {time}', cancelled: 'Dibatalkan {time}',
-    village: 'Desa {name}', incidents: '{n} kejadian', open: '{n} belum dicek', allChecked: 'semua sudah dicek',
+    village: 'Desa {name}', incidents: '{n} kejadian', incident: '1 kejadian', open: '{n} belum dicek', allChecked: 'semua sudah dicek',
     more: 'Tampilkan {n} lagi', loading: 'Memuat…',
   },
   en: {
@@ -43,7 +43,7 @@ const text = dict({
     goNow: 'On my way', check: 'Field check', share: 'Share to WhatsApp',
     from: 'From {who} · {time}', assignedAt: 'Assigned {time}', note: 'BPBD note: {note}',
     done: 'Done in the last 7 days', closed: 'Done {time}', cancelled: 'Cancelled {time}',
-    village: '{name}', incidents: '{n} incidents', open: '{n} not checked', allChecked: 'all checked',
+    village: '{name}', incidents: '{n} incidents', incident: '1 incident', open: '{n} not checked', allChecked: 'all checked',
     more: 'Show {n} more', loading: 'Loading…',
   },
 });
@@ -175,9 +175,12 @@ export function TugasPage() {
   const here = fix?.here ?? null;
   const compare = comparator(order, here);
   const state: CardState = { here, ready: readyIds, waiting, checks };
-  const groups = groupByVillage(alerts.data ?? [], compare);
+  // An incident that is already a task shows once, as the task.
+  const tasked = new Set(openTasks.map(task => task.incident.id));
+  const alertList = (alerts.data ?? []).filter(alert => !tasked.has(alert.incident.id));
+  const groups = groupByVillage(alertList, compare);
   const sortedTasks = [...openTasks].sort((a, b) => compare(a.incident, b.incident));
-  const openAlerts = (alerts.data ?? []).filter(alert => !isChecked(alert.incident)).length;
+  const openAlerts = alertList.filter(alert => !isChecked(alert.incident)).length;
 
   function choose(next: Order) {
     setOrder(next);
@@ -248,7 +251,7 @@ export function TugasPage() {
               <div key={group.village.id} className="v-group">
                 <div className="v-group-head">
                   <Link to={`/desa/${group.village.id}`} className="v-group-name">{t('village', { name: group.village.name })}</Link>
-                  <span className="v-muted">{t('incidents', { n: group.alerts.length })} · {group.open ? t('open', { n: group.open }) : t('allChecked')}</span>
+                  <span className="v-muted">{group.alerts.length === 1 ? t('incident') : t('incidents', { n: group.alerts.length })} · {group.open ? t('open', { n: group.open }) : t('allChecked')}</span>
                 </div>
                 <div className="v-list">
                   {shown.map(alert => <AlertCard key={alert.id} alert={alert} state={state} sharedAt={shared[alert.id] ?? alert.sharedAt} onShare={() => void share(alert)} />)}

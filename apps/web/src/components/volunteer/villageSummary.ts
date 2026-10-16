@@ -23,7 +23,10 @@ const words = dict({
   },
 });
 
-export interface VillageStats { total: number; day: number; high: number; checked: number; open: number; lastCheck: { at: string; status: Status } | null }
+export interface VillageStats { total: number; day: number; high: number; checked: number; open: number; lastCheck: { at: string; status: Status } | null; capped: boolean }
+
+/** GET /villages/:id lists at most this many incidents; a full list means the counts are lower bounds. */
+export const incidentLimit = 100;
 
 /** Counts over the incidents of the last 7 days (what GET /villages/:id returns). */
 export function villageStats(incidents: Incident[], now = Date.now()): VillageStats {
@@ -37,15 +40,16 @@ export function villageStats(incidents: Incident[], now = Date.now()): VillageSt
     total: incidents.length,
     day: incidents.filter(incident => now - new Date(incident.lastDetectedAt).getTime() < 24 * 3600_000).length,
     high: incidents.filter(incident => incident.level === 'tinggi').length,
-    checked, open: incidents.length - checked, lastCheck,
+    checked, open: incidents.length - checked, lastCheck, capped: incidents.length >= incidentLimit,
   };
 }
 
 export function villageSummaryText(village: { id: string; name: string; district: string; regency: string }, incidents: Incident[], lang: Lang) {
   const w = words[lang], f = formatter(lang), stats = villageStats(incidents);
+  const count = (n: number) => `${f.num(n)}${stats.capped ? '+' : ''}`;
   return [
     fill(w.head, { name: village.name, district: village.district, regency: village.regency }),
-    fill(w.week, { n: f.num(stats.total), high: f.num(stats.high), checked: f.num(stats.checked) }),
+    fill(w.week, { n: count(stats.total), high: count(stats.high), checked: count(stats.checked) }),
     fill(w.day, { n: f.num(stats.day) }),
     stats.lastCheck ? fill(w.lastCheck, { time: f.dayTime(stats.lastCheck.at), status: f.status(stats.lastCheck.status).toLowerCase() }) : w.noCheck,
     w.caveat,

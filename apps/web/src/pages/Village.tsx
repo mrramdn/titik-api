@@ -1,11 +1,12 @@
 // One village: its map, hotspots per day over seven days and every incident of the week with where it stands.
+import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ChevronLeft, Share2 } from 'lucide-react';
 import type { Incident } from '../api';
 import { Shell } from '../components/Shell';
 import { Banner, PriorityMark, shareText, StatusLine, useApi, useDataVersion } from '../components/ui';
 import { Bars7 } from '../components/volunteer/Bars7';
-import { villageSummaryText } from '../components/volunteer/villageSummary';
+import { incidentLimit, villageSummaryText } from '../components/volunteer/villageSummary';
 import { useFormat } from '../format';
 import { dict, useLang, useT } from '../i18n';
 import { MapView } from '../map/MapView';
@@ -55,6 +56,9 @@ export function VillagePage() {
   const { version } = useDataVersion();
   const village = useApi<VillageDetail>(`/villages/${id}`, version);
   const d = village.data;
+  // The outline only changes with the village; a data refresh must not zoom the map back while someone reads it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const outline = useMemo(() => d?.geometry ?? null, [d?.id]);
   if (!d) return <Shell><main className="page">{village.error ? <Banner tone="warn">{village.error}</Banner> : <div className="empty">{t('loading')}</div>}</main></Shell>;
   const canWatch = Boolean(user) && user?.role !== 'bpbd';
   return (
@@ -70,7 +74,7 @@ export function VillagePage() {
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => void shareText(villageSummaryText(d, d.incidents, lang))}><Share2 size={16} aria-hidden="true" />{t('share')}</button>
         </div>
         <div className="dash-grid">
-          <div className="dash-map"><MapView hours={168} focus={d.geometry} initialLayers={{ deteksi: true, deforestasi: true }} onSelect={x => navigate(`/kejadian/${x}`)} legend={false} /></div>
+          <div className="dash-map"><MapView hours={168} focus={outline} initialLayers={{ deteksi: true, deforestasi: true }} onSelect={x => navigate(`/kejadian/${x}`)} legend={false} /></div>
           <div className="card v-side">
             <span className="heading-16">{t('bars')}</span>
             <Bars7 daily={d.daily} />
@@ -78,7 +82,7 @@ export function VillagePage() {
           </div>
         </div>
         <section className="v-section" aria-labelledby="v-village-incidents">
-          <div className="v-section-head"><h2 id="v-village-incidents" className="heading-16">{t('incidents')}</h2>{d.incidents.length > 0 && <span className="v-count">{d.incidents.length}</span>}</div>
+          <div className="v-section-head"><h2 id="v-village-incidents" className="heading-16">{t('incidents')}</h2>{d.incidents.length > 0 && <span className="v-count">{f.num(d.incidents.length)}{d.incidents.length >= incidentLimit ? '+' : ''}</span>}</div>
           {d.incidents.length
             ? <div className="v-list">{d.incidents.slice(0, shown).map(incident => <IncidentRow key={incident.id} incident={incident} />)}</div>
             : <p className="v-empty">{t('empty')} {canWatch && <Link to="/desa-saya" className="link">{t('watch')}</Link>}</p>}

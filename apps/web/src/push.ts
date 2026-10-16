@@ -26,7 +26,9 @@ export async function enablePush() {
   if (!data.enabled || !data.publicKey) throw new PushError('disabled');
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new PushError('denied');
-  const registration = await navigator.serviceWorker.ready;
+  // `ready` never settles where no service worker is registered (a dev server, a blocked worker).
+  const registration = await Promise.race([navigator.serviceWorker.ready, new Promise<null>(resolve => setTimeout(() => resolve(null), 10_000))]);
+  if (!registration) throw new PushError('unsupported');
   const subscription = (await registration.pushManager.getSubscription())
     ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(data.publicKey) });
   const json = subscription.toJSON();
