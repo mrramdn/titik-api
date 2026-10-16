@@ -118,8 +118,9 @@ export async function resetDemo(pool: pg.Pool) {
         VALUES ($1, $2, $3, 'menuju', $4, now() - interval '80 minutes', now() - interval '50 minutes', now() - interval '50 minutes')`,
       [forSquad, squad.id, bpbd.id, 'Contoh dari akun demo. Cek titik panas di tepi kanal dan laporkan kondisinya.']);
     }
+    // Alerts for the demo accounts only; nobody else's inbox changes.
     const recent = (await client.query("SELECT id FROM incidents WHERE last_detected_at > now() - interval '24 hours'")).rows.map(row => row.id as string);
-    await alertSubscribers(client, recent);
+    await alertSubscribers(client, recent, { userIds: ids });
     return touched;
   });
   if (affected.length) await refreshIncidents(pool, affected);

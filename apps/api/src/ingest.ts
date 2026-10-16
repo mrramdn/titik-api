@@ -15,8 +15,10 @@ import { clearStatusCache } from './status.js';
 export type Source = 'live' | 'snapshot' | 'fixture';
 /** One line per satellite and run. `latest` is the newest detection inside the area, `latestAll` the newest in the whole file. */
 export interface FeedReport { satellite: string; rows: number; inArea: number; latest: string | null; latestAll: string | null; error: string | null }
-export interface NewAlert { id: string; userId: string; incidentId: string }
+/** `fresh` is false for an alert that already existed: it moves up the inbox and is unread again. */
+export interface NewAlert { id: string; userId: string; incidentId: string; fresh: boolean }
 export interface IngestResult {
+  /** `incidents` gained or lost detections in this run; `alerts` are the ones worth a notification (see ingest). */
   runId: number | null; skipped: boolean; fetched: number; inArea: number; inserted: number; incidents: string[]; alerts: NewAlert[]; feeds: FeedReport[];
   /** Milliseconds per step, for the logs. */
   timings?: Record<string, number>;
@@ -235,30 +237,43 @@ export async function refreshIncidents(client: pg.PoolClient | pg.Pool, ids: str
 
 async function refreshBatch(client: pg.PoolClient | pg.Pool, ids: string[]) {
   if (!ids.length) return;
-  const rows = (await client.query(`WITH d AS (
-      SELECT incident_id, satellite IN ${MODIS} AS modis, satellite, acq_at, frp, confidence, on_peat, near_static, geom, village_id, scan, track
-      FROM detections WHERE incident_id = ANY($1::uuid[])),
-    s AS (
-      SELECT incident_id, count(*)::integer AS n, count(*) FILTER (WHERE NOT modis)::integer AS viirs, count(*) FILTER (WHERE modis)::integer AS modis,
-        min(acq_at) AS first, max(acq_at) AS last, array_agg(DISTINCT satellite) AS sats
-      FROM d GROUP BY incident_id),
-    a AS (
-      SELECT d.incident_id, max(d.frp) AS max_frp,
-        (array_agg(d.confidence ORDER BY CASE d.confidence WHEN 'high' THEN 0 WHEN 'nominal' THEN 1 ELSE 2 END))[1] AS best,
-        bool_or(d.on_peat) AS peat, bool_or(d.near_static) AS near_static, ST_Centroid(ST_Collect(d.geom)) AS c,
-        mode() WITHIN GROUP (ORDER BY d.village_id) AS village,
-        max(round(500 * sqrt(COALESCE(d.scan, 1) ^ 2 + COALESCE(d.track, 1) ^ 2)))::integer AS uncertainty
-      FROM d JOIN s USING (incident_id) WHERE d.modis = (s.viirs = 0) GROUP BY d.incident_id)
-    UPDATE incidents i SET first_detected_at = s.first, last_detected_at = s.last, detection_count = s.n, viirs_count = s.viirs, modis_count = s.modis,
-      modis_only = s.viirs = 0, location_uncertainty_m = CASE WHEN s.viirs = 0 THEN a.uncertainty END,
-      max_frp = a.max_frp, best_confidence = a.best, on_peat = a.peat, near_static = a.near_static, centroid = a.c, centroid_3857 = ST_Transform(a.c, 3857),
-      satellites = s.sats, village_id = COALESCE(a.village, i.village_id), updated_at = now(),
-      settlement_m = (SELECT round(ST_Distance(st.geom::geography, a.c::geography))::integer FROM settlements st ORDER BY st.geom <-> a.c LIMIT 1),
-      (place_name, place_kind, place_m, place_bearing) = (
-        SELECT st.name, st.kind, round(ST_Distance(st.geom::geography, a.c::geography))::integer,
-          COALESCE(round(degrees(ST_Azimuth(st.geom::geography, a.c::geography)))::integer % 360, 0)
-        FROM settlements st WHERE st.kind <> 'neighbourhood' ORDER BY st.geom <-> a.c LIMIT 1)
-    FROM s JOIN a USING (incident_id) WHERE i.id = s.incident_id
+  // One pass over the detections: every location figure is aggregated twice, VIIRS (v_) and MODIS (m_), and the VIIRS
+  // one wins when there is any. No join between aggregates: right after an ingest the planner's row estimates are stale,
+  // and a nested loop over them takes minutes. The nearest settlement and named place come from the KNN index.
+  const rows = (await client.query(`WITH s AS (
+      SELECT d.incident_id, count(*)::integer AS n, count(*) FILTER (WHERE NOT d.modis)::integer AS viirs, count(*) FILTER (WHERE d.modis)::integer AS modis,
+        min(d.acq_at) AS first, max(d.acq_at) AS last, array_agg(DISTINCT d.satellite) AS sats,
+        max(d.frp) FILTER (WHERE NOT d.modis) AS v_frp, max(d.frp) FILTER (WHERE d.modis) AS m_frp,
+        min(d.rank) FILTER (WHERE NOT d.modis) AS v_rank, min(d.rank) FILTER (WHERE d.modis) AS m_rank,
+        bool_or(d.on_peat) FILTER (WHERE NOT d.modis) AS v_peat, bool_or(d.on_peat) FILTER (WHERE d.modis) AS m_peat,
+        bool_or(d.near_static) FILTER (WHERE NOT d.modis) AS v_static, bool_or(d.near_static) FILTER (WHERE d.modis) AS m_static,
+        ST_Centroid(ST_Collect(d.geom) FILTER (WHERE NOT d.modis)) AS v_c, ST_Centroid(ST_Collect(d.geom) FILTER (WHERE d.modis)) AS m_c,
+        mode() WITHIN GROUP (ORDER BY d.village_id) FILTER (WHERE NOT d.modis) AS v_village,
+        mode() WITHIN GROUP (ORDER BY d.village_id) FILTER (WHERE d.modis) AS m_village,
+        max(round(500 * sqrt(COALESCE(d.scan, 1) ^ 2 + COALESCE(d.track, 1) ^ 2))) FILTER (WHERE d.modis)::integer AS uncertainty
+      FROM (SELECT incident_id, satellite IN ${MODIS} AS modis, satellite, acq_at, frp, on_peat, near_static, geom, village_id, scan, track,
+          CASE confidence WHEN 'high' THEN 1 WHEN 'nominal' THEN 2 ELSE 3 END AS rank
+        FROM detections WHERE incident_id = ANY($1::uuid[])) d
+      GROUP BY d.incident_id),
+    b AS (
+      SELECT incident_id, n, viirs, modis, first, last, sats, viirs = 0 AS modis_only,
+        CASE WHEN viirs > 0 THEN v_frp ELSE m_frp END AS max_frp,
+        (ARRAY['high', 'nominal', 'low'])[CASE WHEN viirs > 0 THEN v_rank ELSE m_rank END] AS best,
+        CASE WHEN viirs > 0 THEN v_peat ELSE m_peat END AS peat, CASE WHEN viirs > 0 THEN v_static ELSE m_static END AS near_static,
+        CASE WHEN viirs > 0 THEN v_c ELSE m_c END AS c, CASE WHEN viirs > 0 THEN v_village ELSE m_village END AS village,
+        CASE WHEN viirs = 0 THEN uncertainty END AS uncertainty
+      FROM s)
+    UPDATE incidents i SET first_detected_at = b.first, last_detected_at = b.last, detection_count = b.n, viirs_count = b.viirs, modis_count = b.modis,
+      modis_only = b.modis_only, location_uncertainty_m = b.uncertainty, max_frp = b.max_frp, best_confidence = b.best, on_peat = b.peat,
+      near_static = b.near_static, centroid = b.c, centroid_3857 = ST_Transform(b.c, 3857), satellites = b.sats,
+      village_id = COALESCE(b.village, i.village_id), updated_at = now(), settlement_m = near.m,
+      place_name = place.name, place_kind = place.kind, place_m = place.m, place_bearing = place.bearing
+    FROM b
+      LEFT JOIN LATERAL (SELECT round(ST_Distance(st.geom::geography, b.c::geography))::integer AS m FROM settlements st ORDER BY st.geom <-> b.c LIMIT 1) near ON true
+      LEFT JOIN LATERAL (SELECT st.name, st.kind, round(ST_Distance(st.geom::geography, b.c::geography))::integer AS m,
+          COALESCE(round(degrees(ST_Azimuth(st.geom::geography, b.c::geography)))::integer % 360, 0) AS bearing
+        FROM settlements st WHERE st.kind <> 'neighbourhood' ORDER BY st.geom <-> b.c LIMIT 1) place ON true
+    WHERE i.id = b.incident_id
     RETURNING i.id, i.best_confidence, i.max_frp, i.viirs_count, i.modis_count, i.on_peat, i.settlement_m, i.near_static`, [ids])).rows;
   const scored = rows.map(row => ({ id: row.id, ...scoreIncident({ bestConfidence: row.best_confidence, maxFrp: row.max_frp === null ? null : Number(row.max_frp),
     viirsCount: row.viirs_count, modisCount: row.modis_count, onPeat: row.on_peat, settlementMeters: row.settlement_m, nearStatic: row.near_static }) }));
@@ -277,21 +292,28 @@ export async function refreshRecent(pool: pg.Pool, days = 8) {
 }
 
 /**
- * Alerts for everyone who watches the incident's village or a village within their chosen radius. Low-priority
- * incidents stay on the map without an alert, so volunteers are not buried; one that rises to medium gets its alert then.
+ * Alerts for everyone who watches the incident's village or a village within their chosen radius (only `userIds`
+ * when given). Low-priority incidents stay on the map without an alert, so volunteers are not buried; one that rises
+ * to medium gets its alert then. An alert that already exists moves up the inbox and is unread again.
  */
-export async function alertSubscribers(client: pg.PoolClient | pg.Pool, ids: string[], recentHours = 24): Promise<NewAlert[]> {
-  if (!ids.length) return [];
+export async function alertSubscribers(client: pg.PoolClient | pg.Pool, ids: string[], options: { userIds?: string[]; recentHours?: number } = {}): Promise<NewAlert[]> {
+  if (!ids.length || options.userIds?.length === 0) return [];
+  const params: unknown[] = [ids, options.recentHours ?? 24];
+  if (options.userIds) params.push(options.userIds);
   const result = await client.query(`INSERT INTO alerts (user_id, incident_id, village_id)
       SELECT DISTINCT ON (s.user_id, i.id) s.user_id, i.id, s.village_id
       FROM incidents i JOIN subscriptions s ON true JOIN villages v ON v.id = s.village_id
       WHERE i.id = ANY($1::uuid[]) AND i.last_detected_at > now() - make_interval(hours => $2) AND i.level IN ('tinggi', 'sedang')
         AND (i.village_id = s.village_id OR (s.radius_km > 0 AND ST_DWithin(v.geom::geography, i.centroid::geography, s.radius_km * 1000)))
+        ${options.userIds ? 'AND s.user_id = ANY($3::uuid[])' : ''}
       ORDER BY s.user_id, i.id, (i.village_id = s.village_id) DESC, ST_Distance(v.center, i.centroid)
     ON CONFLICT (user_id, incident_id) DO UPDATE SET updated_at = now(), read_at = NULL
-    RETURNING id, user_id, incident_id`, [ids, recentHours]);
-  return result.rows.map(row => ({ id: row.id, userId: row.user_id, incidentId: row.incident_id }));
+    RETURNING id, user_id, incident_id, (xmax = 0) AS fresh`, params);
+  return result.rows.map(row => ({ id: row.id, userId: row.user_id, incidentId: row.incident_id, fresh: row.fresh }));
 }
+
+const highOnes = async (client: pg.PoolClient, ids: string[]) =>
+  new Set((await client.query(`SELECT id FROM incidents WHERE id = ANY($1::uuid[]) AND level = 'tinggi'`, [ids])).rows.map(row => row.id as string));
 
 export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<IngestResult> {
   const client = await pool.connect();
@@ -326,27 +348,34 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
       }
       lap('insert');
       const state: RunState = { claimed: new Set(), deleted: new Set(), touched: new Set() };
+      let days: string[] = [];
       // Fresh statistics, or the planner may scan instead of using the spatial index for every detection below.
       if (insertedIds.length > 200) await client.query('ANALYZE detections');
       if (insertedIds.length) {
         await client.query('UPDATE detections d SET village_id = v.id FROM villages v WHERE d.id = ANY($1::bigint[]) AND ST_Contains(v.geom, d.geom)', [insertedIds]);
+        // The widest radius as a fixed reach in degrees (1° is more than 90 km here), so the spatial index finds the candidates.
+        const reach = Number((await client.query('SELECT COALESCE(max(radius_m), 0) AS m FROM static_sources')).rows[0].m) / 90000;
         await client.query(`UPDATE detections d SET near_static = true WHERE d.id = ANY($1::bigint[]) AND EXISTS (SELECT 1 FROM static_sources s
-            WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at) AND ST_DWithin(s.geom, d.geom, s.radius_m / 90000.0)
-              AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))`, [insertedIds]);
+            WHERE ST_DWithin(s.geom, d.geom, $2::float8) AND (s.expires_at IS NULL OR s.expires_at > d.acq_at)
+              AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))`, [insertedIds, reach]);
         lap('villages');
         // Only detections inside the covered villages become incidents; the rest stay on the map as context.
-        const days = await clusterDays(client, insertedIds, state);
+        days = await clusterDays(client, insertedIds, state);
         lap('cluster');
-        // A 7-day pull rescores every incident of the days it touched, so a change of rules reaches all of them.
-        if (options.range === '7d') for (const id of await incidentsOnDays(client, days)) state.touched.add(id);
       }
       const incidents = [...state.touched].filter(id => !state.deleted.has(id));
-      await refreshIncidents(client, incidents);
+      // A 7-day pull rescores every incident of the days it touched, so a change of rules reaches all of them.
+      const rescore = options.range === '7d' ? [...new Set([...incidents, ...await incidentsOnDays(client, days)])] : incidents;
+      const wasHigh = await highOnes(client, incidents);
+      await refreshIncidents(client, rescore);
       lap('refresh');
-      const alerts = await alertSubscribers(client, incidents);
+      // Every incident that gained detections moves up its watchers' inboxes. A notification goes out only for a new
+      // alert or for an incident that has just become high priority, so a fire seen on every pass does not ring each time.
+      const nowHigh = await highOnes(client, incidents);
+      const alerts = (await alertSubscribers(client, incidents)).filter(alert => alert.fresh || (nowHigh.has(alert.incidentId) && !wasHigh.has(alert.incidentId)));
       lap('alerts');
       await client.query(`UPDATE ingest_runs SET finished_at = now(), feeds = $2, fetched = $3, in_area = $4, inserted = $5, incidents_touched = $6,
-        error = $7 WHERE id = $1`, [runId, JSON.stringify(reports), fetched, rows.length, insertedIds.length, incidents.length,
+        error = $7 WHERE id = $1`, [runId, JSON.stringify(reports), fetched, rows.length, insertedIds.length, rescore.length,
         reports.length && reports.every(report => report.error) ? 'Semua sumber FIRMS gagal diambil. Data terakhir tetap tampil.' : null]);
       await client.query('COMMIT');
       if (insertedIds.length) clearTileCache();

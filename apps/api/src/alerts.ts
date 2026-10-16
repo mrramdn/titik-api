@@ -29,10 +29,10 @@ export function installAlerts(app: FastifyInstance, pool: pg.Pool, send?: Sender
       await client.query('DELETE FROM subscriptions WHERE user_id = $1', [user.id]);
       for (const item of items) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [user.id, item.villageId, item.radiusKm]);
     });
-    // A new village brings in what is already burning there, so the inbox is right at once.
+    // A new village brings in what is already burning there, so the inbox is right at once. Only this user's inbox changes.
     const recent = await pool.query("SELECT id FROM incidents WHERE last_detected_at > now() - interval '48 hours'");
     const { alertSubscribers } = await import('./ingest.js');
-    const created = (await alertSubscribers(pool, recent.rows.map(row => row.id))).filter(alert => alert.userId === user.id);
+    const created = (await alertSubscribers(pool, recent.rows.map(row => row.id), { userIds: [user.id], recentHours: 48 })).filter(alert => alert.fresh);
     return { data: { saved: items.length, newAlerts: created.length } };
   });
 
@@ -86,7 +86,7 @@ export function installAlerts(app: FastifyInstance, pool: pg.Pool, send?: Sender
     const latest = await pool.query('SELECT id FROM alerts WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1', [user.id]);
     requireCondition(latest.rows[0], 404, 'NO_ALERTS', 'Belum ada peringatan untuk dikirim. Pilih desa pantauan di Desa saya.');
     const delivered = await pushAlerts(pool, [latest.rows[0].id], send);
-    requireCondition(delivered > 0, 409, 'NO_DEVICE', 'Notifikasi belum aktif di perangkat ini. Aktifkan notifikasi lalu coba lagi.');
+    requireCondition(delivered > 0, 409, 'NO_DEVICE', 'Notifikasi belum aktif di perangkat ini. Aktifkan notifikasi lebih dulu.');
     return { data: { delivered } };
   });
 }
