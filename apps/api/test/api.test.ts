@@ -10,7 +10,7 @@ import { createApp } from '../src/app.js';
 import { createPool } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
 import { loadReference } from '../src/reference.js';
-import { ingest, type NewAlert } from '../src/ingest.js';
+import { ingest, recluster, type NewAlert } from '../src/ingest.js';
 import { demoAccounts, demoPassword, demoSquads, resetDemo } from '../src/demo.js';
 import { parseFirmsCsv } from '../src/firms.js';
 import { cardText, formatDistance, formatWib, scoreIncident, sizePoints, uncertaintyText, windName, type CardIncident } from '../src/geo.js';
@@ -400,6 +400,21 @@ test('clustering stops at 3 km grid cells and a second pass keeps ids, reports a
   const widths = (await pool.query(`SELECT incident_id, ST_XMax(ST_Extent(geom_3857)) - ST_XMin(ST_Extent(geom_3857)) AS w, ST_YMax(ST_Extent(geom_3857)) - ST_YMin(ST_Extent(geom_3857)) AS h
     FROM detections WHERE incident_id IS NOT NULL AND satellite IN ('N21', 'N20', 'N') GROUP BY incident_id`)).rows;
   assert.ok(widths.every(row => row.w <= 3000 && row.h <= 3000), 'no incident is wider than a grid cell');
+});
+
+test('recluster groups recent days again: a chain splits at the cell edge, and a second run changes nothing', async () => {
+  const left = await incidentAt(pt(5600, 2500)), right = await incidentAt(pt(6600, 2500));
+  await pool.query('UPDATE detections SET incident_id = $1 WHERE incident_id = $2', [right, left]);
+  await pool.query('DELETE FROM incidents WHERE id = $1', [left]);
+  const first = await recluster(pool, 2);
+  assert.ok(first && first.changed >= 2, JSON.stringify(first));
+  assert.equal(await incidentAt(pt(6600, 2500)), right, 'the larger part keeps the id');
+  const split = await incidentAt(pt(5100, 2500));
+  assert.notEqual(split, right);
+  assert.equal(await incidentAt(pt(5600, 2500)), split);
+  assert.ok((await incident(split)).score_parts.length >= 5, 'the new part is scored');
+  const second = await recluster(pool, 2);
+  assert.deepEqual([second!.changed, second!.merged], [0, 0]);
 });
 
 test('tasks: BPBD assigns a squad, the squad sets off, any field check closes it, BPBD can cancel', async () => {

@@ -294,6 +294,39 @@ export async function refreshRecent(pool: pg.Pool, days = 8) {
 }
 
 /**
+ * Clusters the last `days` WIB days again from their detections, for example once after the clustering rules change
+ * (incidents chained by older versions split at the grid cells), then rescores them. The largest part of an incident
+ * keeps its id, reports and task. Watchers get alerts for the new parts; nothing is pushed. Null when an ingest runs.
+ */
+export async function recluster(pool: pg.Pool, days = 8) {
+  const client = await pool.connect();
+  try {
+    if (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])).rows[0].ok) return null;
+    try {
+      await client.query('BEGIN');
+      const list = (await client.query(`SELECT to_char(day, 'YYYY-MM-DD') AS day FROM generate_series((now() AT TIME ZONE 'Asia/Jakarta')::date - ($1::integer - 1),
+        (now() AT TIME ZONE 'Asia/Jakarta')::date, interval '1 day') AS day`, [days])).rows.map(row => row.day as string);
+      const state: RunState = { claimed: new Set(), deleted: new Set(), touched: new Set() };
+      for (const day of list) await clusterDay(client, day, state);
+      const changed = [...state.touched].filter(id => !state.deleted.has(id));
+      const rescore = [...new Set([...changed, ...await incidentsOnDays(client, list)])];
+      await refreshIncidents(client, rescore);
+      await alertSubscribers(client, changed);
+      await client.query('COMMIT');
+      clearTileCache();
+      clearStatusCache();
+      return { days: list.length, changed: changed.length, merged: state.deleted.size, rescored: rescore.length };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {});
+    client.release();
+  }
+}
+
+/**
  * Alerts for everyone who watches the incident's village or a village within their chosen radius (only `userIds`
  * when given). Low-priority incidents stay on the map without an alert, so volunteers are not buried; one that rises
  * to medium gets its alert then. An alert that already exists moves up the inbox and is unread again.
@@ -403,7 +436,8 @@ export async function ingestWithFallback(pool: pg.Pool, peat: PeatMask, range: '
   return empty ? ingest(pool, { source: 'snapshot', range: '7d', peat }) : live;
 }
 
-// pnpm ingest [live|snapshot] [24h|7d] pulls FIRMS; pnpm ingest refresh [days] rescores recent incidents.
+// pnpm ingest [live|snapshot] [24h|7d] pulls FIRMS; pnpm ingest refresh [days] rescores recent incidents;
+// pnpm ingest recluster [days] groups recent days again and rescores them.
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   const pool = createPool();
   try {
@@ -411,6 +445,9 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     await loadReference(pool);
     if (process.argv[2] === 'refresh') {
       console.log(`Rescored ${await refreshRecent(pool, Number(process.argv[3] ?? 8))} incidents.`);
+    } else if (process.argv[2] === 'recluster') {
+      const result = await recluster(pool, Number(process.argv[3] ?? 8));
+      console.log(result ? JSON.stringify(result) : 'An ingest is running. Run this again when it has finished.');
     } else {
       const source = (process.argv[2] ?? 'live') as Source;
       const range = (process.argv[3] ?? '24h') as '24h' | '7d';
