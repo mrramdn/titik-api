@@ -1,5 +1,6 @@
-// The daily recap for BPBD/Daops: incidents first detected on one WIB day, how many were checked and how fast,
-// per regency, the busiest villages, field check results and tasks. Every number counts the same incidents.
+// The daily recap for BPBD/Daops. Incidents, regencies and villages count the incidents first detected on one WIB day
+// (how many were checked so far and how fast); field check results and tasks count what was done on that day,
+// whenever the incident was first seen.
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { authenticated } from './auth.js';
@@ -16,6 +17,8 @@ const stats = `count(*)::integer AS incidents,
   COALESCE(sum(i.detection_count), 0)::integer AS detections,
   percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM i.first_verified_at - i.first_detected_at) / 60)
     FILTER (WHERE i.first_verified_at IS NOT NULL) AS median`;
+/** SQL: the column falls on the WIB day in $1. */
+const within = (column: string) => `${column} >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta') AND ${column} < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')`;
 const median = (value: unknown) => (value === null || value === undefined ? null : Math.round(Number(value)));
 
 export function installRecap(app: FastifyInstance, pool: pg.Pool) {
@@ -37,9 +40,10 @@ export function installRecap(app: FastifyInstance, pool: pg.Pool) {
         GROUP BY v.regency ORDER BY open_high DESC, incidents DESC, v.regency`, params),
       pool.query(`SELECT v.id, min(v.name) AS name, min(v.district) AS district, min(v.regency) AS regency, ${stats} FROM incidents i ${scope}
         GROUP BY v.id ORDER BY incidents DESC, detections DESC, min(v.name) LIMIT 15`, params),
-      pool.query(`SELECT i.latest_status AS status, count(*)::integer AS count FROM incidents i ${scope} AND i.latest_status IS NOT NULL
-        GROUP BY i.latest_status`, params),
-      pool.query(`SELECT a.status, count(*)::integer AS count FROM assignments a JOIN incidents i ON i.id = a.incident_id ${scope} GROUP BY a.status`, params),
+      pool.query(`SELECT r.status, count(*)::integer AS count FROM verifications r JOIN incidents i ON i.id = r.incident_id JOIN villages v ON v.id = i.village_id
+        WHERE ${within('r.observed_at')} ${province ? 'AND v.province = $2' : ''} GROUP BY r.status`, params),
+      pool.query(`SELECT a.status, count(*)::integer AS count FROM assignments a JOIN incidents i ON i.id = a.incident_id JOIN villages v ON v.id = i.village_id
+        WHERE (${within('a.created_at')} OR ${within('a.closed_at')}) ${province ? 'AND v.province = $2' : ''} GROUP BY a.status`, params),
     ]);
     const t = totals.rows[0];
     return { data: {

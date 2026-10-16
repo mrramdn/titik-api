@@ -18,23 +18,27 @@ const as = async role => {
 const json = async response => (await response.json()).data;
 
 try {
+  // The demo volunteer is the squad that can sign in; its tasks are what a judge sees on /tugas.
+  const mpa = await as('mpa');
+  const me = await json(await mpa.get('/api/v1/auth/me'));
   const bpbd = await as('bpbd');
-  const open = await json(await bpbd.get('/api/v1/incidents?hours=72&level=tinggi&status=open&sort=priority&limit=20'));
+  // An incident in the pilot regency, near the demo squads; any open one if the pilot has none today.
+  let open = await json(await bpbd.get('/api/v1/incidents?hours=72&level=tinggi&status=open&sort=priority&limit=20&regency=Ogan%20Komering%20Ilir'));
+  if (!open?.length) open = await json(await bpbd.get('/api/v1/incidents?hours=72&level=tinggi&status=open&sort=priority&limit=20'));
   check(Array.isArray(open) && open.length > 0, 'BPBD sees high-priority incidents that need action', `${open?.length ?? 0}`);
   const incident = open.find(item => item.village) ?? open[0];
 
   const assignees = await json(await bpbd.get(`/api/v1/assignees?incident=${incident.id}`));
-  const squad = assignees.find(item => /demo/i.test(item.name)) ?? assignees[0];
+  const squad = assignees.find(item => item.id === me.id) ?? assignees[0];
   check(Boolean(squad), 'a squad can take the task', squad ? `${squad.name}${squad.distanceM !== null ? `, ${Math.round(squad.distanceM / 100) / 10} km` : ''}` : 'none');
   const assigned = await bpbd.post(`/api/v1/incidents/${incident.id}/assignments`, { data: { assigneeId: squad.id, note: 'Cek dari judge-path' } });
   check(assigned.ok(), 'BPBD assigns the incident', String(assigned.status()));
   const again = await bpbd.post(`/api/v1/incidents/${incident.id}/assignments`, { data: { assigneeId: squad.id } });
   check(again.status() === 409, 'a second open task on the same incident is refused', String(again.status()));
 
-  const mpa = await as('mpa');
   const tasks = await json(await mpa.get('/api/v1/me/assignments'));
   const task = tasks.find(item => item.incident?.id === incident.id);
-  if (/demo/i.test(squad.name)) {
+  if (squad.id === me.id) {
     check(Boolean(task), 'the volunteer sees the task');
     const enroute = await mpa.patch(`/api/v1/assignments/${task.id}`, { data: { status: 'menuju' } });
     check(enroute.ok(), 'the volunteer marks "on the way"', String(enroute.status()));
@@ -56,7 +60,8 @@ try {
 
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
   const recap = await json(await bpbd.get(`/api/v1/recap?date=${today}`));
-  check(recap.assignments.selesai >= 1 && recap.totals.checked >= 1, 'the daily recap counts the check and the closed task', `selesai ${recap.assignments.selesai}, dicek ${recap.totals.checked}`);
+  const reports = Object.values(recap.checks).reduce((a, b) => a + b, 0);
+  check(recap.assignments.selesai >= 1 && reports >= 1, 'the daily recap counts the check and the closed task', `selesai ${recap.assignments.selesai}, laporan ${reports}`);
   console.log(steps.join('\n'));
   console.log('judge path ok');
 } catch (error) {

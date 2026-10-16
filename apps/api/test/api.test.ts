@@ -572,7 +572,10 @@ test('the daily recap counts one WIB day and adds up', async () => {
     AND to_char(first_detected_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = $1`, [wibDay])).rows[0].n);
   assert.equal(recap.regencies.reduce((n: number, r: any) => n + r.incidents, 0), expected.n);
   assert.ok(recap.villages.length >= 1 && recap.villages.length <= 15);
-  assert.equal(Object.values(recap.checks as Record<string, number>).reduce((a, b) => a + b, 0), expected.checked);
+  // Field check results and tasks count what happened on the day, whenever the incident was first seen.
+  const checksThatDay = (await pool.query(`SELECT count(*)::int AS n FROM verifications r JOIN incidents i ON i.id = r.incident_id
+    WHERE i.village_id IS NOT NULL AND to_char(r.observed_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = $1`, [wibDay])).rows[0].n;
+  assert.equal(Object.values(recap.checks as Record<string, number>).reduce((a, b) => a + b, 0), checksThatDay);
   assert.deepEqual(Object.keys(recap.assignments).sort(), ['dibatalkan', 'ditugaskan', 'menuju', 'selesai']);
   assert.ok(recap.assignments.selesai >= 1 && recap.assignments.dibatalkan >= 1);
   const elsewhere = (await call('GET', `/recap?date=${wibDay}&province=${encodeURIComponent('Sumatera Selatan')}`, bpbd)).json().data;
