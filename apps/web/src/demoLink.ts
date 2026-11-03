@@ -12,11 +12,14 @@ export const demoParam = (search: string) => new URLSearchParams(search).get(DEM
 
 /**
  * The demo account to sign in to for ?lihat=`value`, or null to leave the session as it is: for an unknown value, while
- * a real account is signed in (it is never switched), and when that demo account is signed in already. Nobody signed
- * in, or another demo account, opens the one asked for.
+ * a real account is signed in (it is never switched), when that demo account is signed in already, and when the server
+ * has not said who is signed in (`checked` false: the session check failed). A demo sign-in sets a new session cookie,
+ * so without that answer it could replace a real account's session that the browser still holds. Nobody signed in, or
+ * another demo account, opens the one asked for.
  */
-export function demoLinkRole(value: string | null, user: Pick<User, 'role' | 'demo'> | null): DemoRole | null {
+export function demoLinkRole(value: string | null, user: Pick<User, 'role' | 'demo'> | null, checked: boolean): DemoRole | null {
   if (value === null || !demoRoles.includes(value)) return null;
+  if (!checked) return null;
   if (user && !user.demo) return null;
   if (user && user.role === value) return null;
   return value as DemoRole;

@@ -3,7 +3,19 @@ import { accountSettler } from './accountData';
 import { api, ApiError, type User } from './api';
 import { MAP_PATH } from './routes';
 
-interface Session { user: User | null; ready: boolean; offline: boolean; signInDemo(role: 'mpa' | 'kades' | 'bpbd'): Promise<User>; signIn(email: string, password: string): Promise<User>; signOut(): Promise<void> }
+interface Session {
+  user: User | null;
+  /** The session check (GET /auth/me) has finished, answered or not. */
+  ready: boolean;
+  /**
+   * The server has said who is signed in here: the session check answered, or a sign-in went through. False while the
+   * check failed (no signal, a server error, too many requests): `user` is then a copy from an earlier visit or nobody,
+   * and the browser may still hold a real account's session cookie.
+   */
+  checked: boolean;
+  offline: boolean;
+  signInDemo(role: 'mpa' | 'kades' | 'bpbd'): Promise<User>; signIn(email: string, password: string): Promise<User>; signOut(): Promise<void>;
+}
 const SessionContext = createContext<Session | null>(null);
 const cacheKey = 'titikapi.user';
 
@@ -17,12 +29,13 @@ function remember(user: User | null) {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(cached);
   const [ready, setReady] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [offline, setOffline] = useState(false);
   // What this browser kept for one account is forgotten before another account, or a visitor, reads anything.
   const [settle] = useState(() => accountSettler<User>(user, next => { setUser(next); remember(next); }));
   useEffect(() => {
     api<{ data: User | null }>('/auth/me')
-      .then(response => settle(response.data))
+      .then(async response => { await settle(response.data); setChecked(true); })
       .catch(error => {
         // Without a signal the last known account stays, so a volunteer in the field can still file reports.
         if (error instanceof ApiError && error.status === 0) setOffline(true);
@@ -33,18 +46,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const signInDemo = useCallback(async (role: 'mpa' | 'kades' | 'bpbd') => {
     const response = await api<{ data: { user: User } }>('/auth/demo', { method: 'POST', json: { role, client: 'web' } });
     await settle(response.data.user);
+    setChecked(true);
     return response.data.user;
   }, [settle]);
   const signIn = useCallback(async (email: string, password: string) => {
     const response = await api<{ data: { user: User } }>('/auth/login', { method: 'POST', json: { email, password, client: 'web' } });
     await settle(response.data.user);
+    setChecked(true);
     return response.data.user;
   }, [settle]);
   const signOut = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
     await settle(null);
   }, [settle]);
-  return <SessionContext.Provider value={{ user, ready, offline, signInDemo, signIn, signOut }}>{children}</SessionContext.Provider>;
+  return <SessionContext.Provider value={{ user, ready, checked, offline, signInDemo, signIn, signOut }}>{children}</SessionContext.Provider>;
 }
 
 export function useSession() {

@@ -2,33 +2,42 @@ import { describe, expect, it } from 'vitest';
 import { demoLinkRole, demoParam, withoutDemoParam } from './demoLink';
 import { tryPath } from './routes';
 
-describe('?lihat= deep links', () => {
-  const visitor = null;
-  const demo = (role: 'mpa' | 'kades' | 'bpbd') => ({ role, demo: true });
-  const real = (role: 'mpa' | 'kades' | 'bpbd' | 'admin') => ({ role, demo: false });
+const visitor = null;
+const demo = (role: 'mpa' | 'kades' | 'bpbd') => ({ role, demo: true });
+const real = (role: 'mpa' | 'kades' | 'bpbd' | 'admin') => ({ role, demo: false });
 
+describe('?lihat= deep links', () => {
   it('open the demo account asked for when nobody is signed in', () => {
-    expect(demoLinkRole('mpa', visitor)).toBe('mpa');
-    expect(demoLinkRole('kades', visitor)).toBe('kades');
-    expect(demoLinkRole('bpbd', visitor)).toBe('bpbd');
+    expect(demoLinkRole('mpa', visitor, true)).toBe('mpa');
+    expect(demoLinkRole('kades', visitor, true)).toBe('kades');
+    expect(demoLinkRole('bpbd', visitor, true)).toBe('bpbd');
   });
 
   it('switch from one demo account to another, and leave the same one as it is', () => {
-    expect(demoLinkRole('bpbd', demo('mpa'))).toBe('bpbd');
-    expect(demoLinkRole('mpa', demo('kades'))).toBe('mpa');
-    expect(demoLinkRole('kades', demo('bpbd'))).toBe('kades');
-    expect(demoLinkRole('bpbd', demo('bpbd'))).toBeNull();
+    expect(demoLinkRole('bpbd', demo('mpa'), true)).toBe('bpbd');
+    expect(demoLinkRole('mpa', demo('kades'), true)).toBe('mpa');
+    expect(demoLinkRole('kades', demo('bpbd'), true)).toBe('kades');
+    expect(demoLinkRole('bpbd', demo('bpbd'), true)).toBeNull();
   });
 
   it('never switch a real account', () => {
     for (const role of ['mpa', 'kades', 'bpbd', 'admin'] as const) {
-      for (const asked of ['mpa', 'kades', 'bpbd']) expect(demoLinkRole(asked, real(role)), `${asked} over ${role}`).toBeNull();
+      for (const asked of ['mpa', 'kades', 'bpbd']) expect(demoLinkRole(asked, real(role), true), `${asked} over ${role}`).toBeNull();
+    }
+  });
+
+  it('switch nothing while the server has not said who is signed in: a real session cookie may still be there', () => {
+    // GET /auth/me failed (500, 502, 429 or no signal): the session then shows nobody, or a copy from an earlier visit.
+    for (const asked of ['mpa', 'kades', 'bpbd']) {
+      expect(demoLinkRole(asked, visitor, false), asked).toBeNull();
+      expect(demoLinkRole(asked, demo('mpa'), false), asked).toBeNull();
+      expect(demoLinkRole(asked, real('bpbd'), false), asked).toBeNull();
     }
   });
 
   it('ignore unknown values', () => {
-    for (const value of ['', 'admin', 'publik', 'public', 'BPBD', 'bpbd ', 'demo', null]) expect(demoLinkRole(value, visitor), String(value)).toBeNull();
-    expect(demoLinkRole('admin', demo('mpa'))).toBeNull();
+    for (const value of ['', 'admin', 'publik', 'public', 'BPBD', 'bpbd ', 'demo', null]) expect(demoLinkRole(value, visitor, true), String(value)).toBeNull();
+    expect(demoLinkRole('admin', demo('mpa'), true)).toBeNull();
   });
 
   it('open each role\'s own page from "Coba sebagai"', () => {
