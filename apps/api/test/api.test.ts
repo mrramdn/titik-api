@@ -701,6 +701,26 @@ test('a shared link shows the alert text in the preview', async () => {
   assert.match(response.body, /Titik panas perlu dicek di lapangan\./);
 });
 
+test('a shared link names the day of its hotspots and asks search engines to leave it out', async () => {
+  const row = (await pool.query(`SELECT i.code, i.detection_count, i.level, i.last_detected_at, v.name FROM incidents i JOIN villages v ON v.id = i.village_id
+    ORDER BY i.detection_count DESC LIMIT 1`)).rows[0];
+  const wib = new Date(row.last_detected_at.getTime() + 7 * 3600_000);
+  const month = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][wib.getUTCMonth()];
+  const response = await app.inject({ method: 'GET', url: `/k/${row.code}` });
+  assert.equal(response.statusCode, 200);
+  const title = `${row.detection_count.toLocaleString('id-ID')} titik panas · Desa ${row.name} · ${wib.getUTCDate()} ${month} ${wib.getUTCFullYear()} · prioritas ${row.level}`;
+  assert.ok(response.body.includes(`<title>${title} · Titik Api</title>`), response.body);
+  assert.ok(response.body.includes(`<meta property="og:title" content="${title}" />`));
+  // The description gives the day too, even on the day itself: previews are read later.
+  const last = new RegExp(`<meta name="description" content="[^"]* · terakhir ${wib.getUTCDate()} ${month} \\d{2}\\.\\d{2} WIB · prioritas `);
+  assert.match(response.body, last);
+  for (const url of [`/k/${row.code}`, '/k/zzzz9999', '/k/bukan-kode']) {
+    const page = await app.inject({ method: 'GET', url });
+    assert.match(page.body, /<meta name="robots" content="noindex" \/>\s*<\/head>/, url);
+    assert.equal(page.headers['x-robots-tag'], 'noindex', url);
+  }
+});
+
 test('the demo reset keeps satellite data, takes back what demo accounts did and seeds example tasks', async () => {
   const detections = (await pool.query('SELECT count(*)::int AS n FROM detections')).rows[0].n;
   const realChecks = (await pool.query('SELECT count(*)::int AS n FROM verifications WHERE NOT is_demo')).rows[0].n;
