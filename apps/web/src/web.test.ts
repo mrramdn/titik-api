@@ -18,6 +18,17 @@ describe('field helpers', () => {
     expect(formatter('en').km(1234)).toBe('1.2 km');
     expect(wib('2026-10-16T06:42:00Z')).toBe('13.42');
   });
+
+  it('writes WIB calendar dates and hectares the Indonesian and the English way', () => {
+    expect(formatter('id').calendar('2026-10-23')).toBe('23 Okt 2026');
+    expect(formatter('en').calendar('2026-10-23')).toBe('23 Oct 2026');
+    expect(formatter('id').weekdayDate('2026-10-23')).toBe('Jumat, 23 Okt 2026');
+    expect(formatter('en').weekdayDate('2026-10-23')).toBe('Friday, 23 Oct 2026');
+    expect(formatter('id').ha(12.46)).toBe('12,5 ha');
+    expect(formatter('en').ha(12.46)).toBe('12.5 ha');
+    expect(formatter('id').ha(1234.4)).toBe('1.234 ha');
+    expect(formatter('en').ha(1234.4)).toBe('1,234 ha');
+  });
 });
 
 describe('outbox', () => {
