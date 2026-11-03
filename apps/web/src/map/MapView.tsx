@@ -7,12 +7,13 @@ import { Droplets, Earth, Image, Layers, List, Satellite, Trees, X, type LucideI
 import { tanggalParam, type RegionSummary } from '../api';
 import { dict, useT } from '../i18n';
 import { useApi } from '../components/ui';
+import { useConfig } from '../config';
 import { useFormat } from '../format';
 import { ALL_BOUNDS, useRegion } from '../region';
 import { ageClock } from './archive';
 import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
-import { OVERVIEW_ZOOM, tileUrls } from './layers';
+import { esriSource, ESRI_ZOOM, imageryZoom, OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
@@ -54,13 +55,15 @@ const text = dict({
     map: 'Peta titik panas', layers: 'Lapisan', layersTitle: 'Lapisan peta', legend: 'Legenda', close: 'Tutup',
     deteksi: 'Titik panas satelit', deteksiSource: 'NASA FIRMS, VIIRS 375 m dan MODIS 1 km', gambut: 'Lahan gambut', gambutSource: 'Global peatland extent',
     deforestasi: 'Peringatan gangguan hutan', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Citra satelit harian', harianSource: '{satellite}, {date} {part} · NASA GIBS',
-    morning: 'pagi', midday: 'siang', citra: 'Citra detail', citraSource: 'Sentinel-2 cloudless 2023, EOX', satellite: 'Tampilan satelit',
+    morning: 'pagi', midday: 'siang', citra: 'Citra detail', citraSource: 'Sentinel-2 cloudless 2023, EOX', citraEsri: 'Sentinel-2 cloudless 2023, EOX · dari dekat Esri World Imagery',
+    satellite: 'Tampilan satelit',
   },
   en: {
     map: 'Hotspot map', layers: 'Layers', layersTitle: 'Map layers', legend: 'Legend', close: 'Close',
     deteksi: 'Satellite hotspots', deteksiSource: 'NASA FIRMS, VIIRS 375 m and MODIS 1 km', gambut: 'Peatland', gambutSource: 'Global peatland extent',
     deforestasi: 'Forest disturbance alerts', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Daily satellite image', harianSource: '{satellite}, {date} {part} · NASA GIBS',
-    morning: 'morning', midday: 'midday', citra: 'Detailed imagery', citraSource: 'Sentinel-2 cloudless 2023, EOX', satellite: 'Satellite view',
+    morning: 'morning', midday: 'midday', citra: 'Detailed imagery', citraSource: 'Sentinel-2 cloudless 2023, EOX', citraEsri: 'Sentinel-2 cloudless 2023, EOX · close up Esri World Imagery',
+    satellite: 'Satellite view',
   },
 });
 type Key = keyof typeof text.id;
@@ -101,20 +104,22 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   // Below the overview zoom the map shows regency bubbles only, and the legend explains just those.
   const [zoomedOut, setZoomedOut] = useState(true);
   const { query, findRegency } = useRegion();
+  // HD imagery needs the ArcGIS key from GET /config; without one the satellite view stays EOX Sentinel-2 close up.
+  const esriKey = useConfig()?.esriKey ?? null;
   const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}${tanggalParam(tanggal)}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
   // refresh keeps the bubbles it already has.
   const overview = bubbles && (Array.isArray(regions.data) || (regions.data === null && !regions.error));
   const handlers = useRef({ onSelect, onVillage, findRegency });
   handlers.current = { onSelect, onVillage, findRegency };
-  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily });
-  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily };
+  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey });
+  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey };
 
   useEffect(() => {
     const b = bounds ?? ALL_BOUNDS;
     const instance = new maplibregl.Map({
       container: container.current!, style: 'https://tiles.openfreemap.org/styles/positron', bounds: [[b[0], b[1]], [b[2], b[3]]], fitBoundsOptions: { padding: 24 },
-      maxZoom: 16, attributionControl: { compact: true, customAttribution: 'NASA FIRMS · BPS/HDX · Global Nature Watch · EOX' },
+      maxZoom: 18, attributionControl: { compact: true, customAttribution: 'NASA FIRMS · BPS/HDX · Global Nature Watch · EOX' },
     });
     map.current = instance;
     // The compact attribution opens as soon as it is added and would cover a phone-sized map; it stays one tap away.
@@ -208,7 +213,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.on('zoom', onZoom);
       onZoom();
       ready.current = true;
-      syncLayers(); syncFilters(); syncOverview(); syncSelected(true); syncFocus();
+      syncLayers(); syncImagery(); syncFilters(); syncOverview(); syncSelected(true); syncFocus();
     });
     return () => { ready.current = false; instance.remove(); map.current = null; setHost(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,6 +223,19 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     const m = map.current; if (!m || !ready.current) return;
     for (const key of ['gambut', 'deforestasi', 'harian', 'citra'] as const) m.setLayoutProperty(key, 'visibility', state.current.layers[key] ? 'visible' : 'none');
     for (const id of ['deteksi', 'deteksi-modis']) m.setLayoutProperty(id, 'visibility', state.current.layers.deteksi ? 'visible' : 'none');
+  }
+  /** Esri World Imagery joins the detailed imagery from zoom 11 once GET /config brings a key; Sentinel-2 then stops there. */
+  function syncImagery() {
+    const m = map.current; if (!m || !ready.current) return;
+    const source = esriSource(state.current.esriKey);
+    if (source && !m.getSource('esri')) {
+      m.addSource('esri', source);
+      m.addLayer({ id: 'esri', type: 'raster', source: 'esri', minzoom: ESRI_ZOOM, layout: { visibility: 'none' } }, 'harian');
+    }
+    const esri = Boolean(m.getLayer('esri'));
+    const [from, to] = imageryZoom(esri).citra;
+    m.setLayerZoomRange('citra', from, to);
+    if (esri) m.setLayoutProperty('esri', 'visibility', state.current.layers.citra ? 'visible' : 'none');
   }
   function syncFilters() {
     const m = map.current; if (!m || !ready.current) return;
@@ -271,6 +289,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   }
   const filterKey = JSON.stringify(filters ?? {});
   useEffect(syncLayers, [layers]);
+  useEffect(syncImagery, [esriKey, layers.citra]);
   useEffect(syncFilters, [filterKey]);
   useEffect(syncTiles, [hours, version, tanggal]);
   useEffect(syncDaily, [daily.tiles]);
@@ -288,7 +307,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     else m.fitBounds(box, { padding: pad, duration: ready.current ? 700 : 0 });
   }, [bounds?.join(',')]);
 
-  // Satellite view: today's NASA image when zoomed out, the sharper Sentinel-2 mosaic when zoomed in.
+  // Satellite view: today's NASA image when zoomed out, the sharper Sentinel-2 mosaic when zoomed in, and Esri World
+  // Imagery close up when there is a key.
   const satellite = layers.harian && layers.citra;
   const close = () => { if (panel === 'legend') rememberLegend(true); setPanel(null); };
   const closeButton = <button type="button" className="mapcard-close" aria-label={t('close')} onClick={close}><X size={16} /></button>;
@@ -311,7 +331,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
           <div className="mapcard-head"><h3>{t('layersTitle')}</h3>{closeButton}</div>
           {layerInfo.map(({ key, label, source, icon: Icon }) => (
             <label key={key} className="maplayer"><Icon size={18} className="icon" aria-hidden="true" />
-              <span>{t(label)}<small>{key === 'harian' ? t('harianSource', { satellite: daily.satellite, date: f.day(`${daily.date}T12:00:00+07:00`), part: t(daily.part) }) : t(source)}</small></span>
+              <span>{t(label)}<small>{key === 'harian' ? t('harianSource', { satellite: daily.satellite, date: f.day(`${daily.date}T12:00:00+07:00`), part: t(daily.part) })
+                : key === 'citra' && esriKey ? t('citraEsri') : t(source)}</small></span>
               <input type="checkbox" checked={layers[key]} onChange={event => setLayers(prev => ({ ...prev, [key]: event.target.checked }))} /><i className="maplayer-switch" aria-hidden="true" /></label>
           ))}
         </div>

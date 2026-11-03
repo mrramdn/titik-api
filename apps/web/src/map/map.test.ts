@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultFilters, incidentQuery, type ArchiveDays } from '../api';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
-import { tileUrls } from './layers';
+import { ESRI_ATTRIBUTION, ESRI_TILES, esriSource, imageryZoom, tileUrls } from './layers';
 import { clearedFilters } from './list';
 
 const archive: ArchiveDays = {
@@ -68,5 +68,19 @@ describe('archive mode', () => {
     expect(ageClock('', Date.parse('2026-10-23T06:30:00Z'))).toBe(13.5);
     expect(dailyLayerFor('2026-10-23')).toMatchObject({ satellite: 'NOAA-20', date: '2026-10-23', part: 'midday' });
     expect(dailyLayerFor('2026-10-23').tiles).toContain('/VIIRS_NOAA20_CorrectedReflectance_TrueColor/default/2026-10-23/');
+  });
+});
+
+describe('HD imagery', () => {
+  it('adds Esri World Imagery only with a key, with its attribution, from zoom 11', () => {
+    expect(esriSource(null)).toBeNull();
+    expect(esriSource('')).toBeNull();
+    const source = esriSource('AAPK test/key')!;
+    expect(source.tiles).toEqual([`${ESRI_TILES}AAPK%20test%2Fkey`]);
+    expect(ESRI_TILES).toBe('https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=');
+    expect(source).toMatchObject({ type: 'raster', tileSize: 256, maxzoom: 19, attribution: ESRI_ATTRIBUTION });
+    expect(ESRI_ATTRIBUTION).toBe('Powered by Esri · Esri, Maxar, Earthstar Geographics, and the GIS User Community');
+    expect(imageryZoom(true)).toEqual({ harian: [0, 9], citra: [9, 11], esri: [11, 24] });
+    expect(imageryZoom(false).citra).toEqual([9, 24]);
   });
 });
