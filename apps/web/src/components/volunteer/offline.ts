@@ -1,10 +1,11 @@
 // "Siap tanpa sinyal": while there is a signal, the tasks page fetches the detail of every open task and alert.
 // The service worker keeps those responses (cache "api", see sw.ts), so the field check opens and a report can
-// be filed later in a village without a signal. A card is marked ready once its detail sits in that cache.
+// be filed later in a village without a signal. A card is marked ready once its detail sits in that cache, which
+// empties when another account signs in (see accountData.ts).
 import { useEffect, useMemo, useState } from 'react';
+import { apiCacheName as cacheName } from '../../accountData';
 import { onOutboxChange, queued } from '../../outbox';
 
-const cacheName = 'api';
 const detailPath = (id: string) => `/api/v1/incidents/${id}`;
 const refetchAfterMs = 2 * 3600_000;
 

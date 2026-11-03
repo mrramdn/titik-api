@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { accountSettler } from './accountData';
 import { api, ApiError, type User } from './api';
 
 interface Session { user: User | null; ready: boolean; offline: boolean; signInDemo(role: 'mpa' | 'kades' | 'bpbd'): Promise<User>; signIn(email: string, password: string): Promise<User>; signOut(): Promise<void> }
@@ -16,30 +17,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(cached);
   const [ready, setReady] = useState(false);
   const [offline, setOffline] = useState(false);
+  // What this browser kept for one account is forgotten before another account, or a visitor, reads anything.
+  const [settle] = useState(() => accountSettler<User>(user, next => { setUser(next); remember(next); }));
   useEffect(() => {
     api<{ data: User | null }>('/auth/me')
-      .then(response => { setUser(response.data); remember(response.data); })
+      .then(response => settle(response.data))
       .catch(error => {
         // Without a signal the last known account stays, so a volunteer in the field can still file reports.
         if (error instanceof ApiError && error.status === 0) setOffline(true);
-        else { setUser(null); remember(null); }
+        else return settle(null);
       })
       .finally(() => setReady(true));
-  }, []);
+  }, [settle]);
   const signInDemo = useCallback(async (role: 'mpa' | 'kades' | 'bpbd') => {
     const response = await api<{ data: { user: User } }>('/auth/demo', { method: 'POST', json: { role, client: 'web' } });
-    setUser(response.data.user); remember(response.data.user);
+    await settle(response.data.user);
     return response.data.user;
-  }, []);
+  }, [settle]);
   const signIn = useCallback(async (email: string, password: string) => {
     const response = await api<{ data: { user: User } }>('/auth/login', { method: 'POST', json: { email, password, client: 'web' } });
-    setUser(response.data.user); remember(response.data.user);
+    await settle(response.data.user);
     return response.data.user;
-  }, []);
+  }, [settle]);
   const signOut = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
-    setUser(null); remember(null);
-  }, []);
+    await settle(null);
+  }, [settle]);
   return <SessionContext.Provider value={{ user, ready, offline, signInDemo, signIn, signOut }}>{children}</SessionContext.Provider>;
 }
 

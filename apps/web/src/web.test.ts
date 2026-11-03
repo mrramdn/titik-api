@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { accountSettler, forgetAccountData } from './accountData';
 import { bearing, distanceMeters, windName } from './geo';
 import { duration, formatter, km, wib } from './format';
 import * as common from './i18n/common';
@@ -56,6 +57,33 @@ describe('outbox', () => {
     const [item] = await queued();
     expect(item!.rejected).toBe(true);
     expect(item!.lastError).toBe('Status tidak valid.');
+  });
+});
+
+describe('account data', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('forgets the API copies and the checks filed from this phone, and nothing else', async () => {
+    const deleted: string[] = [];
+    vi.stubGlobal('caches', { delete: async (name: string) => { deleted.push(name); return true; } });
+    const stored = new Map([['titikapi.myChecks', '{"i":{"at":"2026-11-03T20:00:00Z","status":"asap_bara"}}'], ['titikapi.lang', 'en']]);
+    vi.stubGlobal('localStorage', { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); },
+      removeItem: (key: string) => { stored.delete(key); } });
+    await forgetAccountData();
+    expect(deleted).toEqual(['api']);
+    expect([...stored.keys()]).toEqual(['titikapi.lang']);
+  });
+
+  it('forgets when another account or a visitor takes over, and only then applies the new account', async () => {
+    const events: string[] = [];
+    const settle = accountSettler<{ id: string }>({ id: 'demo-mpa' }, next => { events.push(`now ${next?.id ?? 'visitor'}`); },
+      async () => { await new Promise(resolve => setTimeout(resolve, 5)); events.push('forgot'); });
+    await settle({ id: 'demo-mpa' });
+    await settle({ id: 'real-mpa' });
+    await settle({ id: 'real-mpa' });
+    await settle(null);
+    await settle(null);
+    expect(events).toEqual(['now demo-mpa', 'forgot', 'now real-mpa', 'now real-mpa', 'forgot', 'now visitor', 'now visitor']);
   });
 });
 

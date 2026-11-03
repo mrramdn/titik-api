@@ -19,7 +19,8 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { deny
 // incident data a volunteer needs without a signal.
 registerRoute(({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/v1/tiles/'),
   new NetworkFirst({ cacheName: 'tiles', networkTimeoutSeconds: 4, plugins: [new ExpirationPlugin({ maxEntries: 800, maxAgeSeconds: 2 * 24 * 3600 })] }));
-// Reads: fresh when there is a signal, the last copy when there is none.
+// Reads: fresh when there is a signal, the last copy when there is none. The copies are the signed-in account's: the app
+// empties this cache when another account, or none, takes over (see accountData.ts).
 registerRoute(({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/v1/') && !url.pathname.startsWith('/api/v1/export'),
   new NetworkFirst({ cacheName: 'api', networkTimeoutSeconds: 4, plugins: [new ExpirationPlugin({ maxEntries: 400, maxAgeSeconds: 3 * 24 * 3600 })] }));
 registerRoute(({ url }) => url.pathname.startsWith('/uploads/'), new CacheFirst({ cacheName: 'photos', plugins: [new ExpirationPlugin({ maxEntries: 120 })] }));
