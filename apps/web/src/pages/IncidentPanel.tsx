@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router';
 import { ChevronLeft, CircleCheck, MapPin, Share2 } from 'lucide-react';
 import type { IncidentDetail, ScorePart, TimelineEvent, Verification } from '../api';
 import { LevelBadge, RouteButton, ScoreRows, StatusLine, shareText, useApi, useDataVersion, waText } from '../components/ui';
+import { useWind, WindFacts } from '../components/incident/Wind';
+import { smokeSentence } from '../components/incident/wind';
 import { dict, useLang, useT, type Vars } from '../i18n';
 import { satelliteName, sensorOf } from '../i18n/common';
 import { useFormat, type Format } from '../format';
@@ -112,6 +114,7 @@ export function IncidentPanel() {
   const [tab, setTab] = useState<'history' | 'detections'>('history');
   const incident = useApi<IncidentDetail>(`/incidents/${key}`, version);
   const d = incident.data;
+  const wind = useWind(d?.id ?? null, version);
   useEffect(() => { if (d) setSelected({ id: d.id, centroid: d.centroid, detections: (d.detections ?? []).map(x => [x.longitude, x.latitude]) }); }, [d?.id, d?.detections?.length]);
   // On a phone the page itself scrolls: a row tapped far down the list opens with the map and the header in view.
   useEffect(() => { if (typeof matchMedia === 'function' && matchMedia('(max-width: 900px)').matches) window.scrollTo({ top: 0 }); }, [key]);
@@ -148,11 +151,12 @@ export function IncidentPanel() {
         </div>
         {d.modisOnly && <p className="note">{t('modisOnly', { km: f.km(d.locationUncertaintyM ?? 1000) })}</p>}
       </section>
+      {wind && <WindFacts wind={wind} />}
       <section className="ip-actions">
         {actions.check && <Link to={`/kejadian/${d.id}/cek`} className="btn btn-primary btn-block"><CircleCheck size={16} aria-hidden="true" />{t('check')}</Link>}
         <div className="ip-actions-row">
           <RouteButton to={d.centroid} className="btn btn-dark" />
-          <button type="button" className="btn btn-dark" onClick={() => void shareText(waText(d, lang))}><Share2 size={16} aria-hidden="true" />{t('share')}</button>
+          <button type="button" className="btn btn-dark" onClick={() => void shareText(waText(d, lang, smokeSentence(wind, lang)))}><Share2 size={16} aria-hidden="true" />{t('share')}</button>
         </div>
         {d.village && <Link to={`/desa/${d.village.id}`} className="ip-link"><MapPin size={14} aria-hidden="true" />{t('villagePage')}</Link>}
       </section>

@@ -83,8 +83,11 @@ const waWords = {
   en: { priority: '{level} priority', hotspots: '{n} hotspots', peat: 'peatland', last: 'last seen {time} WIB', location: 'Location', detail: 'Details', caveat: 'Hotspots need a field check.', near: 'near {place}', uncertain: 'location ±{km}' },
 };
 
-/** The WhatsApp message for an incident: where, how urgent, a map link, the incident link, one caveat. */
-export function waText(incident: Incident, lang: 'id' | 'en') {
+/**
+ * The WhatsApp message for an incident: where, how urgent, where the smoke drifts when the panel knows the wind
+ * ("Asap mengarah ke Desa A, Desa B."), a map link, the incident link, one caveat.
+ */
+export function waText(incident: Incident, lang: 'id' | 'en', smoke?: string | null) {
   const f = formatter(lang), w = waWords[lang];
   const fill = (s: string, v: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_, k: string) => String(v[k]));
   const village = incident.village;
@@ -94,7 +97,7 @@ export function waText(incident: Incident, lang: 'id' | 'en') {
   facts.push(fill(w.last, { time: f.time(incident.lastDetectedAt) }));
   if (incident.nearestPlace) facts.push(fill(w.near, { place: f.place(incident.nearestPlace) }));
   if (incident.modisOnly && incident.locationUncertaintyM) facts.push(fill(w.uncertain, { km: f.km(incident.locationUncertaintyM) }));
-  return [where, facts.join(' · '), `${w.location}: ${mapUrl(incident.centroid)}`, `${w.detail}: ${location.origin}${incident.sharePath}`, w.caveat].filter(Boolean).join('\n');
+  return [where, facts.join(' · '), smoke, `${w.location}: ${mapUrl(incident.centroid)}`, `${w.detail}: ${location.origin}${incident.sharePath}`, w.caveat].filter(Boolean).join('\n');
 }
 
 /** Shares through the phone's share sheet, or WhatsApp where there is none. */
