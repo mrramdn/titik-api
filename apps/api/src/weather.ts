@@ -302,16 +302,17 @@ export interface RegencyRiskDay {
   date: string; forecast: boolean; fwiClass: FwiClass; shares: Record<FwiClass, number>;
   partial: { fwiClass: FwiClass; share: number } | null; meanFwi: number;
 }
-/** A higher class is named in `partial` from 10% of the regency, in thousandths. */
+/** A higher class is named in `partial` when it covers 10% of the regency on its own, in thousandths. */
 const PARTIAL_MIN = 100;
 
 /**
  * A regency's fire danger on one day, by area. `shares`: the share of its area in each class, over the cells that
  * have the day (normalised to add up to 1), in thousandths by largest remainder so they add up exactly. Each cell's
  * class follows its FWI to one decimal, as on the grid. `fwiClass`: the class with the largest share, the higher one
- * on a tie. `partial`: the highest class above it that covers at least 10% of the regency together with the classes
- * above it, with the share at that class or above; null when there is none. `meanFwi`: the area-weighted mean FWI,
- * one decimal. `forecast` when any of the cells' values is a forecast. Null when no cell covering it has the day.
+ * on a tie. `partial`: the highest class above it that covers at least 10% of the regency on its own, with the share
+ * of the regency at that class or above; null when there is none. Classes that each stay under 10% are not added up
+ * to reach it. `meanFwi`: the area-weighted mean FWI, one decimal. `forecast` when any of the cells' values is a
+ * forecast. Null when no cell covering it has the day.
  */
 export function regencyDay(date: string, cells: CoverCell[]): RegencyRiskDay | null {
   const covered = cells.filter(cell => cell.weight > 0 && Number.isFinite(cell.fwi));
@@ -328,8 +329,7 @@ export function regencyDay(date: string, cells: CoverCell[]): RegencyRiskDay | n
   units.forEach((value, index) => { if (value >= units[top]!) top = index; });
   let partial: RegencyRiskDay['partial'] = null;
   for (let index = fwiClasses.length - 1; index > top && !partial; index--) {
-    const above = sum(units.slice(index));
-    if (above >= PARTIAL_MIN) partial = { fwiClass: fwiClasses[index]!, share: above / 1000 };
+    if (units[index]! >= PARTIAL_MIN) partial = { fwiClass: fwiClasses[index]!, share: sum(units.slice(index)) / 1000 };
   }
   return {
     date, forecast: covered.some(cell => cell.forecast), fwiClass: fwiClasses[top]!,
