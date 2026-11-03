@@ -42,6 +42,10 @@
 .lp-stat dd { margin: 0; font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -0.5px; color: var(--text); overflow-wrap: anywhere; }
 .lp-stat-latest dd { font-size: 20px; line-height: 32px; letter-spacing: -0.3px; }
 .lp-stat dt { font-size: 13px; line-height: 18px; color: var(--text-2); }
+/* The data has stopped updating: the line that says since when, in place of the 24-hour counts. */
+.lp-stalled { max-width: 46rem; margin-bottom: 14px; }
+.lp-stalled .banner { font-size: 14px; line-height: 20px; }
+.lp-stalled .icon { flex: none; margin-top: 2px; }
 
 /* how it works */
 .lp-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }

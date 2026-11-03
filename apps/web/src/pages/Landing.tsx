@@ -4,12 +4,12 @@ import { Fragment, type ReactNode } from 'react';
 import { Link, Navigate, useLocation } from 'react-router';
 import {
   ArrowRight, CalendarClock, ClipboardCheck, CloudOff, Code, ExternalLink, Gauge, Grid3x3, Landmark, LayoutDashboard, Map as MapIcon, MapPin, Play,
-  Ruler, Satellite, Send, Users, Wind, type LucideIcon,
+  Ruler, Satellite, Send, TriangleAlert, Users, Wind, type LucideIcon,
 } from 'lucide-react';
 import type { ArchiveDays, IngestStatus } from '../api';
 import { Shell } from '../components/Shell';
 import { LogoMark } from '../components/Logo';
-import { useApi, useDataVersion } from '../components/ui';
+import { Banner, useApi, useDataVersion } from '../components/ui';
 import { useLoad } from '../components/bpbd/data';
 import { clockOffset, readFreshness, SIPONGI_URL } from '../components/shell/freshness';
 import { useFormat } from '../format';
@@ -30,6 +30,7 @@ export const landingText = dict({
     numbersTitle: 'Demo ini sekarang',
     numbersNote: 'Dihitung Titik Api dari data satelit NASA FIRMS untuk demo ini. Bukan angka resmi.',
     hotspots24: 'titik panas di desa, 24 jam terakhir', incidents24: 'kejadian di desa, 24 jam terakhir', latest: 'data satelit terbaru ({sat})', archiveTotal: 'titik panas di desa dalam arsip sejak {date}',
+    stalled: 'Data belum diperbarui sejak {time} WIB. Jumlah 24 jam terakhir tidak ditampilkan sampai data masuk lagi.',
     gapTitle: 'Celah yang ditutup Titik Api',
     gap1: 'Data titik panas sudah terbuka untuk siapa saja, misalnya lewat NASA FIRMS dan SiPongi+.',
     gap2: 'Namun peringatan jarang sampai tepat waktu ke relawan di desa, dan temuan regu di lapangan jarang kembali ke posko.',
@@ -88,6 +89,7 @@ export const landingText = dict({
     numbersTitle: 'The demo right now',
     numbersNote: 'Counted by Titik Api from NASA FIRMS satellite data for this demo. Not official figures.',
     hotspots24: 'hotspots in villages, last 24 hours', incidents24: 'incidents in villages, last 24 hours', latest: 'latest satellite data ({sat})', archiveTotal: 'hotspots in villages in the archive since {date}',
+    stalled: 'The data has not been updated since {time} WIB. The counts for the last 24 hours are not shown until data comes in again.',
     gapTitle: 'The gap Titik Api closes',
     gap1: 'Hotspot data is already open to anyone, for example through NASA FIRMS and SiPongi+.',
     gap2: 'But alerts rarely reach volunteers in the village in time, and what the squad finds rarely gets back to the command post.',
@@ -219,7 +221,42 @@ export function HeroActions({ replay }: { replay: string }) {
   );
 }
 
-interface Summary { incidents: number; detections: number }
+/**
+ * The status line under the lead: a demo with real satellite data, updated every 30 minutes, not an official warning
+ * system. "Diperbarui tiap 30 menit" stays away while the data is stale (`stalled`, see dataStalled).
+ */
+export function HeroStatus({ stalled }: { stalled: boolean }) {
+  const t = useT(landingText);
+  const parts: Key[] = stalled ? ['status1', 'status3'] : ['status1', 'status2', 'status3'];
+  return <p className="lp-status">{parts.map(key => <span key={key}>{t(key)}</span>)}</p>;
+}
+
+export interface Summary { incidents: number; detections: number }
+
+/**
+ * True while the top bar says the data has stopped updating: no successful satellite check for over 2 hours (see
+ * readFreshness). False while the status is not known yet.
+ */
+export const dataStalled = (status: IngestStatus | null, now = Date.now()) => readFreshness(status, now + clockOffset(status?.serverTime, now))?.stalled ?? false;
+
+/**
+ * What "Demo ini sekarang" can show. The two 24-hour counts only while the data is known to be current: once the last
+ * successful satellite check is over 2 hours old they stay away, since fewer hotspots would then mean missing data, not
+ * a quiet day, and `stalledSince` says since when. They also wait until the status is known. The newest satellite data
+ * and the archive total hold either way.
+ */
+export function liveNumbers(summary: Summary | null, status: IngestStatus | null, archive: ArchiveDays | null, now = Date.now()) {
+  const fresh = readFreshness(status, now + clockOffset(status?.serverTime, now));
+  const current = Boolean(fresh && !fresh.stalled);
+  return {
+    stalledSince: fresh?.stalled ? fresh.lastSuccessAt : null,
+    detections: current && summary && typeof summary.detections === 'number' ? summary.detections : null,
+    incidents: current && summary && typeof summary.incidents === 'number' ? summary.incidents : null,
+    latest: fresh?.latest ?? null,
+    total: archive ? archiveTotal(archive) : null,
+    first: archive?.first ?? null,
+  };
+}
 
 function Landing() {
   const t = useT(landingText);
@@ -240,7 +277,7 @@ function Landing() {
             <div className="lp-hero-text">
               <h1 id="lp-title" className="lp-title">{t('title')}</h1>
               <p className="lp-lead">{t('lead')}</p>
-              <p className="lp-status"><span>{t('status1')}</span><span>{t('status2')}</span><span>{t('status3')}</span></p>
+              <HeroStatus stalled={dataStalled(status)} />
               <HeroActions replay={replayDay(days)} />
             </div>
             <figure className="lp-figure lp-figure-hero">
@@ -368,20 +405,20 @@ function Landing() {
 
 /**
  * What the demo holds right now, each number once its source answers; a number whose source fails stays away, and so
- * does the whole block when none answers. Labelled as the demo's own count, not an official figure.
+ * does the whole block when none answers. Labelled as the demo's own count, not an official figure. While the data is
+ * stale the 24-hour counts make way for a line that says since when (see liveNumbers).
  */
-function Numbers({ archive, summary, status }: { archive: ArchiveDays | null; summary: Summary | null; status: IngestStatus | null }) {
+export function Numbers({ archive, summary, status, now }: { archive: ArchiveDays | null; summary: Summary | null; status: IngestStatus | null; now?: number }) {
   const t = useT(landingText), f = useFormat();
-  const latest = readFreshness(status, Date.now() + clockOffset(status?.serverTime))?.latest ?? null;
-  const total = archiveTotal(archive);
+  const live = liveNumbers(summary, status, archive, now);
   const stats = [
-    summary && typeof summary.detections === 'number' ? { key: 'hotspots', value: f.num(summary.detections), label: t('hotspots24') } : null,
-    summary && typeof summary.incidents === 'number' ? { key: 'incidents', value: f.num(summary.incidents), label: t('incidents24') } : null,
+    live.detections !== null ? { key: 'hotspots', value: f.num(live.detections), label: t('hotspots24') } : null,
+    live.incidents !== null ? { key: 'incidents', value: f.num(live.incidents), label: t('incidents24') } : null,
     // "15.49 WIB" stays on one line when the value wraps on a phone.
-    latest ? { key: 'latest', value: `${f.dayTime(latest.at)} WIB`, label: t('latest', { sat: satelliteName(latest.code) }) } : null,
-    archive && total !== null ? { key: 'archive', value: f.num(total), label: t('archiveTotal', { date: f.calendar(archive.first) }) } : null,
+    live.latest ? { key: 'latest', value: `${f.dayTime(live.latest.at)} WIB`, label: t('latest', { sat: satelliteName(live.latest.code) }) } : null,
+    live.total !== null && live.first ? { key: 'archive', value: f.num(live.total), label: t('archiveTotal', { date: f.calendar(live.first) }) } : null,
   ].filter(stat => stat !== null);
-  if (!stats.length) return null;
+  if (!stats.length && !live.stalledSince) return null;
   return (
     <section className="lp-section lp-numbers" aria-labelledby="lp-numbers">
       <div className="lp-wrap">
@@ -389,14 +426,21 @@ function Numbers({ archive, summary, status }: { archive: ArchiveDays | null; su
           <h2 id="lp-numbers" className="lp-h2">{t('numbersTitle')}</h2>
           <p>{t('numbersNote')}</p>
         </div>
-        <dl className="lp-stats">
-          {stats.map(stat => (
-            <div key={stat.key} className={`lp-stat lp-stat-${stat.key}`}>
-              <dt>{stat.label}</dt>
-              <dd>{stat.value}</dd>
-            </div>
-          ))}
-        </dl>
+        {live.stalledSince && (
+          <div className="lp-stalled">
+            <Banner tone="warn" icon={<TriangleAlert size={16} className="icon" aria-hidden="true" />}>{t('stalled', { time: f.dayTime(live.stalledSince) })}</Banner>
+          </div>
+        )}
+        {stats.length > 0 && (
+          <dl className="lp-stats">
+            {stats.map(stat => (
+              <div key={stat.key} className={`lp-stat lp-stat-${stat.key}`}>
+                <dt>{stat.label}</dt>
+                <dd>{stat.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
       </div>
     </section>
   );

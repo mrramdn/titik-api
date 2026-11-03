@@ -4,9 +4,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import type { ArchiveDays } from './api';
+import type { ArchiveDays, IngestStatus } from './api';
 import { archiveTotal, replayDay } from './map/archive';
-import { HeroActions, landingText, shots, STACK } from './pages/Landing';
+import { dataStalled, HeroActions, HeroStatus, landingText, liveNumbers, Numbers, shots, STACK } from './pages/Landing';
 
 /** Width and height from a WebP file's header (lossy VP8, lossless VP8L or extended VP8X). */
 function webpSize(file: Buffer) {
@@ -20,6 +20,16 @@ function webpSize(file: Buffer) {
 
 /** The hero's buttons as HTML, for the busiest day `replay` ('' without one). */
 const heroActions = (replay: string) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(HeroActions, { replay })));
+
+// 4 Nov 2026 04.01 WIB, the server's clock too.
+const now = Date.parse('2026-11-03T21:01:00Z');
+const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
+/** GET /ingest/status whose last successful check was `minutes` ago; the newest pass 90 minutes before that. */
+const ingest = (minutes: number): IngestStatus => ({
+  serverTime: ago(0), runId: 9, intervalMinutes: 30, nextRunAt: ago(-20), lastRun: { finishedAt: ago(minutes), ok: true, error: null }, lastSuccessAt: ago(minutes), runs: [],
+  satellites: [{ satellite: 'N21', label: 'NOAA-21 (VIIRS)', sensor: 'VIIRS', active: true, latestAcquisition: ago(minutes + 90), latestIngestedAt: ago(minutes), last24h: 614, medianLatencyMin: 95, nextWindow: null }],
+});
+const summary = { detections: 614, incidents: 291 };
 
 describe('the landing page', () => {
   const archive: ArchiveDays = { first: '2026-10-08', last: '2026-11-02', days: [
@@ -80,6 +90,41 @@ describe('the landing page', () => {
     expect(landingText.en.title).toBe('Village-level hotspot alerts');
     expect(landingText.id.status3).toBe('bukan sistem peringatan resmi');
     expect(landingText.en.status3).toBe('not an official warning system');
+  });
+
+  it('shows the 24-hour counts only while the data is current, and says since when it is not', () => {
+    const fresh = liveNumbers(summary, ingest(10), archive, now);
+    expect(fresh).toMatchObject({ stalledSince: null, detections: 614, incidents: 291, latest: { code: 'N21', at: ago(100) }, total: 23316 + 25614 + 311, first: '2026-10-08' });
+    // No successful check for over 2 hours (the top bar's warning): fewer hotspots would mean missing data, not a quiet day.
+    const stale = liveNumbers(summary, ingest(8 * 60 + 7), archive, now);
+    expect(stale).toMatchObject({ stalledSince: ago(8 * 60 + 7), detections: null, incidents: null, latest: { code: 'N21' }, total: 23316 + 25614 + 311 });
+    expect(liveNumbers({ detections: 0, incidents: 0 }, ingest(26 * 60), archive, now)).toMatchObject({ detections: null, incidents: null });
+    // Before the status is known the counts wait for it.
+    expect(liveNumbers(summary, null, archive, now)).toMatchObject({ stalledSince: null, detections: null, incidents: null, latest: null });
+    expect(dataStalled(ingest(10), now)).toBe(false);
+    expect(dataStalled(ingest(121), now)).toBe(true);
+    expect(dataStalled(null, now)).toBe(false);
+  });
+
+  it('puts a line about stale data in place of the 24-hour counts, and drops "every 30 minutes" from the status line', () => {
+    const numbers = (status: IngestStatus) => renderToStaticMarkup(createElement(Numbers, { archive, summary, status, now }));
+    const counts = [landingText.id.hotspots24, landingText.id.incidents24];
+    const current = numbers(ingest(10));
+    for (const label of counts) expect(current).toContain(label);
+    expect(current).toContain('<dd>614</dd>');
+    expect(current).not.toContain('belum diperbarui');
+    const stale = numbers(ingest(8 * 60 + 7));
+    expect(stale).toContain('Data belum diperbarui sejak 3 Nov 19.54 WIB.');
+    for (const label of counts) expect(stale).not.toContain(label);
+    expect(stale).not.toContain('<dd>614</dd>');
+    // The newest pass and the archive still hold.
+    expect(stale).toContain('data satelit terbaru (NOAA-21)');
+    expect(stale).toContain('dalam arsip sejak 8 Okt 2026');
+    const status = (stalled: boolean) => renderToStaticMarkup(createElement(HeroStatus, { stalled }));
+    expect(status(false)).toContain('diperbarui tiap 30 menit');
+    expect(status(true)).not.toContain('30 menit');
+    expect(status(true)).toContain('Demo dengan data satelit asli');
+    expect(status(true)).toContain('bukan sistem peringatan resmi');
   });
 
   it('shows real screenshots at the size its markup says, each a light WebP file', () => {
