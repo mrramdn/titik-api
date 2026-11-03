@@ -7,6 +7,7 @@ import type { Risk } from '../../api';
 import { dict, fill, useLang, useT, type Lang } from '../../i18n';
 import { formatter } from '../../format';
 import { highDanger, highDangerName, type HighDanger, type RiskLink } from '../../map/risk';
+import { MAP_PATH } from '../../routes';
 import { useLoad } from './data';
 import { OpenMeteoCredit } from '../OpenMeteo';
 
@@ -55,7 +56,7 @@ export function DangerCard({ province, version }: { province: string; version?: 
         <p>{summary}</p>
         {computed && <p className="caption">{t('note')} <OpenMeteoCredit /></p>}
       </div>
-      {computed && <Link to="/" state={toMap} className="btn btn-secondary btn-sm">{t('map')}</Link>}
+      {computed && <Link to={MAP_PATH} state={toMap} className="btn btn-secondary btn-sm">{t('map')}</Link>}
     </section>
   );
 }

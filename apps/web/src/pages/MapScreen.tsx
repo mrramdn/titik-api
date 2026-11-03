@@ -16,6 +16,7 @@ import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
 import { shortProvince, useRegion, type RegencyRef } from '../region';
 import { useSession } from '../session';
+import { mapPath } from '../routes';
 
 const text = dict({
   id: {
@@ -66,7 +67,7 @@ const filterKey = 'titikapi.filters';
 function storedFilters(): IncidentFilters {
   try { return { ...defaultFilters, ...JSON.parse(sessionStorage.getItem(filterKey) ?? '{}') }; } catch { return defaultFilters; }
 }
-/** The stored filters; an archive date in the address (/?tanggal=2026-10-23) wins over the stored one, `live` over both. */
+/** The stored filters; an archive date in the address (/peta?tanggal=2026-10-23) wins over the stored one, `live` over both. */
 function initialFilters(search: string, live: boolean): IncidentFilters {
   const stored = storedFilters();
   const tanggal = live ? '' : tanggalFromSearch(search);
@@ -293,7 +294,7 @@ export function IncidentList() {
         </div>
         {quietDay && (
           <p className="quiet-hint">{t('quiet')}{' '}
-            <a href={`/?tanggal=${quietDay}`} onClick={event => {
+            <a href={mapPath(quietDay)} onClick={event => {
               // A plain click switches the map in place; a modified one opens the archive day in a new tab.
               if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
               event.preventDefault();

@@ -10,6 +10,7 @@ import { incidentLimit, villageSummaryText } from '../components/volunteer/villa
 import { useFormat } from '../format';
 import { dict, useLang, useT } from '../i18n';
 import { MapView } from '../map/LazyMapView';
+import { MAP_PATH } from '../routes';
 import { useSession } from '../session';
 
 const text = dict({
@@ -64,7 +65,7 @@ export function VillagePage() {
   return (
     <Shell>
       <main className="page v-page">
-        <Link to="/" className="back v-back"><ChevronLeft size={14} aria-hidden="true" />{t('back')}</Link>
+        <Link to={MAP_PATH} className="back v-back"><ChevronLeft size={14} aria-hidden="true" />{t('back')}</Link>
         <div className="page-head">
           <div>
             <h1 className="title-24">{t('village', { name: d.name })}</h1>

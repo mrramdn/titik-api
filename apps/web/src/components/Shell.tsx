@@ -13,17 +13,18 @@ import { Freshness } from './shell/Freshness';
 import { LangSwitch } from './shell/LangSwitch';
 import { RoleList, roleText, useSignOutToMap } from './shell/roles';
 import { usePopover } from './shell/popover';
+import { HOME_PATH, MAP_PATH, navActive } from '../routes';
 
 const text = dict({
   id: {
-    home: 'Titik Api, ke peta', region: 'Wilayah', allRegions: 'Sumsel + Kalteng', villages: '{n} desa',
+    home: 'Titik Api, beranda', region: 'Wilayah', allRegions: 'Sumsel + Kalteng', villages: '{n} desa',
     map: 'Peta', tasks: 'Tugas', myVillage: 'Desa saya', dashboard: 'Dasbor', recap: 'Rekap', about: 'Tentang', nav: 'Navigasi',
     account: 'Akun', role: 'Peran', language: 'Bahasa', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup',
     offline: 'Tanpa sinyal. Laporan disimpan di ponsel.', waitingOne: '{n} laporan menunggu sinyal sejak {time}.', waitingMany: '{n} laporan menunggu sinyal sejak {time}.',
     rejectedOne: '{n} laporan ditolak: {error}', rejectedMany: '{n} laporan ditolak: {error}', sendNow: 'Kirim sekarang',
   },
   en: {
-    home: 'Titik Api, to the map', region: 'Region', allRegions: 'Sumsel + Kalteng', villages: '{n} villages',
+    home: 'Titik Api, home', region: 'Region', allRegions: 'Sumsel + Kalteng', villages: '{n} villages',
     map: 'Map', tasks: 'Tasks', myVillage: 'My village', dashboard: 'Dashboard', recap: 'Recap', about: 'About', nav: 'Navigation',
     account: 'Account', role: 'Role', language: 'Language', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close',
     offline: 'No signal. Reports are saved on this phone.', waitingOne: '{n} report waiting for signal since {time}.', waitingMany: '{n} reports waiting for signal since {time}.',
@@ -34,7 +35,7 @@ type Key = keyof typeof text.id;
 
 interface NavItem { to: string; key: Key; icon: LucideIcon; roles?: Role[] }
 const navItems: NavItem[] = [
-  { to: '/', key: 'map', icon: MapIcon },
+  { to: MAP_PATH, key: 'map', icon: MapIcon },
   { to: '/tugas', key: 'tasks', icon: ClipboardList, roles: ['mpa'] },
   { to: '/desa-saya', key: 'myVillage', icon: MapPin, roles: ['mpa', 'kades'] },
   { to: '/dasbor', key: 'dashboard', icon: LayoutDashboard, roles: ['bpbd', 'admin'] },
@@ -43,8 +44,6 @@ const navItems: NavItem[] = [
 ];
 /** Peta, the role's own pages, Tentang: at most four, so the phone tab bar has room for the account. */
 const navFor = (role: Role | undefined) => navItems.filter(item => !item.roles || (role && item.roles.includes(role))).slice(0, 4);
-/** The map tab stays active while an incident is open in its sidebar. */
-const onMap = (path: string) => path === '/' || path.startsWith('/k/') || (path.startsWith('/kejadian/') && !path.endsWith('/cek'));
 
 function OutboxBar() {
   const t = useT(text), f = useFormat();
@@ -147,12 +146,12 @@ export function Shell({ children, freshness = true }: { children: ReactNode; fre
   const { pathname } = useLocation();
   const [sheet, setSheet] = useState(false);
   const links = navFor(user?.role);
-  const active = (to: string) => (to === '/' ? onMap(pathname) : pathname === to || pathname.startsWith(`${to}/`));
+  const active = (to: string) => navActive(to, pathname);
   useEffect(() => setSheet(false), [pathname]);
   return (
     <div className="app">
       <header className="topbar">
-        <Link to="/" className="brand" aria-label={t('home')}><LogoMark /><span className="brand-name">Titik Api</span></Link>
+        <Link to={HOME_PATH} className="brand" aria-label={t('home')}><LogoMark /><span className="brand-name">Titik Api</span></Link>
         <RegionSelect />
         {freshness && <Freshness />}
         <nav className="topnav" aria-label={t('nav')}>

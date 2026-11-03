@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { Check, LayoutDashboard, Landmark, Map as MapIcon, Users, type LucideIcon } from 'lucide-react';
 import { dict, useT } from '../../i18n';
 import { useFormat } from '../../format';
+import { MAP_PATH } from '../../routes';
 import { homeFor, useSession } from '../../session';
 import { useErrorText } from '../ui';
 
@@ -33,7 +34,7 @@ export const signOutFlag = 'signOut';
 export function useSignOutToMap() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  return () => navigate('/', { replace: pathname === '/', state: { [signOutFlag]: true } });
+  return () => navigate(MAP_PATH, { replace: pathname === MAP_PATH, state: { [signOutFlag]: true } });
 }
 
 /** The role the visitor is viewing as, and a function that switches to another one. */

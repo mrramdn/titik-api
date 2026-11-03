@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { accountSettler } from './accountData';
 import { api, ApiError, type User } from './api';
+import { MAP_PATH } from './routes';
 
 interface Session { user: User | null; ready: boolean; offline: boolean; signInDemo(role: 'mpa' | 'kades' | 'bpbd'): Promise<User>; signIn(email: string, password: string): Promise<User>; signOut(): Promise<void> }
 const SessionContext = createContext<Session | null>(null);
@@ -52,5 +53,5 @@ export function useSession() {
   return session;
 }
 
-/** Where each role starts: volunteers on their tasks, village heads on their village, agencies on the dashboard. */
-export const homeFor = (user: User | null) => (!user ? '/' : user.role === 'bpbd' || user.role === 'admin' ? '/dasbor' : user.role === 'kades' ? '/desa-saya' : '/tugas');
+/** Where each role starts: visitors on the map, volunteers on their tasks, village heads on their village, agencies on the dashboard. */
+export const homeFor = (user: User | null) => (!user ? MAP_PATH : user.role === 'bpbd' || user.role === 'admin' ? '/dasbor' : user.role === 'kades' ? '/desa-saya' : '/tugas');

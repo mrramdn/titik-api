@@ -10,6 +10,7 @@ import { dict, useLang, useT, type Vars } from '../i18n';
 import { satelliteName, sensorOf } from '../i18n/common';
 import { useFormat, type Format } from '../format';
 import { panelActions } from '../map/archive';
+import { MAP_PATH } from '../routes';
 import { useSession } from '../session';
 import { useScreen } from './MapScreen';
 
@@ -122,7 +123,7 @@ export function IncidentPanel() {
   // On a phone the page itself scrolls: a row tapped far down the list opens with the map and the header in view.
   useEffect(() => { if (typeof matchMedia === 'function' && matchMedia('(max-width: 900px)').matches) window.scrollTo({ top: 0 }); }, [key]);
   const events = useMemo(() => (d ? (Array.isArray(d.timeline) && d.timeline.length ? d.timeline : fallbackTimeline(d)).slice().sort((a, b) => a.at.localeCompare(b.at)) : []), [d]);
-  if (incident.error && !d) return <div className="sidebar-scroll detail"><section><Link to="/" className="back"><ChevronLeft size={14} />{t('back')}</Link><p className="subline">{incident.error}</p></section></div>;
+  if (incident.error && !d) return <div className="sidebar-scroll detail"><section><Link to={MAP_PATH} className="back"><ChevronLeft size={14} />{t('back')}</Link><p className="subline">{incident.error}</p></section></div>;
   if (!d) return <div className="empty">{t('loading')}</div>;
 
   const detections = d.detections ?? [];
@@ -138,7 +139,7 @@ export function IncidentPanel() {
   return (
     <div className="sidebar-scroll detail ip">
       <section className="ip-head">
-        <Link to="/" className="back"><ChevronLeft size={14} aria-hidden="true" />{t('back')}</Link>
+        <Link to={MAP_PATH} className="back"><ChevronLeft size={14} aria-hidden="true" />{t('back')}</Link>
         <div className="ip-code"><LevelBadge level={d.level} /><span>KJD-{d.code.toUpperCase()}</span></div>
         <h1 className="title-24">{d.village ? t('village', { name: d.village.name }) : t('outside')}</h1>
         {d.village && <p className="subline">{[t('district', { name: d.village.district }), d.village.regency, d.village.province].join(', ')}</p>}
