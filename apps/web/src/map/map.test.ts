@@ -192,23 +192,23 @@ describe('fire danger (FWI)', () => {
 
   it('names a regency with its share at high or above, and its class when that is high or very high', () => {
     const [pulang, oki] = highDanger(risk, 1);
-    expect(highDangerName(pulang!, 'id')).toBe('Pulang Pisau (sangat tinggi, 80% wilayah)');
-    expect(highDangerName(pulang!, 'en')).toBe('Pulang Pisau (very high, 80% of the area)');
-    expect(highDangerName(oki!, 'id')).toBe('Ogan Komering Ilir (30% wilayah)');
-    expect(highDangerName(oki!, 'en')).toBe('Ogan Komering Ilir (30% of the area)');
-    expect(highDangerName(highDanger(risk, 0)[0]!, 'id')).toBe('Ogan Komering Ilir (tinggi, 60% wilayah)');
+    expect(highDangerName(pulang!, 'id')).toBe('Pulang Pisau 80%');
+    expect(highDangerName(pulang!, 'en')).toBe('Pulang Pisau 80%');
+    expect(highDangerName(oki!, 'id')).toBe('Ogan Komering Ilir 30%');
+    expect(highDangerName(oki!, 'en')).toBe('Ogan Komering Ilir 30%');
+    expect(highDangerName(highDanger(risk, 0)[0]!, 'id')).toBe('Ogan Komering Ilir 60%');
   });
 
-  it('puts a regency on the card by its share at high or above, whatever class the recap line names', () => {
-    // Musi Rawas, 30 July 2026: moderate 46.8%, high 8.5%, very high 1.6%. No class above moderate covers 10% on its
-    // own, so the API names none, but high or above covers 10.1%.
-    const musi = regency('Musi Rawas', 'Sumatera Selatan', [area(0, 'sedang', [0.431, 0.468, 0.085, 0.016], 4.3)]);
-    // Murung Raya, 24 July 2026: the API names moderate, with 51.7% at moderate or above; high or above covers 13.6%.
-    const murung = regency('Murung Raya', 'Kalimantan Tengah', [area(0, 'rendah', [0.483, 0.381, 0.066, 0.07], 2.6, { fwiClass: 'sedang', share: 0.517 })]);
+  it('puts a regency on the card by its share at high or above, the same share its recap line gives', () => {
+    // Musi Rawas, 30 July 2026: moderate 46.8%, high 8.5%, very high 1.6%. High or above covers 10.1%.
+    const musi = regency('Musi Rawas', 'Sumatera Selatan', [area(0, 'sedang', [0.431, 0.468, 0.085, 0.016], 4.3, { fwiClass: 'tinggi', share: 0.101 })]);
+    // Murung Raya, 24 July 2026: high or above covers 13.6%.
+    const murung = regency('Murung Raya', 'Kalimantan Tengah', [area(0, 'rendah', [0.483, 0.381, 0.066, 0.07], 2.6, { fwiClass: 'tinggi', share: 0.136 })]);
     const july = { ...risk, regencies: [musi, murung] };
     expect(highDanger(july, 0).map(r => [r.name, r.fwiClass, r.share])).toEqual([['Murung Raya', 'rendah', 0.136], ['Musi Rawas', 'sedang', 0.101]]);
-    expect(highDanger(july, 0).map(r => highDangerName(r, 'id'))).toEqual(['Murung Raya (14% wilayah)', 'Musi Rawas (10% wilayah)']);
-    expect(partialText(regencyDays(july).get('Kalimantan Tengah/Murung Raya')!.partial!, 'id')).toBe('sedang atau lebih di 52% wilayah');
+    expect(highDanger(july, 0).map(r => highDangerName(r, 'id'))).toEqual(['Murung Raya 14%', 'Musi Rawas 10%']);
+    expect(partialText(regencyDays(july).get('Kalimantan Tengah/Murung Raya')!.partial!, 'id')).toBe('tinggi atau lebih di 14% wilayah');
+    expect(partialText(regencyDays(july).get('Sumatera Selatan/Musi Rawas')!.partial!, 'id')).toBe('tinggi atau lebih di 10% wilayah');
   });
 
   it('writes the recap\'s line for a higher class over part of a regency', () => {

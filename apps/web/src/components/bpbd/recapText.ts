@@ -11,7 +11,7 @@ const words = dict({
     incidents: 'Kejadian: {n}, prioritas tinggi {high}', checked: 'Sudah dicek: {n} dari {total} ({share})',
     response: 'Waktu tanggap (median): {time}', falseAlarms: 'Alarm palsu: {n}', detections: 'Titik panas: {n}',
     regencies: 'Kabupaten dengan kejadian terbanyak:', regency: '{name}: {n} kejadian, {high} prioritas tinggi, {checked} dicek',
-    danger: 'Bahaya kebakaran tinggi atau lebih (FWI): {list}',
+    danger: 'Bahaya kebakaran tinggi atau lebih (FWI), menurut bagian wilayah: {list}',
     checks: 'Hasil cek lapangan: {list}', assignments: 'Penugasan: {list}', link: 'Rincian: {url}',
   },
   en: {
@@ -19,7 +19,7 @@ const words = dict({
     incidents: 'Incidents: {n}, high priority {high}', checked: 'Checked: {n} of {total} ({share})',
     response: 'Response time (median): {time}', falseAlarms: 'False alarms: {n}', detections: 'Hotspots: {n}',
     regencies: 'Regencies with the most incidents:', regency: '{name}: {n} incidents, {high} high priority, {checked} checked',
-    danger: 'Fire danger high or above (FWI): {list}',
+    danger: 'Fire danger high or above (FWI), by share of area: {list}',
     checks: 'Field check results: {list}', assignments: 'Assignments: {list}', link: 'Details: {url}',
   },
 });

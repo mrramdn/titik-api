@@ -12,13 +12,13 @@ import { useLoad } from './data';
 const text = dict({
   id: {
     title: 'Bahaya kebakaran besok',
-    one: 'Tinggi atau lebih di sebagian wilayah 1 kabupaten: {names}.', many: 'Tinggi atau lebih di sebagian wilayah {n} kabupaten: {names}.',
+    one: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: {names}.', many: 'Tinggi atau lebih di {n} kabupaten, menurut bagian wilayahnya: {names}.',
     more: '{names} dan {n} lainnya', none: 'Tidak ada kabupaten dengan bahaya tinggi atau lebih di sedikitnya 10% wilayahnya.',
     noWeather: 'Data cuaca belum tersedia.', note: 'FWI dari data model Open-Meteo dengan kelas BMKG. Bukan produk resmi BMKG.', map: 'Lihat di peta',
   },
   en: {
     title: 'Fire danger tomorrow',
-    one: 'High or above in part of 1 regency: {names}.', many: 'High or above in part of {n} regencies: {names}.',
+    one: 'High or above in 1 regency, by share of its area: {names}.', many: 'High or above in {n} regencies, by share of their area: {names}.',
     more: '{names} and {n} more', none: 'No regency has high or above danger in at least 10% of its area.',
     noWeather: 'Weather data is not available yet.', note: 'FWI from Open-Meteo model data with BMKG classes. Not an official BMKG product.', map: 'View on the map',
   },

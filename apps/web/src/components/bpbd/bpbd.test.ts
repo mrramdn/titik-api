@@ -120,10 +120,10 @@ describe('recap helpers', () => {
       regencies: [], villages: [], checks: {}, assignments: { ditugaskan: 0, menuju: 0, selesai: 0, dibatalkan: 0 },
     };
     const danger = recapText(recap, 'id', 'Kalimantan Tengah', 'u', [pulang, kapuas]).split('\n');
-    expect(danger).toContain('Bahaya kebakaran tinggi atau lebih (FWI): Pulang Pisau (sangat tinggi, 80% wilayah), Kapuas (30% wilayah)');
+    expect(danger).toContain('Bahaya kebakaran tinggi atau lebih (FWI), menurut bagian wilayah: Pulang Pisau 80%, Kapuas 30%');
     expect(danger.at(-1)).toBe('Rincian: u');
     expect(recapText(recap, 'en', 'Kalimantan Tengah', 'u', [pulang, kapuas]).split('\n'))
-      .toContain('Fire danger high or above (FWI): Pulang Pisau (very high, 80% of the area), Kapuas (30% of the area)');
+      .toContain('Fire danger high or above (FWI), by share of area: Pulang Pisau 80%, Kapuas 30%');
     expect(recapText(recap, 'id', 'Kalimantan Tengah', 'u', [])).not.toContain('FWI');
   });
 });
@@ -134,13 +134,13 @@ const pulang = danger('Pulang Pisau', 'sangat_tinggi', 0.8, 14.2), kapuas = dang
 describe('tomorrow\'s fire danger card', () => {
   it('names up to three regencies with their share at high or above, and their class when that is high or very high', () => {
     const four = [pulang, danger('Katingan', 'tinggi', 0.6, 9.4), kapuas, danger('Seruyan', 'sedang', 0.12, 4.8)];
-    expect(dangerSummary(four, 'id')).toBe('Tinggi atau lebih di sebagian wilayah 4 kabupaten: Pulang Pisau (sangat tinggi, 80% wilayah), '
-      + 'Katingan (tinggi, 60% wilayah), Kapuas (30% wilayah) dan 1 lainnya.');
-    expect(dangerSummary(four, 'en')).toBe('High or above in part of 4 regencies: Pulang Pisau (very high, 80% of the area), '
-      + 'Katingan (high, 60% of the area), Kapuas (30% of the area) and 1 more.');
-    expect(dangerSummary([pulang, kapuas], 'id')).toBe('Tinggi atau lebih di sebagian wilayah 2 kabupaten: Pulang Pisau (sangat tinggi, 80% wilayah), Kapuas (30% wilayah).');
-    expect(dangerSummary([kapuas], 'id')).toBe('Tinggi atau lebih di sebagian wilayah 1 kabupaten: Kapuas (30% wilayah).');
-    expect(dangerSummary([kapuas], 'en')).toBe('High or above in part of 1 regency: Kapuas (30% of the area).');
+    expect(dangerSummary(four, 'id')).toBe('Tinggi atau lebih di 4 kabupaten, menurut bagian wilayahnya: Pulang Pisau 80%, '
+      + 'Katingan 60%, Kapuas 30% dan 1 lainnya.');
+    expect(dangerSummary(four, 'en')).toBe('High or above in 4 regencies, by share of their area: Pulang Pisau 80%, '
+      + 'Katingan 60%, Kapuas 30% and 1 more.');
+    expect(dangerSummary([pulang, kapuas], 'id')).toBe('Tinggi atau lebih di 2 kabupaten, menurut bagian wilayahnya: Pulang Pisau 80%, Kapuas 30%.');
+    expect(dangerSummary([kapuas], 'id')).toBe('Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Kapuas 30%.');
+    expect(dangerSummary([kapuas], 'en')).toBe('High or above in 1 regency, by share of its area: Kapuas 30%.');
   });
 
   it('says so when high or above covers less than 10% of every regency', () => {

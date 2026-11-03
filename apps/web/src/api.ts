@@ -168,8 +168,8 @@ export interface RiskDay {
 export interface RiskCell { lon: number; lat: number; days: RiskDay[] }
 /**
  * A regency's fire danger on one day, by area: each grid cell counts with the share of the regency's area it covers
- * (geodesic areas), so a cell that only touches the regency's edge cannot decide it. Each cell's class follows its FWI
- * as on the grid.
+ * (geodesic areas), so a cell that only touches the regency's edge counts for little. When some cells lack the day (a
+ * weather request failed), the shares come from the cells that have it. Each cell's class follows its FWI as on the grid.
  */
 export interface RegencyRiskDay {
   date: string;
@@ -180,10 +180,9 @@ export interface RegencyRiskDay {
   /** Share of the regency's area in each class, 0–1 in steps of 0.001; the four add up to 1. */
   shares: Record<FwiClass, number>;
   /**
-   * The highest class above `fwiClass` that covers at least 10% of the regency on its own; `share` is the share of
-   * the regency at that class or above, so it can be larger than that class's own share. Null when there is none.
-   * Classes that each cover under 10% are not added up: rendah 59%, sedang 30%, tinggi 5% and sangat_tinggi 6% give
-   * { fwiClass: 'sedang', share: 0.41 }.
+   * The highest class above `fwiClass` that, together with the classes above it, covers at least 10% of the regency;
+   * `share` is that combined share, the same test the dashboard card uses for tinggi or above. Null when there is none.
+   * rendah 59%, sedang 30%, tinggi 5% and sangat_tinggi 6% give { fwiClass: 'tinggi', share: 0.11 }.
    */
   partial: { fwiClass: FwiClass; share: number } | null;
   /** Area-weighted mean FWI, one decimal. */

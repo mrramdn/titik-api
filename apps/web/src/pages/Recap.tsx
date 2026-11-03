@@ -32,7 +32,7 @@ const text = dict({
     note: 'Waktu tanggap adalah median dari deteksi satelit sampai cek lapangan pertama. Tanggal mengikuti WIB.',
     printed: 'Dicetak dari Titik Api, {time} WIB.',
     danger: 'Bahaya kebakaran',
-    dangerNote: 'Bahaya kebakaran: FWI dari data model Open-Meteo dengan kelas BMKG. Tiap kabupaten diberi kelas yang mencakup bagian terluas wilayahnya. Bila kelas yang lebih tinggi mencakup sedikitnya 10% wilayah, baris kecil menyebut yang tertinggi beserta bagian wilayah pada kelas itu atau lebih. Bukan produk resmi BMKG.',
+    dangerNote: 'Bahaya kebakaran: FWI dari data model Open-Meteo dengan kelas BMKG. Tiap kabupaten diberi kelas yang mencakup bagian terluas wilayahnya. Baris kecil menyebut kelas tertinggi yang, bersama kelas di atasnya, mencakup sedikitnya 10% wilayah, beserta bagian wilayah itu. Bukan produk resmi BMKG.',
   },
   en: {
     back: 'Dashboard', title: 'Daily recap', both: 'Sumatera Selatan and Kalimantan Tengah',
@@ -49,7 +49,7 @@ const text = dict({
     note: 'Response time is the median from the satellite detection to the first field check. Dates follow WIB.',
     printed: 'Printed from Titik Api, {time} WIB.',
     danger: 'Fire danger',
-    dangerNote: 'Fire danger: FWI from Open-Meteo model data with BMKG classes. Each regency gets the class that covers the largest part of its area. When a higher class covers at least 10% of the area, the small line names the highest such class with the part of the area at that class or above. Not an official BMKG product.',
+    dangerNote: 'Fire danger: FWI from Open-Meteo model data with BMKG classes. Each regency gets the class that covers the largest part of its area. The small line names the highest class that, together with the classes above it, covers at least 10% of the area, with that part of the area. Not an official BMKG product.',
   },
 });
 

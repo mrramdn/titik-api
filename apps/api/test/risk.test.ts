@@ -97,10 +97,10 @@ test('live fire danger: three days per cell, and per regency the share of its ar
         if (rank(name) < rank(day.fwiClass)) assert.ok(day.shares[name] <= day.shares[day.fwiClass], `${label}: ${name} is not larger`);
         if (rank(name) > rank(day.fwiClass)) assert.ok(day.shares[name] < day.shares[day.fwiClass], `${label}: ${name} is smaller`);
       }
-      // The highest class above that covers at least 10% of the area on its own is named, with the share at that
-      // class or above.
-      const named = fwiClasses.filter(name => rank(name) > rank(day.fwiClass) && day.shares[name] >= 0.1 - 1e-9).at(-1) ?? null;
-      assert.equal(day.partial?.fwiClass ?? null, named, `${label}: the highest class above that covers 10% on its own`);
+      // The highest class above that, with the classes above it, covers at least 10% of the area is named, with that
+      // combined share.
+      const named = fwiClasses.filter(name => rank(name) > rank(day.fwiClass) && atOrAbove(day.shares, name) >= 0.1 - 1e-9).at(-1) ?? null;
+      assert.equal(day.partial?.fwiClass ?? null, named, `${label}: the highest class above whose share at or above reaches 10%`);
       if (day.partial) assert.ok(Math.abs(day.partial.share - atOrAbove(day.shares, day.partial.fwiClass)) < 1e-9, `${label}: the share at that class or above`);
       const mean = cells.reduce((a, cell) => a + cell.share * cell.fwi, 0) / total;
       assert.ok(Math.abs(day.meanFwi - mean) <= 0.05 + 1e-9, `${label}: mean FWI ${day.meanFwi} vs ${mean}`);
@@ -181,7 +181,7 @@ test('by area: a tie goes to the higher class', () => {
   assert.equal(byArea([0.4, 0.4], [0.4, 4], [0.2, 20]).fwiClass, 'sedang');
 });
 
-test('by area: a higher class is named when it covers at least 10% of the regency on its own, with the share at that class or above', () => {
+test('by area: a higher class is named when it and the classes above it cover at least 10% of the regency', () => {
   assert.deepEqual(byArea([0.9, 0.4], [0.1, 10]).partial, { fwiClass: 'tinggi', share: 0.1 }, 'exactly 10% is named');
   assert.equal(byArea([0.901, 0.4], [0.099, 10]).partial, null, '9.9% is not named');
   assert.deepEqual(byArea([0.85, 0.4], [0.05, 10], [0.1, 20]).partial, { fwiClass: 'sangat_tinggi', share: 0.1 }, 'very high on exactly 10%');
@@ -194,19 +194,19 @@ test('by area: a higher class is named when it covers at least 10% of the regenc
   assert.equal(byArea([0.6, 20], [0.4, 0.4]).partial, null, 'nothing above sangat tinggi');
 });
 
-test('by area: classes that each cover under 10% are not added up to name a higher class', () => {
-  // High 5% and very high 5%: high or above covers 10%, but neither class does on its own.
-  assert.equal(byArea([0.9, 0.4], [0.05, 10], [0.05, 20]).partial, null);
-  // Low 59%, moderate 30%, high 5%, very high 6%: moderate is the highest class above low that covers 10%, told with
-  // the 41% at moderate or above (not high with 11%).
+test('by area: classes above are added up, as on the dashboard card', () => {
+  // High 5% and very high 5%: high or above covers 10%, so high is named.
+  assert.deepEqual(byArea([0.9, 0.4], [0.05, 10], [0.05, 20]).partial, { fwiClass: 'tinggi', share: 0.1 });
+  // Low 59%, moderate 30%, high 5%, very high 6%: high or above covers 11%, so high is named (not moderate with 41%),
+  // and the regency is on the card with the same 11%.
   const split = byArea([0.59, 0.4], [0.3, 4], [0.05, 10], [0.06, 20]);
   assert.deepEqual(split.shares, { rendah: 0.59, sedang: 0.3, tinggi: 0.05, sangat_tinggi: 0.06 });
   assert.equal(split.fwiClass, 'rendah');
-  assert.deepEqual(split.partial, { fwiClass: 'sedang', share: 0.41 });
-  // Musi Rawas on 30 July 2026: moderate 46.8%, high 8.5%, very high 1.6%. Nothing above moderate covers 10%.
+  assert.deepEqual(split.partial, { fwiClass: 'tinggi', share: 0.11 });
+  // Musi Rawas on 30 July 2026: moderate 46.8%, high 8.5%, very high 1.6%. High or above covers 10.1%, as on the card.
   const musi = byArea([0.431, 0.4], [0.468, 4], [0.085, 10], [0.016, 20]);
   assert.equal(musi.fwiClass, 'sedang');
-  assert.equal(musi.partial, null);
+  assert.deepEqual(musi.partial, { fwiClass: 'tinggi', share: 0.101 });
 });
 
 test('by area: the mean FWI weighs each cell by the share of the regency it covers', () => {

@@ -31,13 +31,13 @@ export const riskText = dict({
     forecast: 'prakiraan', dc: 'Kode kekeringan (DC)', temp: 'Suhu pukul 12.00', rh: 'Kelembapan pukul 12.00', wind: 'Angin pukul 12.00',
     windValue: 'dari {dir}, {speed} km/jam', rain: 'Hujan 24 jam sampai 12.00', dry: 'Hari tanpa hujan', dryDays: '{n} hari',
     dcNote: 'DC di atas 400: kabut asap dari gambut jauh lebih sering (de Groot dkk. 2007)',
-    area: '{p} wilayah', classArea: '{class}, {p} wilayah', partial: '{class} atau lebih di {p} wilayah', partialTop: '{class} di {p} wilayah',
+    partial: '{class} atau lebih di {p} wilayah', partialTop: '{class} di {p} wilayah',
   },
   en: {
     forecast: 'forecast', dc: 'Drought Code (DC)', temp: 'Temperature at 12:00', rh: 'Humidity at 12:00', wind: 'Wind at 12:00',
     windValue: 'from the {dir}, {speed} km/h', rain: 'Rain, 24 h to 12:00', dry: 'Days without rain', dryDays: '{n} days',
     dcNote: 'DC above 400: haze from peat is far more frequent (de Groot et al. 2007)',
-    area: '{p} of the area', classArea: '{class}, {p} of the area', partial: '{class} or above in {p} of the area', partialTop: '{class} in {p} of the area',
+    partial: '{class} or above in {p} of the area', partialTop: '{class} in {p} of the area',
   },
 });
 
@@ -89,7 +89,6 @@ export function riskDetail(day: RiskDay, lang: Lang) {
   };
 }
 
-const high = (name: FwiClass) => name === 'tinggi' || name === 'sangat_tinggi';
 /** Tinggi or above is named from 10% of a regency's area, in thousandths (the steps of the shares). */
 const HIGH_MIN = 100;
 
@@ -111,10 +110,12 @@ export function highDanger(risk: Risk, dayIndex: number, province = ''): HighDan
     .sort((a, b) => b.share - a.share || b.meanFwi - a.meanFwi || a.name.localeCompare(b.name));
 }
 
-/** "Pulang Pisau (60% wilayah)", with the class when the regency as a whole is tinggi or above: "Pulang Pisau (sangat tinggi, 80% wilayah)". */
+/**
+ * "Pulang Pisau 80%": the regency and the share of its area at tinggi or above. The class alone would overstate it (a
+ * regency that is sangat tinggi on half its area and tinggi on the rest is 100% tinggi or above, not 100% sangat tinggi).
+ */
 export function highDangerName(regency: HighDanger, lang: Lang) {
-  const w = riskText[lang], p = formatter(lang).percent(regency.share);
-  return `${regency.name} (${high(regency.fwiClass) ? fill(w.classArea, { class: fwiLabel[lang][regency.fwiClass].toLowerCase(), p }) : fill(w.area, { p })})`;
+  return `${regency.name} ${formatter(lang).percent(regency.share)}`;
 }
 
 /** A higher class over part of a regency, under its class: "tinggi atau lebih di 30% wilayah", "sangat tinggi di 12% wilayah". */
