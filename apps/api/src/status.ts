@@ -88,12 +88,36 @@ async function satelliteStats(pool: pg.Pool): Promise<Stats> {
   return stats;
 }
 
+/** GET /health/data says stale once the last successful live run is this old: three missed 30-minute runs. */
+export const DATA_STALE_MINUTES = 90;
+
+/**
+ * When the last successful live ingest run finished, and how many whole minutes ago by the database clock; both null
+ * before the first one. Snapshot and fixture runs do not count, as their data is not current. Runs never overlap (an
+ * advisory lock), so the highest id is the latest.
+ */
+export async function lastSuccess(pool: pg.Pool): Promise<{ lastSuccessAt: string | null; minutesAgo: number | null }> {
+  const row = (await pool.query(`SELECT finished_at, extract(epoch FROM now() - finished_at) AS seconds FROM ingest_runs
+    WHERE source = 'live' AND finished_at IS NOT NULL AND error IS NULL ORDER BY id DESC LIMIT 1`)).rows[0];
+  if (!row) return { lastSuccessAt: null, minutesAgo: null };
+  return { lastSuccessAt: (row.finished_at as Date).toISOString(), minutesAgo: Math.max(0, Math.floor(Number(row.seconds) / 60)) };
+}
+
 export function installStatus(app: FastifyInstance, pool: pg.Pool) {
+  // Data freshness for monitoring. GET /health stays the liveness check that compose and deploys wait for; this one
+  // answers 503 while the data is stale, which a running server can be.
+  app.get('/api/v1/health/data', async (_request, reply) => {
+    const { lastSuccessAt, minutesAgo } = await lastSuccess(pool);
+    const ok = minutesAgo !== null && minutesAgo < DATA_STALE_MINUTES;
+    return reply.code(ok ? 200 : 503).header('Cache-Control', 'no-store').send({ data: { status: ok ? 'ok' : 'stale', lastSuccessAt, minutesAgo } });
+  });
+
   app.get('/api/v1/ingest/status', async () => {
     const now = new Date();
     const runs = await pool.query(`SELECT id, started_at, finished_at, source, feeds, fetched, in_area, inserted, incidents_touched, error
       FROM ingest_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 5`);
     const success = (await pool.query('SELECT max(id) AS id FROM ingest_runs WHERE finished_at IS NOT NULL AND error IS NULL')).rows[0]?.id;
+    const { lastSuccessAt } = await lastSuccess(pool);
     const stats = await satelliteStats(pool);
     const last = runs.rows[0];
     return { data: {
@@ -102,6 +126,7 @@ export function installStatus(app: FastifyInstance, pool: pg.Pool) {
       intervalMinutes: schedule.intervalMinutes,
       nextRunAt: schedule.nextRunAt?.toISOString() ?? null,
       lastRun: last ? { finishedAt: last.finished_at.toISOString(), ok: last.error === null, error: last.error } : null,
+      lastSuccessAt,
       runs: runs.rows.map(run => ({ id: Number(run.id), startedAt: run.started_at.toISOString(), finishedAt: run.finished_at.toISOString(), source: run.source,
         feeds: run.feeds, fetched: run.fetched, inArea: run.in_area, inserted: run.inserted, incidentsTouched: run.incidents_touched, error: run.error })),
       satellites: satellites.map(satellite => {
