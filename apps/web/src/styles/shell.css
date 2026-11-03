@@ -19,7 +19,7 @@
 .fresh-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fresh-sub { font-size: 11px; line-height: 15px; color: var(--chrome-text-3); }
 .fresh-short, .fresh-long { display: none; }
-.fresh-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 420px; display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface-card); color: var(--text); box-shadow: 0 10px 30px rgb(0 0 0 / 0.25); }
+.fresh-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 420px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface-card); color: var(--text); box-shadow: 0 10px 30px rgb(0 0 0 / 0.25); }
 .fresh-facts { display: grid; gap: 4px; }
 .fresh-facts p { font-size: 13px; line-height: 18px; color: var(--text-2); }
 .fresh-facts .fresh-warn { color: #9a3b0a; }
@@ -28,7 +28,20 @@
 .fresh-table td { padding: 6px 8px 6px 0; border-top: 1px solid var(--surface-line); color: var(--text-2); white-space: nowrap; }
 .fresh-table td:first-child { color: var(--text); white-space: normal; }
 .fresh-table tr.off td { color: var(--text-3); }
-.fresh-table td.late { color: #9a3b0a; }
+.fresh-table td.late { color: #9a3b0a; white-space: normal; }
+/* No successful check for two hours: the time in amber, a red dot, and SiPongi+ beside it (popover on small screens). */
+.fresh.stalled { display: flex; align-items: center; gap: 10px; }
+.fresh.stalled .fresh-btn { min-width: 0; }
+.fresh.stalled .fresh-compact, .fresh-warn-line { color: #ffb37a; }
+/* Small screens: two short lines, and on the narrowest the logo alone, so the warning fits beside the region. */
+.fresh-stack { display: grid; font-size: 11px; line-height: 14px; }
+.fresh-stack b { font-weight: 600; }
+@media (max-width: 400px) { .topbar:has(.fresh.stalled) .brand-name { display: none; } }
+.fresh-aside { display: none; flex: none; }
+.fresh-official { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.fresh-aside .fresh-official { color: var(--chrome-text); text-decoration-color: var(--chrome-text-3); }
+.fresh-official:hover { text-decoration-color: currentColor; }
+.fresh-stalled { display: grid; gap: 6px; justify-items: start; padding: 10px 12px; border-radius: var(--radius-md); background: rgb(232 89 12 / 0.1); color: #9a3b0a; font-size: 13px; line-height: 18px; }
 
 .rolemenu { position: relative; }
 .rolemenu-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--chrome-line); background: var(--chrome-900); color: var(--chrome-text); font-size: 12px; cursor: pointer; white-space: nowrap; }
@@ -77,7 +90,7 @@
   .rolemenu-label { display: inline; }
 }
 @container fresh (min-width: 220px) { .fresh-compact { display: none; } .fresh-parts { display: grid; } }
-@container fresh (min-width: 340px) { .fresh-min { display: none; } .fresh-short { display: block; } }
+@container fresh (min-width: 340px) { .fresh-min { display: none; } .fresh-short { display: block; } .fresh-aside { display: inline-flex; } }
 @container fresh (min-width: 540px) { .fresh-short { display: none; } .fresh-long { display: block; } }
 @media (max-width: 1279px) {
   .topnav a { padding: 0 8px; }

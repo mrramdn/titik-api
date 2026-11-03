@@ -67,6 +67,7 @@ h1, h2, h3, p { margin: 0; }
 .freshness { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--chrome-text-2); white-space: nowrap; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-checked); box-shadow: 0 0 0 3px rgb(47 158 68 / 0.2); }
 .live-dot.stale { background: var(--priority-medium); box-shadow: 0 0 0 3px rgb(240 140 0 / 0.2); }
+.live-dot.stalled { background: var(--priority-high); box-shadow: 0 0 0 3px rgb(229 56 28 / 0.25); }
 .topnav { display: flex; gap: 4px; margin-left: auto; }
 .topnav a { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); color: var(--chrome-text-2); font-weight: 500; }
 .topnav a:hover { color: var(--chrome-text); background: var(--chrome-900); }

@@ -113,6 +113,11 @@ export interface IngestSatellite {
 export interface IngestStatus {
   serverTime: string; runId: number | null; intervalMinutes: number; nextRunAt: string | null;
   lastRun: { finishedAt: string | null; ok: boolean; error: string | null } | null;
+  /**
+   * When the last successful live ingest run finished; null before the first. Snapshot and fixture runs do not count.
+   * GET /health/data (for monitoring) is stale from 90 minutes after it; the web app says so from 2 hours.
+   */
+  lastSuccessAt: string | null;
   runs: { id: number; finishedAt: string; source: string; feeds: { satellite: string; rows: number; inArea: number; latest: string | null; error: string | null }[]; inserted: number; error: string | null }[];
   satellites: IngestSatellite[];
 }

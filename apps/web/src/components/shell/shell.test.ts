@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Incident, IngestSatellite, IngestStatus } from '../../api';
 import { defaultFilters } from '../../api';
-import { clockOffset, readFreshness, roughMinutes } from './freshness';
+import { clockOffset, readFreshness, roughMinutes, STALLED_MINUTES } from './freshness';
 import { incidentState, matchesFilters, prepareRows, summarize } from '../../map/list';
 import { incidentFilter } from '../../map/style';
 import { dailyLayer } from '../../map/imagery';
@@ -14,7 +14,7 @@ const sat = (satellite: IngestSatellite['satellite'], extra: Partial<IngestSatel
   last24h: 0, medianLatencyMin: null, nextWindow: null, ...extra,
 });
 const status = (satellites: IngestSatellite[]): IngestStatus => ({
-  serverTime: at(0), runId: 7, intervalMinutes: 30, nextRunAt: at(19), lastRun: { finishedAt: at(0), ok: true, error: null }, runs: [], satellites,
+  serverTime: at(0), runId: 7, intervalMinutes: 30, nextRunAt: at(19), lastRun: { finishedAt: at(0), ok: true, error: null }, lastSuccessAt: at(0), runs: [], satellites,
 });
 
 describe('freshness in the top bar', () => {
@@ -71,6 +71,27 @@ describe('freshness in the top bar', () => {
     expect(roughMinutes(12)).toEqual({ unit: 'min', n: 10 });
     expect(roughMinutes(200)).toEqual({ unit: 'hour', n: 3 });
     expect(roughMinutes(-1)).toBeNull();
+  });
+
+  it('says the data stopped updating only after two hours without a successful check', () => {
+    expect(STALLED_MINUTES).toBe(120);
+    const base = status([sat('N21', { latestAcquisition: at(-500) })]);
+    expect(readFreshness(base, now)).toMatchObject({ stalled: false, lastSuccessAt: at(0) });
+    expect(readFreshness({ ...base, lastSuccessAt: at(-120) }, now)!.stalled).toBe(false);
+    // A failed run since then does not count as a check that worked.
+    const late = readFreshness({ ...base, lastRun: { finishedAt: at(-5), ok: false, error: 'FIRMS' }, lastSuccessAt: at(-121) }, now)!;
+    expect(late).toMatchObject({ stalled: true, lastSuccessAt: at(-121), failed: true, checkedAt: at(-5) });
+    // Before the first successful live run there is no time to give, and no warning.
+    expect(readFreshness({ ...base, lastSuccessAt: null }, now)).toMatchObject({ stalled: false, lastSuccessAt: null });
+  });
+
+  it('takes the last success from the recent runs of an older server', () => {
+    const old = { intervalMinutes: 30, satellites: [], runs: [
+      { id: 9, finishedAt: at(-10), source: 'live', feeds: [], inserted: 0, error: 'Semua sumber FIRMS gagal diambil.' },
+      { id: 8, finishedAt: at(-200), source: 'live', feeds: [], inserted: 3, error: null },
+    ] } as unknown as IngestStatus;
+    expect(readFreshness(old, now)).toMatchObject({ lastSuccessAt: at(-200), stalled: true, failed: true });
+    expect(readFreshness({ ...old, runs: [] }, now)).toMatchObject({ lastSuccessAt: null, stalled: false });
   });
 });
 
