@@ -1,15 +1,17 @@
 // Sources and layers MapView adds over the base style, kept apart so their URLs and zoom ranges can be tested: the
 // incident and hotspot tiles, the pixel footprints, and HD imagery from Esri.
 import type { LayerSpecification, RasterSourceSpecification } from 'maplibre-gl';
-import { tanggalParam } from '../api';
+import { tanggalParam, type AppConfig } from '../api';
 import { detectionColor } from './style';
 
 /** Below this zoom the map shows one bubble per regency; incidents and hotspots appear from it. */
 export const OVERVIEW_ZOOM = 8;
 /** From this zoom a hotspot is drawn as its satellite pixel instead of a dot. */
 export const FOOTPRINT_ZOOM = 11;
-/** From this zoom the satellite view shows Esri World Imagery instead of Sentinel-2, when there is a key. */
+/** From this zoom the satellite view shows Esri World Imagery instead of Sentinel-2, when the server offers it. */
 export const ESRI_ZOOM = 11;
+/** The API serves Esri tiles up to this zoom; the map stops there too. */
+export const ESRI_MAX_ZOOM = 18;
 
 /**
  * Vector tiles for the incident or hotspot layer. `version` changes with every ingest run; `tanggal` asks for an archive
@@ -40,19 +42,33 @@ export function footprintLayers(hoursToday: number): LayerSpecification[] {
 }
 
 /**
- * Esri World Imagery; the referrer-restricted key from GET /config goes after `token=`. The service worker leaves these
- * tiles alone (no caching under the licence).
+ * Esri World Imagery through the API (z/y/x is Esri's order), which adds its key on the server; the browser never sees
+ * it. The service worker keeps none of these tiles (licence terms).
  */
-export const ESRI_TILES = 'https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=';
-export const ESRI_ATTRIBUTION = 'Powered by Esri · Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+export const ESRI_TILES = '/api/v1/imagery/{z}/{y}/{x}';
+/** The service's copyright text as published, for a server that sends none. */
+export const ESRI_DATA_ATTRIBUTION = 'Esri, Vantor, Earthstar Geographics, and the GIS User Community';
 
-/** The HD imagery source for a key; null without one, and then the satellite view stays as it was. */
-export function esriSource(key: string | null | undefined): RasterSourceSpecification | null {
-  if (!key) return null;
-  return { type: 'raster', tileSize: 256, maxzoom: 19, tiles: [`${ESRI_TILES}${encodeURIComponent(key)}`], attribution: ESRI_ATTRIBUTION };
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+/** "Powered by Esri" with its link, then the copyright text from GET /config, as text (it comes from Esri). */
+export const esriAttribution = (text: string | null | undefined) =>
+  `Powered by <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a> · ${escapeHtml(text?.trim() || ESRI_DATA_ATTRIBUTION)}`;
+
+/** The HD imagery source when GET /config offers it; null otherwise, and then the satellite view stays as it was. */
+export function esriSource(config: AppConfig | null | undefined, origin: string): RasterSourceSpecification | null {
+  if (!config?.hdImagery) return null;
+  return { type: 'raster', tileSize: 256, minzoom: ESRI_ZOOM, maxzoom: ESRI_MAX_ZOOM, tiles: [`${origin}${ESRI_TILES}`], attribution: esriAttribution(config.imageryAttribution) };
 }
 
-/** Satellite view by zoom: the daily GIBS image below 9, Sentinel-2 from 9, and Esri from 11 when there is a key. */
+/**
+ * Esri's attribution stays open while its imagery shows (the Esri source is on the map, the detailed imagery layer is
+ * on, zoom 11 or closer) on a map wider than 640 px, where MapLibre itself stops collapsing attributions. A narrower
+ * map keeps it one tap away.
+ */
+export const keepAttributionOpen = (view: { esri: boolean; citra: boolean; zoom: number; width: number }) =>
+  view.esri && view.citra && view.zoom >= ESRI_ZOOM && view.width > 640;
+
+/** Satellite view by zoom: the daily GIBS image below 9, Sentinel-2 from 9, and Esri from 11 when the server offers it. */
 export const imageryZoom = (esri: boolean) => ({
   harian: [0, 9] as [number, number],
   citra: [9, esri ? ESRI_ZOOM : 24] as [number, number],

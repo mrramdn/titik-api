@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { defaultFilters, incidentQuery, type ArchiveDays, type FwiClass, type RegencyRiskDay, type Risk, type RiskDay } from '../api';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
-import { dotZoomRange, ESRI_ATTRIBUTION, ESRI_TILES, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, tileUrls } from './layers';
+import { readConfig } from '../config';
+import { dotZoomRange, ESRI_DATA_ATTRIBUTION, ESRI_TILES, esriAttribution, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, keepAttributionOpen, tileUrls } from './layers';
 import { clearedFilters } from './list';
 import { fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskOpacity, riskPath, riskText } from './risk';
 
@@ -95,16 +96,45 @@ describe('pixel footprints', () => {
 });
 
 describe('HD imagery', () => {
-  it('adds Esri World Imagery only with a key, with its attribution, from zoom 11', () => {
-    expect(esriSource(null)).toBeNull();
-    expect(esriSource('')).toBeNull();
-    const source = esriSource('AAPK test/key')!;
-    expect(source.tiles).toEqual([`${ESRI_TILES}AAPK%20test%2Fkey`]);
-    expect(ESRI_TILES).toBe('https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}?token=');
-    expect(source).toMatchObject({ type: 'raster', tileSize: 256, maxzoom: 19, attribution: ESRI_ATTRIBUTION });
-    expect(ESRI_ATTRIBUTION).toBe('Powered by Esri · Esri, Maxar, Earthstar Geographics, and the GIS User Community');
+  const poweredBy = 'Powered by <a href="https://www.esri.com" target="_blank" rel="noopener">Esri</a> · ';
+
+  it('takes Esri World Imagery from the API (z/y/x) only when GET /config offers it, zoom 11 to 18, with its attribution', () => {
+    expect(esriSource(null, 'https://titikapi.test')).toBeNull();
+    expect(esriSource({ hdImagery: false, imageryAttribution: null }, 'https://titikapi.test')).toBeNull();
+    const source = esriSource({ hdImagery: true, imageryAttribution: 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community' }, 'https://titikapi.test');
+    expect(source).toEqual({ type: 'raster', tileSize: 256, minzoom: 11, maxzoom: 18, tiles: ['https://titikapi.test/api/v1/imagery/{z}/{y}/{x}'],
+      attribution: `${poweredBy}Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community` });
+    expect(ESRI_TILES).toBe('/api/v1/imagery/{z}/{y}/{x}');
+    expect(JSON.stringify(source)).not.toMatch(/token|arcgis/);
     expect(imageryZoom(true)).toEqual({ harian: [0, 9], citra: [9, 11], esri: [11, 24] });
     expect(imageryZoom(false).citra).toEqual([9, 24]);
+  });
+
+  it('shows Esri\'s copyright text as text, and the published one when the server sends none', () => {
+    expect(esriAttribution('Esri <img src=x onerror=alert(1)> & "Vantor"')).toBe(`${poweredBy}Esri &lt;img src=x onerror=alert(1)&gt; &amp; &quot;Vantor&quot;`);
+    expect(esriAttribution(null)).toBe(`${poweredBy}${ESRI_DATA_ATTRIBUTION}`);
+    expect(esriAttribution('  ')).toBe(`${poweredBy}${ESRI_DATA_ATTRIBUTION}`);
+    expect(ESRI_DATA_ATTRIBUTION).toBe('Esri, Vantor, Earthstar Geographics, and the GIS User Community');
+  });
+
+  it('keeps Esri\'s attribution open on a map wider than 640 px while its imagery shows', () => {
+    const view = { esri: true, citra: true, zoom: 11, width: 1024 };
+    expect(keepAttributionOpen(view)).toBe(true);
+    expect(keepAttributionOpen({ ...view, zoom: 18 })).toBe(true);
+    expect(keepAttributionOpen({ ...view, width: 641 })).toBe(true);
+    expect(keepAttributionOpen({ ...view, width: 640 })).toBe(false);
+    expect(keepAttributionOpen({ ...view, zoom: 10.9 })).toBe(false);
+    expect(keepAttributionOpen({ ...view, esri: false })).toBe(false);
+    expect(keepAttributionOpen({ ...view, citra: false })).toBe(false);
+  });
+
+  it('reads GET /config: HD imagery only when the server says so, the attribution only with it', () => {
+    expect(readConfig({ hdImagery: true, imageryAttribution: 'Esri' })).toEqual({ hdImagery: true, imageryAttribution: 'Esri' });
+    expect(readConfig({ hdImagery: true, imageryAttribution: null })).toEqual({ hdImagery: true, imageryAttribution: null });
+    expect(readConfig({ hdImagery: false, imageryAttribution: 'Esri' })).toEqual({ hdImagery: false, imageryAttribution: null });
+    // A server from before the proxy sends a key instead: no HD imagery.
+    expect(readConfig({ esriKey: 'AAPK' } as never)).toEqual({ hdImagery: false, imageryAttribution: null });
+    expect(readConfig(null)).toEqual({ hdImagery: false, imageryAttribution: null });
   });
 });
 

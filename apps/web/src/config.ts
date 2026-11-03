@@ -11,14 +11,20 @@ export interface Config extends AppConfig { current: boolean }
 let settled: Config | null = null;
 let pending: Promise<Config> | null = null;
 
+/** What GET /config answered; anything else (an older server) means no HD imagery. */
+export function readConfig(data: Partial<AppConfig> | null | undefined): AppConfig {
+  const hdImagery = data?.hdImagery === true;
+  return { hdImagery, imageryAttribution: hdImagery && typeof data?.imageryAttribution === 'string' ? data.imageryAttribution : null };
+}
+
 /** Without a signal the answer is unknown: no HD imagery for now, and the next map that opens asks again. */
 export function loadConfig(): Promise<Config> {
   pending ??= api<{ data: AppConfig | null }>('/config').then(
-    body => (settled = { esriKey: body?.data?.esriKey ?? null, current: true }),
+    body => (settled = { ...readConfig(body?.data), current: true }),
     (error: unknown) => {
-      if (error instanceof ApiError && error.status === 404) return (settled = { esriKey: null, current: false });
+      if (error instanceof ApiError && error.status === 404) return (settled = { ...readConfig(null), current: false });
       pending = null;
-      return { esriKey: null, current: true };
+      return { ...readConfig(null), current: true };
     },
   );
   return pending;

@@ -14,7 +14,7 @@ import { useSession } from '../session';
 import { ageClock } from './archive';
 import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
-import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, OVERVIEW_ZOOM, tileUrls } from './layers';
+import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, keepAttributionOpen, OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
 import { OPEN_METEO_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
 import { RiskCell, RiskDays } from './RiskParts';
@@ -114,10 +114,11 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const { query, findRegency } = useRegion();
   // A demo session sees its own field checks and tasks on the incident dots too; everyone else sees real ones only.
   const demo = Boolean(useSession().user?.demo);
-  // HD imagery needs the ArcGIS key from GET /config; without one the satellite view stays EOX Sentinel-2 close up.
-  // A server older than GET /config sends no pixel footprints: its hotspots stay dots at every zoom.
+  // HD imagery when GET /config offers it (the API serves Esri's tiles); otherwise the satellite view stays EOX
+  // Sentinel-2 close up. A server older than GET /config sends no pixel footprints: its hotspots stay dots at every zoom.
   const config = useConfig();
-  const esriKey = config?.esriKey ?? null;
+  const hdImagery = config?.hdImagery ?? false;
+  const imageryAttribution = config?.imageryAttribution ?? null;
   const footprints = config?.current !== false;
   // Fire danger (GET /risk, which came with GET /config): fetched while the layer is on; three days live, one in the
   // archive. Nothing is drawn until the weather has been fetched once (fetchedAt).
@@ -134,8 +135,11 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const onRiskCell = (index: number) => { setRiskCell(index); setPanel('risk'); };
   const handlers = useRef({ onSelect, onVillage, findRegency, onRiskCell });
   handlers.current = { onSelect, onVillage, findRegency, onRiskCell };
-  const state = useRef({ hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay });
-  state.current = { hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay };
+  const state = useRef({ hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, hdImagery, imageryAttribution, footprints, risk: riskData, riskDay: shownDay });
+  state.current = { hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, hdImagery, imageryAttribution, footprints, risk: riskData, riskDay: shownDay };
+  const attribution = () => container.current?.querySelector<HTMLElement>('.maplibregl-ctrl-attrib') ?? null;
+  /** True while the attribution is held open for Esri's imagery. */
+  const attributionHeld = useRef(false);
 
   useEffect(() => {
     const b = bounds ?? ALL_BOUNDS;
@@ -144,8 +148,13 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       maxZoom: 18, attributionControl: { compact: true, customAttribution: 'NASA FIRMS · BPS/HDX · Global Nature Watch · EOX' },
     });
     map.current = instance;
-    // The compact attribution opens as soon as it is added and would cover a phone-sized map; it stays one tap away.
-    const collapseAttribution = () => container.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+    // The compact attribution opens as soon as it is added and would cover a phone-sized map; it stays one tap away,
+    // except while Esri's imagery shows on a wider map (syncAttribution).
+    const collapseAttribution = () => {
+      attribution()?.classList.remove('maplibregl-compact-show');
+      attributionHeld.current = false;
+      syncAttribution();
+    };
     collapseAttribution();
     if (controls) {
       const box = document.createElement('div');
@@ -157,6 +166,9 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     instance.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: false }), 'bottom-right');
     instance.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
     instance.on('load', collapseAttribution);
+    // MapLibre folds the attribution away on every drag; Esri's comes straight back.
+    instance.on('drag', syncAttribution);
+    instance.on('resize', syncAttribution);
     // Own layers go in as soon as the style is ready, so incidents load alongside the base map tiles.
     instance.once('style.load', () => {
       const { hours: h, version: v, tanggal: day, demo: d } = state.current;
@@ -243,7 +255,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
           setAgeAware(true); instance.off('idle', checkAge);
         }
       });
-      const onZoom = () => { setZoomedOut(instance.getZoom() < OVERVIEW_ZOOM); setCloseUp(instance.getZoom() >= FOOTPRINT_ZOOM); };
+      const onZoom = () => { setZoomedOut(instance.getZoom() < OVERVIEW_ZOOM); setCloseUp(instance.getZoom() >= FOOTPRINT_ZOOM); syncAttribution(); };
       instance.on('zoom', onZoom);
       onZoom();
       ready.current = true;
@@ -258,10 +270,11 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     for (const key of ['gambut', 'deforestasi', 'harian', 'citra'] as const) m.setLayoutProperty(key, 'visibility', state.current.layers[key] ? 'visible' : 'none');
     for (const id of ['deteksi', 'deteksi-modis', 'piksel-fill', 'piksel-line']) m.setLayoutProperty(id, 'visibility', state.current.layers.deteksi ? 'visible' : 'none');
   }
-  /** Esri World Imagery joins the detailed imagery from zoom 11 once GET /config brings a key; Sentinel-2 then stops there. */
+  /** Esri World Imagery joins the detailed imagery from zoom 11 once GET /config offers it; Sentinel-2 then stops there. */
   function syncImagery() {
     const m = map.current; if (!m || !ready.current) return;
-    const source = esriSource(state.current.esriKey);
+    const { hdImagery: hd, imageryAttribution: credit } = state.current;
+    const source = esriSource({ hdImagery: hd, imageryAttribution: credit }, location.origin);
     if (source && !m.getSource('esri')) {
       m.addSource('esri', source);
       m.addLayer({ id: 'esri', type: 'raster', source: 'esri', minzoom: ESRI_ZOOM, layout: { visibility: 'none' } }, 'harian');
@@ -270,6 +283,17 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     const [from, to] = imageryZoom(esri).citra;
     m.setLayerZoomRange('citra', from, to);
     if (esri) m.setLayoutProperty('esri', 'visibility', state.current.layers.citra ? 'visible' : 'none');
+    syncAttribution();
+  }
+  /** Esri's attribution is held open while its imagery shows on a wide map; when it goes, the attribution folds again. */
+  function syncAttribution() {
+    const m = map.current, element = attribution(); if (!m || !ready.current || !element) return;
+    const hold = keepAttributionOpen({ esri: Boolean(m.getLayer('esri')), citra: state.current.layers.citra, zoom: m.getZoom(), width: m.getContainer().offsetWidth });
+    if (hold) {
+      element.classList.add('maplibregl-compact-show');
+      element.setAttribute('open', '');
+    } else if (attributionHeld.current) element.classList.remove('maplibregl-compact-show');
+    attributionHeld.current = hold;
   }
   /** The fire danger grid for the chosen day; hidden while the layer is off or nothing has been computed. */
   function syncRisk() {
@@ -334,7 +358,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   }
   const filterKey = JSON.stringify(filters ?? {});
   useEffect(syncLayers, [layers]);
-  useEffect(syncImagery, [esriKey, layers.citra]);
+  useEffect(syncImagery, [hdImagery, imageryAttribution, layers.citra]);
   useEffect(syncRisk, [riskData, shownDay]);
   // The cell card goes with the layer.
   useEffect(() => { if (!riskData && panel === 'risk') setPanel(null); }, [riskData]);
@@ -356,7 +380,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   }, [bounds?.join(',')]);
 
   // Satellite view: today's NASA image when zoomed out, the sharper Sentinel-2 mosaic when zoomed in, and Esri World
-  // Imagery close up when there is a key.
+  // Imagery close up when the server offers it.
   const satellite = layers.harian && layers.citra;
   const close = () => { if (panel === 'legend') rememberLegend(true); setPanel(null); };
   const closeButton = <button type="button" className="mapcard-close" aria-label={t('close')} onClick={close}><X size={16} /></button>;
@@ -384,7 +408,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
           {shownLayers.map(({ key, label, source, icon: Icon }) => (
             <label key={key} className="maplayer"><Icon size={18} className="icon" aria-hidden="true" />
               <span>{t(label)}<small>{key === 'harian' ? t('harianSource', { satellite: daily.satellite, date: f.day(`${daily.date}T12:00:00+07:00`), part: t(daily.part) })
-                : key === 'citra' && esriKey ? t('citraEsri') : t(source)}</small></span>
+                : key === 'citra' && hdImagery ? t('citraEsri') : t(source)}</small></span>
               <input type="checkbox" checked={layers[key]} onChange={event => setLayers(prev => ({ ...prev, [key]: event.target.checked }))} /><i className="maplayer-switch" aria-hidden="true" /></label>
           ))}
         </div>

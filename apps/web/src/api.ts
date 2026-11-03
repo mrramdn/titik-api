@@ -223,5 +223,11 @@ export interface Wind {
   villages: { id: string; name: string; distanceM: number; bearingDeg: number }[];
 }
 
-/** GET /config: public settings for the web app. `esriKey` is the referrer-restricted ArcGIS key for HD imagery, or null. */
-export interface AppConfig { esriKey: string | null }
+/**
+ * GET /config: public settings for the web app. `hdImagery`: Esri World Imagery is served by GET
+ * /imagery/{z}/{y}/{x} (zoom 11–18 over the two provinces, pages of this app only); false without an ArcGIS key on the
+ * server or once its daily or monthly cap is reached. `imageryAttribution`: Esri's copyright text for that imagery,
+ * plain text, shown after "Powered by Esri" while it is on screen; null when `hdImagery` is false. The key itself never
+ * leaves the server.
+ */
+export interface AppConfig { hdImagery: boolean; imageryAttribution: string | null }
