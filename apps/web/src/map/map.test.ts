@@ -4,7 +4,7 @@ import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromS
 import { dailyLayerFor } from './imagery';
 import { dotZoomRange, ESRI_ATTRIBUTION, ESRI_TILES, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, tileUrls } from './layers';
 import { clearedFilters } from './list';
-import { fwiColors, fwiLabel, highDanger, regencyDays, riskDetail, riskFeatures, riskFill, riskPath, riskText } from './risk';
+import { fwiColors, fwiLabel, highDanger, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskPath, riskText } from './risk';
 
 const archive: ArchiveDays = {
   first: '2026-10-08', last: '2026-11-02',
@@ -120,9 +120,13 @@ const risk: Risk = {
 };
 
 describe('fire danger (FWI)', () => {
-  it('asks for three live days or one archive day', () => {
+  it('asks for three live days or one archive day, and reads the dashboard\'s link to tomorrow', () => {
     expect(riskPath('')).toBe('/risk');
     expect(riskPath('2026-10-23')).toBe('/risk?tanggal=2026-10-23');
+    expect(riskLinkDay({ riskDay: 1 })).toBe(1);
+    expect(riskLinkDay({ riskDay: -1 })).toBeNull();
+    expect(riskLinkDay({ signOut: true })).toBeNull();
+    expect(riskLinkDay(null)).toBeNull();
   });
 
   it('colours and names BMKG\'s four classes in both languages', () => {

@@ -10,6 +10,7 @@ import { MapView, type Selected } from '../map/MapView';
 import { inArchive, tanggalFromSearch, windowStart, withTanggal } from '../map/archive';
 import { ArchiveBanner, ArchivePicker, ArchiveSwitch } from '../map/ArchiveControls';
 import { clearedFilters, narrowed, prepareRows, summarize } from '../map/list';
+import { riskLinkDay } from '../map/risk';
 import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
 import { shortProvince, useRegion, type RegencyRef } from '../region';
@@ -60,10 +61,10 @@ const filterKey = 'titikapi.filters';
 function storedFilters(): IncidentFilters {
   try { return { ...defaultFilters, ...JSON.parse(sessionStorage.getItem(filterKey) ?? '{}') }; } catch { return defaultFilters; }
 }
-/** The stored filters; an archive date in the address (/?tanggal=2026-10-23) wins over the stored one. */
-function initialFilters(search: string): IncidentFilters {
+/** The stored filters; an archive date in the address (/?tanggal=2026-10-23) wins over the stored one, `live` over both. */
+function initialFilters(search: string, live: boolean): IncidentFilters {
   const stored = storedFilters();
-  const tanggal = tanggalFromSearch(search);
+  const tanggal = live ? '' : tanggalFromSearch(search);
   return tanggal === null ? stored : { ...stored, tanggal };
 }
 
@@ -71,7 +72,9 @@ function initialFilters(search: string): IncidentFilters {
 export function MapScreen() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [filters, setFiltersState] = useState<IncidentFilters>(() => initialFilters(location.search));
+  // The dashboard's fire danger card opens the map on live data with that layer on, at tomorrow.
+  const [riskDay] = useState(() => riskLinkDay(location.state));
+  const [filters, setFiltersState] = useState<IncidentFilters>(() => initialFilters(location.search, riskDay !== null));
   const [selected, setSelected] = useState<Selected | null>(null);
   const { bbox, regencies, findRegency, province } = useRegion();
   const { version } = useDataVersion();
@@ -84,6 +87,7 @@ export function MapScreen() {
     void signOut().finally(() => navigate(location.pathname, { replace: true, state: null }));
   }, [location.key]);
   const setFilters = (next: IncidentFilters) => { setFiltersState(next); try { sessionStorage.setItem(filterKey, JSON.stringify(next)); } catch { /* private mode */ } };
+  useEffect(() => { if (riskDay !== null) setFilters(filters); }, []);
   // A regency from the other province makes no sense once the province changes.
   useEffect(() => { if (filters.regency && regencies.length && !regencies.some(r => r.name === filters.regency)) setFilters({ ...filters, regency: '' }); }, [province, regencies.length]);
   // The archive's days. An older server has none (404): the archive stays hidden and an archive date falls back to live
@@ -107,6 +111,7 @@ export function MapScreen() {
         {archived && <ArchiveBanner tanggal={filters.tanggal} onLive={() => setFilters({ ...filters, tanggal: '' })} />}
         <aside className="sidebar dark"><Outlet context={context} /></aside>
         <MapView hours={filters.hours} filters={{ levels: filters.levels, status: filters.status, peat: filters.peat }} version={version} tanggal={filters.tanggal}
+          initialLayers={riskDay !== null ? { risiko: true } : undefined} initialRiskDay={riskDay ?? 0}
           bounds={(regency?.bbox as [number, number, number, number] | undefined) ?? bbox} boundsMinZoom={regency ? 8.4 : undefined}
           selected={selected} onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} />
       </main>

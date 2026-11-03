@@ -40,6 +40,13 @@ export const riskText = dict({
 /** GET /risk for live data (today and the next two days) or for one archive day. */
 export const riskPath = (tanggal: string) => (tanggal ? `/risk?tanggal=${tanggal}` : '/risk');
 
+/** Router state of a link that opens the map on live data with the fire danger layer on a given day (0 today). */
+export interface RiskLink { riskDay: number }
+export function riskLinkDay(state: unknown): number | null {
+  const day = (state as Partial<RiskLink> | null)?.riskDay;
+  return typeof day === 'number' && Number.isInteger(day) && day >= 0 ? day : null;
+}
+
 /** The fill colour of a grid cell by its class; a cell without one stays clear. */
 export const riskFill = ['match', ['get', 'fwiClass'], ...fwiClasses.flatMap(name => [name, fwiColors[name]]), 'rgba(0,0,0,0)'] as unknown as ExpressionSpecification;
 

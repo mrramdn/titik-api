@@ -59,6 +59,15 @@
 .bd-filter:hover svg { opacity: 1; }
 .bd-clear { padding: 0 4px; border: 0; background: none; color: var(--text-2); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
+/* fire danger tomorrow */
+.bd-danger { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 12px 16px; background: var(--surface-card); border: 1px solid var(--surface-line); border-radius: var(--radius-lg); }
+.bd-danger > .icon { margin-top: 1px; color: var(--text-2); }
+.bd-danger-text { flex: 1 1 240px; display: grid; gap: 2px; min-width: 0; }
+.bd-danger-text h2 { font-size: 14px; line-height: 20px; font-weight: 600; }
+.bd-danger-text p { font-size: 13px; line-height: 18px; color: var(--text-2); }
+.bd-danger-text .caption { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.bd-danger .btn { align-self: center; }
+
 .bd-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
 .bd-body.no-side { grid-template-columns: minmax(0, 1fr); }
 .bd-centre { display: grid; gap: 20px; min-width: 0; }
