@@ -1,4 +1,13 @@
 // Which requests the service worker keeps, apart from sw.ts so they can be tested without a service worker.
+import { HOME_PATH } from './routes';
+
+/**
+ * Whether a page installs the service worker. Its install downloads the whole app for use without a signal, MapLibre
+ * included (about 1.1 MB), so a first visit to the landing page (/), which shows no map, does not install it; the
+ * first screen of the app does: the map, a role's page, Tentang. Once the worker is there (it controls the page), every
+ * page registers it again, so updates still arrive.
+ */
+export const installsServiceWorker = (pathname: string, controlled: boolean) => controlled || pathname !== HOME_PATH;
 
 /** Esri World Imagery through the API: one answer may serve one visitor only, so no cache keeps it (network only). */
 export const isImagery = (url: URL) => url.pathname.startsWith('/api/v1/imagery/');

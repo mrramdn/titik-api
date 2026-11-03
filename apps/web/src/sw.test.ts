@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { manifest } from './manifest';
-import { cached, isApiRead, isAppNavigation, isImagery, isMapHost, isPhoto, isTile, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
+import { cached, installsServiceWorker, isApiRead, isAppNavigation, isImagery, isMapHost, isPhoto, isTile, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
 
 const at = (path: string) => new URL(path, 'https://titikapi.test');
 
@@ -29,6 +29,16 @@ describe('service worker caches', () => {
     }
     expect(isAppNavigation(at('/api/v1/auth/me'))).toBe(false);
     expect(isAppNavigation(at('/uploads/foto.jpg'))).toBe(false);
+  });
+
+  it('come with the first screen of the app, not with a first visit to the landing page', () => {
+    // The install downloads every precached file, MapLibre included; the landing page shows no map.
+    expect(installsServiceWorker('/', false)).toBe(false);
+    for (const path of ['/peta', '/kejadian/5b0c', '/k/ab12cd', '/tugas', '/dasbor', '/desa-saya', '/tentang', '/masuk', '/tidak-ada']) {
+      expect(installsServiceWorker(path, false), path).toBe(true);
+    }
+    // A browser that has the worker already registers it on the landing page too, so updates keep coming.
+    expect(installsServiceWorker('/', true)).toBe(true);
   });
 
   it('keep a report photo no longer than the API lets a browser keep it, a day', () => {
