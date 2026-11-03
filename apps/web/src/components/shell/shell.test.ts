@@ -78,7 +78,7 @@ const incident = (extra: Partial<Incident>): Incident => ({
   id: 'i', code: 'c', village: { id: 'v', name: 'Cengal', district: 'Cengal', regency: 'Ogan Komering Ilir', province: 'Sumatera Selatan', center: [105, -3] },
   firstDetectedAt: at(-60), lastDetectedAt: at(-60), detectionCount: 3, viirsCount: 3, modisCount: 0, modisOnly: false, locationUncertaintyM: null,
   satellites: ['N21'], maxFrp: 10, bestConfidence: 'nominal', onPeat: false, nearStatic: false, centroid: [105, -3], settlementMeters: 900, score: 50,
-  scoreParts: [], level: 'sedang', firstVerifiedAt: null, latestStatus: null, latestCheck: null, assignment: null, nearestPlace: null, card: null, sharePath: '/k/c',
+  scoreParts: [], level: 'sedang', firstVerifiedAt: null, latestStatus: null, latestCheck: null, assignment: null, nearestPlace: null, indicatedAreaHa: null, card: null, sharePath: '/k/c',
   ...extra,
 });
 const task = (status: 'ditugaskan' | 'menuju' | 'selesai') => ({ id: 'a', status, assignee: { id: 'u', name: 'Regu', organization: 'MPA' }, assignedBy: 'b', note: '',

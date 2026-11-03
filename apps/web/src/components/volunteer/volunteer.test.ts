@@ -9,7 +9,7 @@ const incident = (id: string, extra: Partial<Incident> = {}): Incident => ({
   firstDetectedAt: '2026-10-16T00:00:00Z', lastDetectedAt: '2026-10-16T01:00:00Z', detectionCount: 3, viirsCount: 3, modisCount: 0,
   modisOnly: false, locationUncertaintyM: null, satellites: ['N21'], maxFrp: 10, bestConfidence: 'nominal', onPeat: true, nearStatic: false,
   centroid: [105.4, -3.4], settlementMeters: 900, score: 50, scoreParts: [], level: 'sedang', firstVerifiedAt: null, latestStatus: null,
-  latestCheck: null, assignment: null, nearestPlace: null, card: null, sharePath: `/k/${id}`, ...extra,
+  latestCheck: null, assignment: null, nearestPlace: null, indicatedAreaHa: null, card: null, sharePath: `/k/${id}`, ...extra,
 });
 const alert = (village: string, item: Incident): Alert => ({ id: `a-${item.id}`, createdAt: '', updatedAt: '', readAt: null, sharedAt: null, village: { id: village, name: village }, card: '', incident: item });
 

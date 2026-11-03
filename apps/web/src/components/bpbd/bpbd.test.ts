@@ -81,10 +81,10 @@ describe('recap helpers', () => {
   it('writes the WhatsApp summary in the chosen language', () => {
     const recap: Recap = {
       date: '2026-10-16', province: 'Sumatera Selatan',
-      totals: { incidents: 1299, high: 40, checked: 130, checkedShare: 0.1, medianMinutes: 83, falseAlarms: 2, detections: 15020 },
+      totals: { incidents: 1299, high: 40, checked: 130, checkedShare: 0.1, medianMinutes: 83, falseAlarms: 2, detections: 15020, indicatedAreaHa: null },
       regencies: [
-        { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', incidents: 400, high: 12, checked: 30, openHigh: 5, medianMinutes: 70 },
-        { name: 'Banyu Asin', province: 'Sumatera Selatan', incidents: 0, high: 0, checked: 0, openHigh: 0, medianMinutes: null },
+        { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', incidents: 400, high: 12, checked: 30, openHigh: 5, medianMinutes: 70, indicatedAreaHa: null },
+        { name: 'Banyu Asin', province: 'Sumatera Selatan', incidents: 0, high: 0, checked: 0, openHigh: 0, medianMinutes: null, indicatedAreaHa: null },
       ],
       villages: [],
       checks: { asap_bara: 5, api_aktif: 3 },

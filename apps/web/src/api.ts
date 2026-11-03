@@ -57,6 +57,11 @@ export interface Incident {
   score: number; scoreParts: ScorePart[]; level: Level;
   firstVerifiedAt: string | null; latestStatus: Status | null; latestCheck: LatestCheck | null;
   assignment: AssignmentSummary | null; nearestPlace: NearestPlace | null;
+  /**
+   * Indicated hot area in hectares: the largest area covered by the pixel footprints of one satellite pass (VIIRS,
+   * or MODIS when only MODIS saw it, then coarse). Not burned area. Null when no footprint could be computed.
+   */
+  indicatedAreaHa: number | null;
   /** Indonesian text built by the server (push notifications); the web app formats its own per language. */
   card: string | null; sharePath: string;
 }
@@ -82,10 +87,11 @@ export interface VillageSummary { id: string; name: string; district: string; re
 /** One bubble per regency on the zoomed-out map. */
 export interface RegionSummary { name: string; province: string; center: [number, number]; incidents: number; high: number; open: number; checked: number }
 
+/** `indicatedAreaHa` sums the incidents' indicated hot areas (see Incident); null when none has one. */
 export interface Recap {
   date: string; province: string | null;
-  totals: { incidents: number; high: number; checked: number; checkedShare: number | null; medianMinutes: number | null; falseAlarms: number; detections: number };
-  regencies: { name: string; province: string; incidents: number; high: number; checked: number; openHigh: number; medianMinutes: number | null }[];
+  totals: { incidents: number; high: number; checked: number; checkedShare: number | null; medianMinutes: number | null; falseAlarms: number; detections: number; indicatedAreaHa: number | null };
+  regencies: { name: string; province: string; incidents: number; high: number; checked: number; openHigh: number; medianMinutes: number | null; indicatedAreaHa: number | null }[];
   villages: { id: string; name: string; district: string; regency: string; incidents: number; high: number; checked: number; detections: number }[];
   checks: Partial<Record<Status, number>>;
   assignments: Record<AssignmentStatus, number>;
@@ -107,8 +113,15 @@ export interface IngestStatus {
 /** `checked` orders by the latest field check, newest first. */
 export type IncidentSort = 'priority' | 'recent' | 'size' | 'checked';
 export type StatusFilter = 'all' | 'open' | 'assigned' | 'checked';
-export interface IncidentFilters { hours: number; levels: Level[]; status: StatusFilter; peat: boolean; regency: string; sort: IncidentSort }
-export const defaultFilters: IncidentFilters = { hours: 24, levels: [], status: 'all', peat: false, regency: '', sort: 'priority' };
+/**
+ * `tanggal` is a WIB date (YYYY-MM-DD) for the archive, '' for live data. In the archive the time window ends at the
+ * end of that day: `hours` = 24 shows that day, 72 that day and the two before.
+ */
+export interface IncidentFilters { hours: number; levels: Level[]; status: StatusFilter; peat: boolean; regency: string; sort: IncidentSort; tanggal: string }
+export const defaultFilters: IncidentFilters = { hours: 24, levels: [], status: 'all', peat: false, regency: '', sort: 'priority', tanggal: '' };
+
+/** `&tanggal=…` for the archive, '' for live data: appended to /incidents, /summary, /regions/summary, /risk and the kejadian and deteksi tiles. */
+export const tanggalParam = (tanggal: string) => (tanggal ? `&tanggal=${tanggal}` : '');
 
 /**
  * Query string for GET /incidents. `levels` empty means every level; `status`: open = not checked and no open task,
@@ -121,5 +134,68 @@ export function incidentQuery(filters: Partial<IncidentFilters>, extra = ''): st
   if (f.status !== 'all') parts.push(`status=${f.status}`);
   if (f.peat) parts.push('peat=1');
   if (f.regency) parts.push(`regency=${encodeURIComponent(f.regency)}`);
-  return `?${parts.join('&')}${extra}`;
+  return `?${parts.join('&')}${tanggalParam(f.tanggal)}${extra}`;
 }
+
+/**
+ * GET /archive/days: every WIB day from the first day with data (`first`) to yesterday (`last`), oldest first, with
+ * the detections and incidents inside the two provinces. A `tanggal` outside first..last is refused (INVALID_INPUT).
+ */
+export interface ArchiveDay { date: string; detections: number; incidents: number }
+export interface ArchiveDays { first: string; last: string; days: ArchiveDay[] }
+
+/**
+ * Fire danger (GET /risk): the Canadian Fire Weather Index System (Van Wagner 1987), the system BMKG's fire danger
+ * rating adapts, computed by Titik Api from Open-Meteo weather at 12.00 WIB on a 0.5° grid over the two provinces.
+ * Classes are BMKG's published FWI classes (bmkg.go.id/cuaca/karhutla/fwi): rendah 0–1, sedang 2–6, tinggi 7–13,
+ * sangat_tinggi above 13. Not an official BMKG product. Past days come from model analysis, today and later from
+ * the forecast. Live: three days from today (WIB); with `tanggal`: that day only.
+ */
+export type FwiClass = 'rendah' | 'sedang' | 'tinggi' | 'sangat_tinggi';
+/** The six FWI System values. DC (drought code) is the smoke indicator for peat: severe haze is far more frequent above 400 (de Groot et al. 2007). */
+export interface FwiCodes { ffmc: number; dmc: number; dc: number; isi: number; bui: number; fwi: number }
+export interface RiskDay {
+  date: string;
+  /** False for days already past (model analysis), true for today and later (forecast). */
+  forecast: boolean;
+  fwiClass: FwiClass; codes: FwiCodes;
+  /** The weather the codes come from: 12.00 WIB temperature, humidity, wind and its direction (where it comes FROM, 0 = north), and rain over the 24 hours to 12.00. */
+  noon: { tempC: number; rhPct: number; windKmh: number; windFromDeg: number; rain24hMm: number };
+  /** Consecutive days with under 1 mm of rain up to this day (BMKG's "hari tanpa hujan"). */
+  dryDays: number;
+}
+/** One grid cell, by its centre; the cell spans ±cellSize/2 in longitude and latitude. */
+export interface RiskCell { lon: number; lat: number; days: RiskDay[] }
+/**
+ * Per regency, each day takes the cell with the highest FWI among the cells that overlap it (`cell` = its centre).
+ * `peatShare` is the share of the regency's village area on peat, 0–1.
+ */
+export interface RegencyRisk {
+  name: string; province: string; center: [number, number]; peatShare: number;
+  days: (RiskDay & { cell: [number, number] })[];
+}
+export interface Risk {
+  /** The first day shown: today (WIB) live, else the archive date. */
+  asOf: string; archive: boolean;
+  /** When the weather was last fetched; null when nothing was computed yet (then `cells` and `regencies` are empty). */
+  fetchedAt: string | null;
+  /** Degrees; 0.5. */
+  cellSize: number;
+  cells: RiskCell[]; regencies: RegencyRisk[];
+}
+
+/**
+ * GET /incidents/:id/wind: wind at the incident from Open-Meteo, now when it was last detected within 24 hours,
+ * else at the hour of its last detection. `villages`: up to five other villages within 5 km in the 60° sector the
+ * wind blows toward, nearest first; empty when calm (under 5 km/h). The response is { data: null } when the
+ * weather service does not answer in time; the panel then leaves the wind out.
+ */
+export interface Wind {
+  mode: 'now' | 'detected'; at: string; speedKmh: number;
+  /** Where the wind comes from, and where smoke drifts (fromDeg + 180), in degrees (0 = north). */
+  fromDeg: number; towardDeg: number; calm: boolean;
+  villages: { id: string; name: string; distanceM: number; bearingDeg: number }[];
+}
+
+/** GET /config: public settings for the web app. `esriKey` is the referrer-restricted ArcGIS key for HD imagery, or null. */
+export interface AppConfig { esriKey: string | null }
