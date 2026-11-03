@@ -8,6 +8,7 @@ import { dict, fill, useLang, useT, type Lang } from '../../i18n';
 import { formatter } from '../../format';
 import { highDanger, highDangerName, type HighDanger, type RiskLink } from '../../map/risk';
 import { useLoad } from './data';
+import { OpenMeteoCredit } from '../OpenMeteo';
 
 const text = dict({
   id: {
@@ -52,7 +53,7 @@ export function DangerCard({ province, version }: { province: string; version?: 
       <div className="bd-danger-text">
         <h2 id="bd-danger-title">{t('title')}</h2>
         <p>{summary}</p>
-        {computed && <p className="caption">{t('note')}</p>}
+        {computed && <p className="caption">{t('note')} <OpenMeteoCredit /></p>}
       </div>
       {computed && <Link to="/" state={toMap} className="btn btn-secondary btn-sm">{t('map')}</Link>}
     </section>

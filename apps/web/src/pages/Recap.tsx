@@ -15,6 +15,7 @@ import { isDate, shiftDate, todayWib, useLoad } from '../components/bpbd/data';
 import { assignmentOrder, checkedShare, longDate, recapText, statusOrder } from '../components/bpbd/recapText';
 import { fwiLabel, highDanger, partialText, regencyDays, riskPath } from '../map/risk';
 import { RiskSwatch } from '../map/RiskParts';
+import { OpenMeteoCredit } from '../components/OpenMeteo';
 
 const text = dict({
   id: {
@@ -190,6 +191,7 @@ function RecapView() {
 
             <p className="note">{t('note')}</p>
             {dangerShown && <p className="note">{t('dangerNote')}</p>}
+            {dangerShown && <p className="note"><OpenMeteoCredit /></p>}
             <p className="note print-only">{t('printed', { time: f.dayTime(new Date()) })}</p>
           </div>
         )}

@@ -8,6 +8,7 @@ import { enqueue, flush, queued } from './outbox';
 import { fwiLabel, riskText } from './map/risk';
 import { windText } from './components/incident/wind';
 import { areaText } from './components/incident/area';
+import { openMeteoText } from './components/OpenMeteo';
 
 describe('field helpers', () => {
   it('gives distance and direction to the hotspot without a network', () => {
@@ -89,7 +90,7 @@ describe('account data', () => {
 
 describe('two languages', () => {
   it('has every shared label in Indonesian and English', () => {
-    const shared = { ...common, riskText, fwiLabel, windText, areaText };
+    const shared = { ...common, riskText, fwiLabel, windText, areaText, openMeteoText };
     for (const [name, value] of Object.entries(shared)) {
       if (value && typeof value === 'object' && 'id' in value && 'en' in value) {
         const pair = value as { id: object; en: object };

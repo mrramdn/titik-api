@@ -5,6 +5,7 @@ import { ArrowUp } from 'lucide-react';
 import { api, type Wind } from '../../api';
 import { useLang, useT } from '../../i18n';
 import { downwindLine, windLine, windText } from './wind';
+import { OpenMeteoCredit } from '../OpenMeteo';
 
 /**
  * The wind at one incident, or null: while it loads, when the weather service did not answer ({ data: null }), on an
@@ -37,6 +38,7 @@ export function WindFacts({ wind }: { wind: Wind }) {
         <span>{windLine(wind, lang)}</span>
       </p>
       {villages && <p className="ip-wind-villages">{villages}</p>}
+      <p className="ip-wind-credit"><OpenMeteoCredit /></p>
     </section>
   );
 }

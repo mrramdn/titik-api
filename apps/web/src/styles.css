@@ -137,6 +137,9 @@ h1, h2, h3, p { margin: 0; }
 .dark .hairline { background: var(--chrome-line); }
 .link { color: var(--info); font-weight: 500; }
 .dark .link { color: #74b4f0; }
+/* A data source's credit as a link, in the colour of the note it sits in. */
+.credit { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+.credit:hover { text-decoration-color: currentColor; }
 
 /* ---------- map screen (sidebar + map) ---------- */
 .mapscreen { flex: none; display: grid; grid-template-columns: 380px 1fr; height: calc(100dvh - 48px); min-height: 0; }

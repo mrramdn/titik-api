@@ -198,6 +198,7 @@
 .ip-wind-line { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 18px; color: var(--chrome-text); }
 .ip-wind-arrow { flex: none; margin-top: 1px; color: var(--chrome-text-2); }
 .ip-wind-villages { font-size: 12px; line-height: 16px; color: var(--chrome-text-2); }
+.ip-wind-credit { font-size: 12px; line-height: 16px; color: var(--chrome-text-3); }
 .ip-actions { gap: 8px; }
 .ip-actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .ip-actions-row .btn { flex: 1 1 auto; padding: 0 12px; }

@@ -16,7 +16,8 @@ import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
 import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, keepAttributionOpen, OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
-import { OPEN_METEO_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
+import { riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
+import { OPEN_METEO_ATTRIBUTION } from '../components/OpenMeteo';
 import { RiskCell, RiskDays } from './RiskParts';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,

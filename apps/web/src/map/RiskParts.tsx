@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { FwiClass, Risk, RiskDay } from '../api';
 import type { Loaded } from '../components/ui';
+import { OpenMeteoCredit } from '../components/OpenMeteo';
 import { dict, useLang, useT } from '../i18n';
 import { useFormat } from '../format';
 import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiOpacity, fwiRange, riskDetail } from './risk';
@@ -57,6 +58,7 @@ export function RiskLegend() {
     <h3 className="lg-title">{t('legend')}</h3>
     {fwiClasses.map(name => <div key={name} className="lg-row"><RiskSwatch fwiClass={name} />{fwiLabel[lang][name]}<small className="lg-range">{fwiRange[name]}</small></div>)}
     <p className="lg-note">{t('note')}</p>
+    <p className="lg-note"><OpenMeteoCredit /></p>
     <a className="lg-link" href={BMKG_FWI_URL} target="_blank" rel="noopener noreferrer">{t('bmkg')}<ExternalLink size={12} aria-hidden="true" /></a>
   </>);
 }
@@ -73,6 +75,7 @@ export function RiskCell({ day, closeButton }: { day: RiskDay; closeButton: Reac
       <dl className="risk-facts">{detail.rows.map(row => <div key={row.key}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
       {detail.dcNote && <p className="lg-note">{detail.dcNote}</p>}
       <p className="lg-note">{t('note')}</p>
+      <p className="lg-note"><OpenMeteoCredit /></p>
     </div>
   );
 }

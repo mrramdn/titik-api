@@ -19,7 +19,6 @@ export const fwiOpacity: Record<FwiClass, number> = { rendah: 0.25, sedang: 0.32
 /** BMKG's class bounds on the FWI value. */
 export const fwiRange: Record<FwiClass, string> = { rendah: '0–1', sedang: '2–6', tinggi: '7–13', sangat_tinggi: '> 13' };
 export const BMKG_FWI_URL = 'https://www.bmkg.go.id/cuaca/karhutla/fwi';
-export const OPEN_METEO_ATTRIBUTION = 'Open-Meteo.com (CC BY 4.0)';
 
 export const fwiLabel: Record<Lang, Record<FwiClass, string>> = {
   id: { rendah: 'Rendah', sedang: 'Sedang', tinggi: 'Tinggi', sangat_tinggi: 'Sangat tinggi' },
