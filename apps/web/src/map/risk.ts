@@ -12,10 +12,11 @@ export const fwiClasses: FwiClass[] = ['rendah', 'sedang', 'tinggi', 'sangat_tin
  * A sequential pink-to-purple ramp: it darkens with the danger, reads over the light base map and the satellite view,
  * and stays clear of the reds and ambers that mark incident priority.
  */
-export const fwiColors: Record<FwiClass, string> = { rendah: '#FCC5C0', sedang: '#F768A1', tinggi: '#C51B8A', sangat_tinggi: '#6A0172' };
+export const fwiColors: Record<FwiClass, string> = { rendah: '#FCC5C0', sedang: '#F768A1', tinggi: '#C51B8A', sangat_tinggi: '#49006A' };
+/** Fill opacity around 0.35, a little stronger for the higher classes so they stay apart over the light base map. */
+export const fwiOpacity: Record<FwiClass, number> = { rendah: 0.25, sedang: 0.32, tinggi: 0.4, sangat_tinggi: 0.5 };
 /** BMKG's class bounds on the FWI value. */
 export const fwiRange: Record<FwiClass, string> = { rendah: '0–1', sedang: '2–6', tinggi: '7–13', sangat_tinggi: '> 13' };
-export const RISK_OPACITY = 0.35;
 export const BMKG_FWI_URL = 'https://www.bmkg.go.id/cuaca/karhutla/fwi';
 export const OPEN_METEO_ATTRIBUTION = 'Open-Meteo.com (CC BY 4.0)';
 
@@ -47,8 +48,9 @@ export function riskLinkDay(state: unknown): number | null {
   return typeof day === 'number' && Number.isInteger(day) && day >= 0 ? day : null;
 }
 
-/** The fill colour of a grid cell by its class; a cell without one stays clear. */
+/** The fill colour and opacity of a grid cell by its class; a cell without one stays clear. */
 export const riskFill = ['match', ['get', 'fwiClass'], ...fwiClasses.flatMap(name => [name, fwiColors[name]]), 'rgba(0,0,0,0)'] as unknown as ExpressionSpecification;
+export const riskOpacity = ['match', ['get', 'fwiClass'], ...fwiClasses.flatMap(name => [name, fwiOpacity[name]]), 0] as unknown as ExpressionSpecification;
 
 /** One square per grid cell for a day (0 = the first day): the centre ± cellSize/2, with the cell's index and class. */
 export function riskFeatures(risk: Risk, dayIndex: number): GeoJSON.FeatureCollection {

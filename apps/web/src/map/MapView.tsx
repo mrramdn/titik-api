@@ -15,7 +15,7 @@ import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
 import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
-import { OPEN_METEO_ATTRIBUTION, RISK_OPACITY, riskFeatures, riskFill, riskPath } from './risk';
+import { OPEN_METEO_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
 import { RiskCell, RiskDays } from './RiskParts';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
@@ -171,7 +171,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.addLayer({ id: 'deforestasi', type: 'raster', source: 'deforestasi', paint: { 'raster-opacity': 0.85 }, layout: { visibility: 'none' } }, firstSymbol);
       // Fire danger cells over the imagery and under the place names; Open-Meteo's attribution shows while they do.
       instance.addSource('risiko', { type: 'geojson', data: empty, attribution: OPEN_METEO_ATTRIBUTION });
-      instance.addLayer({ id: 'risiko', type: 'fill', source: 'risiko', paint: { 'fill-color': riskFill, 'fill-opacity': RISK_OPACITY }, layout: { visibility: 'none' } }, firstSymbol);
+      instance.addLayer({ id: 'risiko', type: 'fill', source: 'risiko', paint: { 'fill-color': riskFill, 'fill-opacity': riskOpacity }, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('kabupaten', { type: 'vector', tiles: [`${location.origin}/api/v1/tiles/kabupaten/{z}/{x}/{y}.mvt`], maxzoom: 12 });
       instance.addLayer({ id: 'kabupaten-line', type: 'line', source: 'kabupaten', 'source-layer': 'kabupaten', paint: { 'line-color': colors.line, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.35], 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.6] } });
       instance.addLayer({ id: 'kabupaten-label', type: 'symbol', source: 'kabupaten', 'source-layer': 'kabupaten', maxzoom: 9, layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'] }, paint: { 'text-color': colors.line, 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 } });

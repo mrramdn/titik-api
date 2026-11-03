@@ -5,7 +5,7 @@ import type { FwiClass, Risk, RiskDay } from '../api';
 import type { Loaded } from '../components/ui';
 import { dict, useLang, useT } from '../i18n';
 import { useFormat } from '../format';
-import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiRange, riskDetail, RISK_OPACITY } from './risk';
+import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiOpacity, fwiRange, riskDetail } from './risk';
 
 const text = dict({
   id: {
@@ -23,7 +23,7 @@ const dayKeys = ['today', 'tomorrow', 'after'] as const;
 
 /** A swatch that looks like a grid cell on the map: the class colour at the layer's opacity, with an outline. */
 export const RiskSwatch = ({ fwiClass }: { fwiClass: FwiClass }) => (
-  <i className="lg-box" style={{ '--c': fwiColors[fwiClass], '--fill': `${RISK_OPACITY * 100}%` } as CSSProperties} />
+  <i className="lg-box" style={{ '--c': fwiColors[fwiClass], '--fill': `${fwiOpacity[fwiClass] * 100}%` } as CSSProperties} />
 );
 
 /**

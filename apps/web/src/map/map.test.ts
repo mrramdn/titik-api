@@ -4,7 +4,7 @@ import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromS
 import { dailyLayerFor } from './imagery';
 import { dotZoomRange, ESRI_ATTRIBUTION, ESRI_TILES, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, tileUrls } from './layers';
 import { clearedFilters } from './list';
-import { fwiColors, fwiLabel, highDanger, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskPath, riskText } from './risk';
+import { fwiColors, fwiLabel, highDanger, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskOpacity, riskPath, riskText } from './risk';
 
 const archive: ArchiveDays = {
   first: '2026-10-08', last: '2026-11-02',
@@ -132,6 +132,8 @@ describe('fire danger (FWI)', () => {
   it('colours and names BMKG\'s four classes in both languages', () => {
     expect(riskFill.slice(2, 10)).toEqual(['rendah', fwiColors.rendah, 'sedang', fwiColors.sedang, 'tinggi', fwiColors.tinggi, 'sangat_tinggi', fwiColors.sangat_tinggi]);
     expect(new Set(Object.values(fwiColors)).size).toBe(4);
+    // Around 0.35, stronger for the higher classes.
+    expect(riskOpacity.slice(2, 10)).toEqual(['rendah', 0.25, 'sedang', 0.32, 'tinggi', 0.4, 'sangat_tinggi', 0.5]);
     expect(fwiLabel.id).toEqual({ rendah: 'Rendah', sedang: 'Sedang', tinggi: 'Tinggi', sangat_tinggi: 'Sangat tinggi' });
     expect(fwiLabel.en.sangat_tinggi).toBe('Very high');
     expect(Object.keys(riskText.en).sort()).toEqual(Object.keys(riskText.id).sort());
