@@ -180,8 +180,10 @@ export interface RegencyRiskDay {
   /** Share of the regency's area in each class, 0–1 in steps of 0.001; the four add up to 1. */
   shares: Record<FwiClass, number>;
   /**
-   * The highest class above `fwiClass` that covers at least 10% of the regency together with the classes above it;
-   * `share` is the share at that class or above. Null when there is none.
+   * The highest class above `fwiClass` that covers at least 10% of the regency on its own; `share` is the share of
+   * the regency at that class or above, so it can be larger than that class's own share. Null when there is none.
+   * Classes that each cover under 10% are not added up: rendah 59%, sedang 30%, tinggi 5% and sangat_tinggi 6% give
+   * { fwiClass: 'sedang', share: 0.41 }.
    */
   partial: { fwiClass: FwiClass; share: number } | null;
   /** Area-weighted mean FWI, one decimal. */

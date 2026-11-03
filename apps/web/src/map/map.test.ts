@@ -199,6 +199,18 @@ describe('fire danger (FWI)', () => {
     expect(highDangerName(highDanger(risk, 0)[0]!, 'id')).toBe('Ogan Komering Ilir (tinggi, 60% wilayah)');
   });
 
+  it('puts a regency on the card by its share at high or above, whatever class the recap line names', () => {
+    // Musi Rawas, 30 July 2026: moderate 46.8%, high 8.5%, very high 1.6%. No class above moderate covers 10% on its
+    // own, so the API names none, but high or above covers 10.1%.
+    const musi = regency('Musi Rawas', 'Sumatera Selatan', [area(0, 'sedang', [0.431, 0.468, 0.085, 0.016], 4.3)]);
+    // Murung Raya, 24 July 2026: the API names moderate, with 51.7% at moderate or above; high or above covers 13.6%.
+    const murung = regency('Murung Raya', 'Kalimantan Tengah', [area(0, 'rendah', [0.483, 0.381, 0.066, 0.07], 2.6, { fwiClass: 'sedang', share: 0.517 })]);
+    const july = { ...risk, regencies: [musi, murung] };
+    expect(highDanger(july, 0).map(r => [r.name, r.fwiClass, r.share])).toEqual([['Murung Raya', 'rendah', 0.136], ['Musi Rawas', 'sedang', 0.101]]);
+    expect(highDanger(july, 0).map(r => highDangerName(r, 'id'))).toEqual(['Murung Raya (14% wilayah)', 'Musi Rawas (10% wilayah)']);
+    expect(partialText(regencyDays(july).get('Kalimantan Tengah/Murung Raya')!.partial!, 'id')).toBe('sedang atau lebih di 52% wilayah');
+  });
+
   it('writes the recap\'s line for a higher class over part of a regency', () => {
     expect(partialText({ fwiClass: 'tinggi', share: 0.3 }, 'id')).toBe('tinggi atau lebih di 30% wilayah');
     expect(partialText({ fwiClass: 'tinggi', share: 0.3 }, 'en')).toBe('high or above in 30% of the area');
