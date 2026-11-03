@@ -293,6 +293,8 @@ h1, h2, h3, p { margin: 0; }
 .role .tile { width: 40px; height: 40px; background: var(--surface-subtle); color: var(--text); }
 .doc { display: grid; gap: 14px; max-width: 72ch; }
 .doc h2 { font-size: 16px; line-height: 22px; font-weight: 600; margin-top: 12px; }
+/* A section opened by its fragment (/tentang#ketentuan) clears the sticky top bar. */
+.doc h2[id] { scroll-margin-top: 64px; }
 .doc p, .doc li { color: var(--text-2); line-height: 22px; }
 .doc ol, .doc ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .bars7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 120px; }
