@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Outlet, useLocation, useNavigate, useOutletContext } from 'react-router';
+import { Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router';
 import { Info, Search, X } from 'lucide-react';
 import { defaultFilters, incidentQuery, tanggalParam, type ArchiveDays, type Incident, type IncidentFilters, type IncidentSort, type Level, type StatusFilter } from '../api';
 import { Shell } from '../components/Shell';
@@ -30,7 +30,8 @@ const text = dict({
     loading: 'Memuat kejadian…', noMatch: 'Tidak ada kejadian yang cocok dengan filter ini.', noneIn: 'Tidak ada titik panas di desa dalam {window} terakhir.',
     noneDay: 'Tidak ada titik panas di desa pada {date}.', noneRange: 'Tidak ada titik panas di desa pada {from} sampai {to}.',
     widen: 'Lihat 7 hari terakhir', widenArchive: 'Lihat 7 hari sampai tanggal ini', checkedEvery: 'Data satelit diperiksa tiap 30 menit.', retry: 'Muat ulang',
-    more: 'Tampilkan {n} kejadian lagi', caveat: 'Titik panas perlu dicek di lapangan.',
+    more: 'Tampilkan {n} kejadian lagi',
+    demo: 'Demo portofolio dengan data satelit asli, bukan sistem peringatan resmi. Darurat 112.', demoMore: 'Selengkapnya',
   },
   en: {
     intro: 'This map shows satellite hotspots, grouped into incidents per village and ranked by priority.',
@@ -45,7 +46,8 @@ const text = dict({
     loading: 'Loading incidents…', noMatch: 'No incidents match these filters.', noneIn: 'No hotspots in villages in the last {window}.',
     noneDay: 'No hotspots in villages on {date}.', noneRange: 'No hotspots in villages from {from} to {to}.',
     widen: 'Show the last 7 days', widenArchive: 'Show the 7 days up to this date', checkedEvery: 'Satellite data is checked every 30 minutes.', retry: 'Reload',
-    more: 'Show {n} more incidents', caveat: 'Hotspots need a field check.',
+    more: 'Show {n} more incidents',
+    demo: 'Portfolio demo with real satellite data, not an official warning system. Emergency 112.', demoMore: 'Read more',
   },
 });
 type Key = keyof typeof text.id;
@@ -109,13 +111,26 @@ export function MapScreen() {
     <Shell freshness={!archived}>
       <main className={`mapscreen ${archived ? 'archive' : ''}`}>
         {archived && <ArchiveBanner tanggal={filters.tanggal} onLive={() => setFilters({ ...filters, tanggal: '' })} />}
-        <aside className="sidebar dark"><Outlet context={context} /></aside>
+        <aside className="sidebar dark"><Outlet context={context} /><DemoNote /></aside>
         <MapView hours={filters.hours} filters={{ levels: filters.levels, status: filters.status, peat: filters.peat }} version={version} tanggal={filters.tanggal}
           initialLayers={riskDay !== null ? { risiko: true } : undefined} initialRiskDay={riskDay ?? 0}
           bounds={(regency?.bbox as [number, number, number, number] | undefined) ?? bbox} boundsMinZoom={regency ? 8.4 : undefined}
           selected={selected} onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} />
       </main>
     </Shell>
+  );
+}
+
+/**
+ * Under the list and the incident panel alike (a shared link opens the panel first): what this is and what it is not,
+ * with the way to the terms of use. On a phone it sits right under the map.
+ */
+function DemoNote() {
+  const t = useT(text);
+  return (
+    <p className="side-foot note"><Info size={16} className="icon" aria-hidden="true" />
+      <span>{t('demo')} <Link to="/tentang#ketentuan" className="side-foot-link">{t('demoMore')}</Link></span>
+    </p>
   );
 }
 
@@ -290,7 +305,6 @@ export function IncidentList() {
           <div className="side-more"><button type="button" className="btn btn-dark btn-block" onClick={() => setShown(shown + PAGE)}>{t('more', { n: f.num(Math.min(PAGE, rows.length - shown)) })}</button></div>
         )}
       </div>
-      <div className="side-foot note"><Info size={16} className="icon" aria-hidden="true" />{t('caveat')}</div>
     </>
   );
 }
