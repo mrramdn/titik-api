@@ -2,7 +2,7 @@
 // signal for any incident opened (or prefetched on /tugas) while online; the report waits in the outbox.
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
-import { Camera, Check, ChevronLeft, CircleCheck, Clock, CloudOff, Compass, Copy, Navigation2, TriangleAlert } from 'lucide-react';
+import { Camera, Check, ChevronLeft, CircleCheck, Clock, CloudOff, Compass, Copy, Info, Navigation2, TriangleAlert } from 'lucide-react';
 import type { IncidentDetail, Status } from '../api';
 import { Banner, LevelBadge, RouteButton, useApi, useOnline } from '../components/ui';
 import { rememberCheck } from '../components/volunteer/myChecks';
@@ -26,6 +26,8 @@ const text = dict({
     nearestPoint: 'Titik terdekat', centre: 'Pusat kejadian', copy: 'Salin', copyLabel: 'Salin koordinat', copied: 'Disalin',
     status: 'Kondisi di lapangan', source: 'Sumber panas',
     sourceNote: 'Lokasi ini dicatat sebagai sumber panas tetap selama 30 hari. Titik panas berikutnya di sini mendapat prioritas lebih rendah.',
+    sourceNoteDemo: 'Laporan dari akun demo tidak mengubah prioritas titik panas. Lokasi ini tidak dicatat sebagai sumber panas tetap.',
+    demoShared: 'Akun demo dipakai bersama: catatan dan foto terlihat oleh pengunjung lain dan dihapus pukul 03.00 WIB. Posisi GPS-mu tidak disimpan, hanya jaraknya ke titik panas.',
     photo: 'Ambil foto', photoAgain: 'Ganti foto', preview: 'Pratinjau foto',
     note: 'Catatan (opsional)', notePlaceholder: 'Misalnya: asap dari kanal sebelah timur, sudah dipadamkan regu.',
     privacy: 'Server menghapus data lokasi di dalam foto. Nama pelapor hanya terlihat oleh tim yang masuk. Bakar terkendali dicatat sebagai kondisi di lapangan.',
@@ -45,6 +47,8 @@ const text = dict({
     nearestPoint: 'Nearest point', centre: 'Incident centre', copy: 'Copy', copyLabel: 'Copy coordinates', copied: 'Copied',
     status: 'What you found', source: 'Heat source',
     sourceNote: 'This spot is recorded as a fixed heat source for 30 days. Later hotspots here get a lower priority.',
+    sourceNoteDemo: 'Reports from demo accounts do not change hotspot priority. This spot is not recorded as a fixed heat source.',
+    demoShared: 'Demo accounts are shared: notes and photos are visible to other visitors and are deleted at 03.00 WIB. Your GPS position is not stored, only its distance to the hotspot.',
     photo: 'Take photo', photoAgain: 'Replace photo', preview: 'Photo preview',
     note: 'Note (optional)', notePlaceholder: 'For example: smoke from the canal to the east, put out by the crew.',
     privacy: 'The server removes location data from photos. Only signed-in teams see the reporter\'s name. A controlled burn is recorded as what you saw on site.',
@@ -245,9 +249,10 @@ export function VerifyPage() {
         {status === 'alarm_palsu' && (
           <label className="field"><span className="label">{t('source')}</span>
             <select value={kind} onChange={event => setKind(event.target.value)}>{falseAlarmKinds.map(value => <option key={value} value={value}>{f.falseAlarm(value)}</option>)}</select>
-            <span className="note">{t('sourceNote')}</span>
+            <span className="note">{t(user?.demo ? 'sourceNoteDemo' : 'sourceNote')}</span>
           </label>
         )}
+        {user?.demo && <Banner icon={<Info size={16} aria-hidden="true" />}>{t('demoShared')}</Banner>}
         <label className="photo btn btn-secondary btn-block"><Camera size={16} aria-hidden="true" />{photo ? t('photoAgain') : t('photo')}
           <input type="file" accept="image/*" capture="environment" onChange={async event => {
             const file = event.target.files?.[0]; if (!file) return;
