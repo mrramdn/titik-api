@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { startScheduler } from './scheduler.js';
 import { seed } from './seed.js';
+import { startWeatherScheduler } from './weather.js';
 
 const { app, pool } = await createApp();
 await app.listen({ port: Number(process.env.PORT ?? 3000), host: process.env.HOST ?? '0.0.0.0' });
@@ -9,6 +10,8 @@ await app.listen({ port: Number(process.env.PORT ?? 3000), host: process.env.HOS
 // health check passes while FIRMS downloads. Production seeds only when SEED_DEMO=true.
 const seedDemo = process.env.SEED_DEMO === 'true' || (!process.env.SEED_DEMO && process.env.NODE_ENV !== 'production');
 let stop = () => {};
+// Fire weather from Open-Meteo every few hours, the first time 30 seconds after start; it never holds up the server.
+const stopWeather = startWeatherScheduler(pool, app.log);
 (async () => {
   if (seedDemo) {
     try { if (await seed(pool)) app.log.info('Demo accounts created'); }
@@ -18,5 +21,5 @@ let stop = () => {};
 })();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, async () => { stop(); await app.close(); process.exit(0); });
+  process.on(signal, async () => { stop(); stopWeather(); await app.close(); process.exit(0); });
 }

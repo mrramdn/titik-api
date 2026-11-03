@@ -1,0 +1,300 @@
+// Fire weather for the danger map: the Canadian FWI System (fwi.ts) on a 0.5° grid over the two provinces, from the
+// weather at 12.00 WIB given by Open-Meteo (https://open-meteo.com/en/docs): hourly temperature_2m,
+// relative_humidity_2m, wind_speed_10m (km/h), wind_direction_10m and precipitation, with timezone=Asia/Jakarta.
+// An hourly precipitation value is the sum of the preceding hour, so the rain of the 24 hours to 12.00 adds the
+// values labelled 13.00 the day before through 12.00, and the rain of a WIB day (00–24) the values labelled 01.00
+// through 00.00 of the next day.
+//
+// The codes carry over from day to day. The first run spins them up from 1 April 2026, in the wet season, from the
+// standard start values: the Historical Weather API (ERA5, about five days behind) up to the last hour it has, then
+// the Forecast API to today and three days ahead. Later runs fetch the last 10 days again with three days ahead and
+// recompute from the stored codes of the day before, so model analysis replaces yesterday's forecast. Requests stay
+// well inside Open-Meteo's free tier (10,000 calls a day; more than two weeks of data for one location counts as
+// several calls). A request that fails keeps the last values of its cells and is reported in one log line.
+import type { FastifyBaseLogger } from 'fastify';
+import type pg from 'pg';
+import { createPool } from './db.js';
+import { fwiDay, startMoisture, type FwiCodes, type Moisture } from './fwi.js';
+import { addDays, wibDay } from './geo.js';
+import { migrate } from './migrate.js';
+import { loadReference } from './reference.js';
+
+export const FORECAST_API = 'https://api.open-meteo.com/v1/forecast';
+export const ARCHIVE_API = 'https://archive-api.open-meteo.com/v1/archive';
+const HOURLY = ['temperature_2m', 'relative_humidity_2m', 'wind_speed_10m', 'wind_direction_10m', 'precipitation'] as const;
+export const CELL_SIZE = 0.5;
+/** The first day of the spin-up: early April is still the wet season, so the standard start values fit. */
+export const SPIN_UP_START = '2026-04-01';
+/** Past days fetched again on every run. */
+const REFETCH_DAYS = 10;
+const FORECAST_DAYS = 3;
+/** The Forecast API serves up to 92 past days; older ones come from the archive. */
+const MAX_PAST_DAYS = 92;
+/** Locations per request: at most 50, and for the archive no more than about 250 weighted calls per request. */
+const MAX_LOCATIONS = 50;
+const ARCHIVE_CALL_BUDGET = 250;
+const RETRY_WAITS = [5_000, 20_000, 60_000];
+const LOCK = 4157_2027;
+const userAgent = 'titik-api (fire danger map)';
+
+export interface WeatherOptions {
+  /** Injected in the tests, which never reach the network. */
+  fetch?: typeof fetch;
+  now?: Date;
+  spinUpStart?: string;
+  /** Pause between two Forecast API requests, and between two archive requests (ms). */
+  pauseMs?: number;
+  archivePauseMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  /** Where a run with failed requests reports, in one line. */
+  log?: (message: string) => void;
+}
+export interface WeatherResult { skipped: boolean; cells: number; rows: number; requests: number; failed: number; spinUp: number }
+
+interface Cell { id: number; lon: number; lat: number }
+interface Hour { temp: number; rh: number; wind: number; from: number; rain: number }
+/** Hours of one location, keyed 'YYYY-MM-DDTHH:00' in WIB; only hours with every value. */
+type Series = Map<string, Hour>;
+interface Start { day: string; moisture: Moisture; dryDays: number }
+export interface WeatherRow extends FwiCodes {
+  cellId: number; day: string; temp: number; rh: number; wind: number; from: number; rain24h: number; rainDay: number; dryDays: number; forecast: boolean;
+}
+
+/**
+ * The grid: every 0.5° cell (edges on whole and half degrees) that overlaps a regency, and which regencies it
+ * overlaps. Built once from the regencies; an empty table is built again.
+ */
+export async function ensureCells(db: pg.Pool | pg.PoolClient) {
+  const existing = (await db.query('SELECT count(*)::integer AS n FROM weather_cells')).rows[0].n as number;
+  if (existing) return existing;
+  await db.query(`INSERT INTO weather_cells (lon, lat, geom)
+      SELECT DISTINCT ON (g.i, g.j) (g.i + 0.5) * $1, (g.j + 0.5) * $1, g.geom FROM regencies r, ST_SquareGrid($1, r.geom) g WHERE ST_Intersects(g.geom, r.geom)
+    ON CONFLICT (lon, lat) DO NOTHING`, [CELL_SIZE]);
+  await db.query(`INSERT INTO weather_cell_regencies (cell_id, regency)
+      SELECT c.id, r.name FROM weather_cells c JOIN regencies r ON ST_Intersects(c.geom, r.geom)
+    ON CONFLICT DO NOTHING`);
+  return (await db.query('SELECT count(*)::integer AS n FROM weather_cells')).rows[0].n as number;
+}
+
+const hourKey = (day: string, hour: number) => `${day}T${String(hour).padStart(2, '0')}:00`;
+const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+
+/** Open-Meteo answers a list for several locations and a single object for one. */
+export function parseLocations(body: unknown, count: number): Series[] {
+  const list = Array.isArray(body) ? body : [body];
+  if (list.length !== count) throw new Error(`Open-Meteo answered ${list.length} locations for ${count}`);
+  return list.map(item => {
+    const hourly = (item as { hourly?: Record<string, unknown[]> } | null)?.hourly;
+    const series: Series = new Map();
+    if (!hourly || !Array.isArray(hourly.time)) throw new Error('Open-Meteo answered without hourly data');
+    hourly.time.forEach((time, index) => {
+      const values = HOURLY.map(name => hourly[name]?.[index]);
+      if (typeof time === 'string' && values.every(value => typeof value === 'number' && Number.isFinite(value))) {
+        const [temp, rh, wind, from, rain] = values as number[];
+        series.set(time, { temp: temp!, rh: rh!, wind: wind!, from: from!, rain: rain! });
+      }
+    });
+    return series;
+  });
+}
+
+/** One GET with a 20 s timeout and up to three retries, with growing waits, on 429, 5xx, timeouts and network errors. */
+async function getJson(url: string, fetchImpl: typeof fetch, sleep: (ms: number) => Promise<void>) {
+  for (let attempt = 0; ; attempt++) {
+    let failure: string;
+    let response: Response | undefined;
+    try {
+      response = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), headers: { 'user-agent': userAgent } });
+    } catch (error) {
+      failure = (error as Error).message;
+    }
+    if (response) {
+      if (response.ok) return response.json() as Promise<unknown>;
+      if (response.status !== 429 && response.status < 500) throw new Error(`Open-Meteo HTTP ${response.status}`);
+      failure = `HTTP ${response.status}`;
+    }
+    if (attempt >= RETRY_WAITS.length) throw new Error(`Open-Meteo ${failure!}`);
+    await sleep(RETRY_WAITS[attempt]!);
+  }
+}
+
+const coordinates = (cells: Cell[]) => `latitude=${cells.map(cell => cell.lat).join(',')}&longitude=${cells.map(cell => cell.lon).join(',')}`;
+export const forecastUrl = (cells: Cell[], pastDays: number) =>
+  `${FORECAST_API}?${coordinates(cells)}&hourly=${HOURLY.join(',')}&timezone=Asia%2FJakarta&past_days=${pastDays}&forecast_days=${FORECAST_DAYS}`;
+export const archiveUrl = (cells: Cell[], start: string, end: string) =>
+  `${ARCHIVE_API}?${coordinates(cells)}&hourly=${HOURLY.join(',')}&timezone=Asia%2FJakarta&start_date=${start}&end_date=${end}&models=era5`;
+
+/**
+ * The days after `start` up to the last forecast day, from merged hours: noon values, the rain of the 24 hours to
+ * noon, the rain of the WIB day for the dry spell, and the codes chained from the day before. Stops at the first day
+ * without its noon hour or a full rain window. The last day's rain lacks its final hour, which lies past the forecast.
+ */
+export function computeDays(cell: Cell, series: Series, start: Start, today: string): WeatherRow[] {
+  const rows: WeatherRow[] = [];
+  const last = addDays(today, FORECAST_DAYS - 1);
+  let moisture = start.moisture, dryDays = start.dryDays;
+  for (let day = addDays(start.day, 1); day <= last; day = addDays(day, 1)) {
+    const before = addDays(day, -1), after = addDays(day, 1);
+    const noon = series.get(hourKey(day, 12));
+    const window = Array.from({ length: 24 }, (_, k) => series.get(k < 11 ? hourKey(before, 13 + k) : hourKey(day, k - 11)));
+    if (!noon || window.some(hour => !hour)) break;
+    const rain24h = sum(window.map(hour => Math.max(0, hour!.rain)));
+    const rainDay = sum(Array.from({ length: 24 }, (_, k) => series.get(k < 23 ? hourKey(day, k + 1) : hourKey(after, 0))).map(hour => Math.max(0, hour?.rain ?? 0)));
+    dryDays = rainDay < 1 ? dryDays + 1 : 0;
+    const weather = { temp: noon.temp, rh: Math.min(100, Math.max(0, noon.rh)), wind: Math.max(0, noon.wind), rain: rain24h };
+    const codes = fwiDay(moisture, weather, cell.lat, Number(day.slice(5, 7)));
+    rows.push({ cellId: cell.id, day, temp: weather.temp, rh: weather.rh, wind: weather.wind, from: noon.from, rain24h, rainDay, dryDays, ...codes, forecast: day >= today });
+    moisture = codes;
+  }
+  return rows;
+}
+
+/** Hour by hour: the archive (ERA5) where it has every value, else the Forecast API. */
+function merge(archive: Series | undefined, forecast: Series | undefined): Series {
+  const merged: Series = new Map(forecast ?? []);
+  for (const [time, hour] of archive ?? []) merged.set(time, hour);
+  return merged;
+}
+
+async function save(client: pg.PoolClient, rows: WeatherRow[], fetchedAt: Date) {
+  for (let start = 0; start < rows.length; start += 5000) {
+    const batch = rows.slice(start, start + 5000);
+    const values = (key: keyof WeatherRow) => batch.map(row => row[key]);
+    await client.query(`INSERT INTO weather_daily (cell_id, day, temp_c, rh_pct, wind_kmh, wind_from_deg, rain24h_mm, rain_day_mm, dry_days, ffmc, dmc, dc, isi, bui, fwi,
+        forecast, fetched_at)
+      SELECT u.*, $17::timestamptz FROM unnest($1::integer[], $2::date[], $3::float8[], $4::float8[], $5::float8[], $6::float8[], $7::float8[], $8::float8[], $9::integer[],
+        $10::float8[], $11::float8[], $12::float8[], $13::float8[], $14::float8[], $15::float8[], $16::boolean[]) AS u
+      ON CONFLICT (cell_id, day) DO UPDATE SET temp_c = EXCLUDED.temp_c, rh_pct = EXCLUDED.rh_pct, wind_kmh = EXCLUDED.wind_kmh,
+        wind_from_deg = EXCLUDED.wind_from_deg, rain24h_mm = EXCLUDED.rain24h_mm, rain_day_mm = EXCLUDED.rain_day_mm, dry_days = EXCLUDED.dry_days,
+        ffmc = EXCLUDED.ffmc, dmc = EXCLUDED.dmc, dc = EXCLUDED.dc, isi = EXCLUDED.isi, bui = EXCLUDED.bui, fwi = EXCLUDED.fwi,
+        forecast = EXCLUDED.forecast, fetched_at = EXCLUDED.fetched_at`,
+    [values('cellId'), values('day'), values('temp'), values('rh'), values('wind'), values('from'), values('rain24h'), values('rainDay'), values('dryDays'),
+      values('ffmc'), values('dmc'), values('dc'), values('isi'), values('bui'), values('fwi'), values('forecast'), fetchedAt]);
+  }
+}
+
+/**
+ * Fetches the weather and recomputes the FWI codes of every cell, from the stored codes of the day before the first
+ * day fetched again (or from the start values on the first run). One run at a time (advisory lock).
+ */
+export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {}): Promise<WeatherResult> {
+  const fetchImpl = options.fetch ?? fetch;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const now = options.now ?? new Date();
+  const today = wibDay(now);
+  const client = await pool.connect();
+  const result: WeatherResult = { skipped: false, cells: 0, rows: 0, requests: 0, failed: 0, spinUp: 0 };
+  try {
+    if (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])).rows[0].ok) return { ...result, skipped: true };
+    try {
+      await ensureCells(client);
+      const cells = (await client.query('SELECT id, lon, lat FROM weather_cells ORDER BY id')).rows as Cell[];
+      result.cells = cells.length;
+      // The stored codes to start from: the latest day, or the day before the refetched days when that is later.
+      const stored = new Map<number, Start>((await client.query(`SELECT w.cell_id, to_char(w.day, 'YYYY-MM-DD') AS day, w.ffmc, w.dmc, w.dc, w.dry_days
+        FROM (SELECT cell_id, least(max(day), $1::date) AS day FROM weather_daily GROUP BY cell_id) s
+        JOIN weather_daily w ON w.cell_id = s.cell_id AND w.day = s.day`, [addDays(today, -REFETCH_DAYS)])).rows
+        .map((row): [number, Start] => [row.cell_id, { day: row.day, moisture: { ffmc: row.ffmc, dmc: row.dmc, dc: row.dc }, dryDays: row.dry_days }]));
+      const spinUpFrom = addDays(options.spinUpStart ?? SPIN_UP_START, -1);
+      const starts = new Map(cells.map(cell => [cell.id, stored.get(cell.id) ?? { day: spinUpFrom, moisture: startMoisture, dryDays: 0 }]));
+      result.spinUp = cells.filter(cell => !stored.has(cell.id)).length;
+      // Cells that start on the same day share requests. The archive serves what the Forecast API no longer has.
+      const groups = new Map<string, Cell[]>();
+      for (const cell of cells) {
+        const start = starts.get(cell.id)!;
+        const archive = !stored.has(cell.id) || start.day < addDays(today, -MAX_PAST_DAYS);
+        const key = `${start.day}|${archive}`;
+        groups.set(key, [...(groups.get(key) ?? []), cell]);
+      }
+      const series = new Map<number, Series>();
+      const failures: string[] = [];
+      let lastRequest: 'forecast' | 'archive' | null = null;
+      const request = async (kind: 'forecast' | 'archive', url: string, chunk: Cell[]) => {
+        if (lastRequest) await sleep(kind === 'archive' || lastRequest === 'archive' ? options.archivePauseMs ?? 30_000 : options.pauseMs ?? 2_000);
+        lastRequest = kind;
+        result.requests++;
+        try { return parseLocations(await getJson(url, fetchImpl, sleep), chunk.length); }
+        catch (error) { result.failed++; failures.push((error as Error).message); return null; }
+      };
+      for (const [key, group] of groups) {
+        const [startDay, archive] = [key.split('|')[0]!, key.endsWith('true')];
+        const archived = new Map<number, Series>();
+        let pastDays = Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000)));
+        if (archive) {
+          const days = Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000);
+          const size = Math.max(1, Math.min(MAX_LOCATIONS, Math.floor(ARCHIVE_CALL_BUDGET / Math.max(1, days / 14))));
+          let lastDay: string | null = null;
+          for (let k = 0; k < group.length; k += size) {
+            const chunk = group.slice(k, k + size);
+            const answer = await request('archive', archiveUrl(chunk, startDay, addDays(today, -1)), chunk);
+            answer?.forEach((hours, index) => {
+              archived.set(chunk[index]!.id, hours);
+              const latest = [...hours.keys()].at(-1)?.slice(0, 10);
+              if (latest && (!lastDay || latest < lastDay)) lastDay = latest;
+            });
+          }
+          // The Forecast API covers from the last day the archive has for every cell of the group (92 days at most).
+          pastDays = lastDay ? Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, Math.round((Date.parse(today) - Date.parse(lastDay)) / 86_400_000))) : MAX_PAST_DAYS;
+        }
+        for (let k = 0; k < group.length; k += MAX_LOCATIONS) {
+          const chunk = group.slice(k, k + MAX_LOCATIONS);
+          const answer = await request('forecast', forecastUrl(chunk, pastDays), chunk);
+          chunk.forEach((cell, index) => {
+            if (answer || archived.has(cell.id)) series.set(cell.id, merge(archived.get(cell.id), answer?.[index]));
+          });
+        }
+      }
+      const rows = cells.flatMap(cell => (series.has(cell.id) ? computeDays(cell, series.get(cell.id)!, starts.get(cell.id)!, today) : []));
+      if (rows.length) {
+        await client.query('BEGIN');
+        try { await save(client, rows, now); await client.query('COMMIT'); }
+        catch (error) { await client.query('ROLLBACK'); throw error; }
+      }
+      result.rows = rows.length;
+      if (failures.length) {
+        options.log?.(`Open-Meteo: ${result.failed} of ${result.requests} weather requests failed (${[...new Set(failures)].join('; ')}); their cells keep the last values.`);
+      }
+      return result;
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Updates the weather inside the API process every WEATHER_INTERVAL_MINUTES (180 by default; 0 switches it off),
+ * the first time 30 seconds after start. A failure is logged and never stops the process. Returns a stop function.
+ */
+export function startWeatherScheduler(pool: pg.Pool, log: FastifyBaseLogger, minutes = Number(process.env.WEATHER_INTERVAL_MINUTES ?? 180)) {
+  if (!minutes || minutes <= 0) return () => {};
+  let timer: NodeJS.Timeout | undefined;
+  let stopped = false;
+  const tick = async () => {
+    try {
+      const result = await updateWeather(pool, { log: message => log.warn(message) });
+      if (!result.skipped) log.info(result, 'Weather update finished');
+    } catch (error) {
+      log.error({ err: error }, 'Weather update failed');
+    }
+    if (!stopped) timer = setTimeout(tick, minutes * 60_000);
+  };
+  timer = setTimeout(tick, 30_000);
+  return () => { stopped = true; clearTimeout(timer); };
+}
+
+// node dist/weather.js update fetches the weather now and recomputes the fire danger codes.
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  const pool = createPool();
+  try {
+    if (process.argv[2] !== 'update') {
+      console.log('Usage: node dist/weather.js update');
+      process.exitCode = 1;
+    } else {
+      await migrate(pool);
+      await loadReference(pool);
+      console.log(JSON.stringify(await updateWeather(pool, { log: message => console.warn(message) })));
+    }
+  } finally { await pool.end(); }
+}
