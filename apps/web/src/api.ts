@@ -87,11 +87,11 @@ export interface VillageSummary { id: string; name: string; district: string; re
 /** One bubble per regency on the zoomed-out map. */
 export interface RegionSummary { name: string; province: string; center: [number, number]; incidents: number; high: number; open: number; checked: number }
 
-/** `indicatedAreaHa` sums the incidents' indicated hot areas (see Incident); null when none has one. */
+/** GET /recap. Indicated hot areas stay per incident (see Incident): added up they would read as burned area. */
 export interface Recap {
   date: string; province: string | null;
-  totals: { incidents: number; high: number; checked: number; checkedShare: number | null; medianMinutes: number | null; falseAlarms: number; detections: number; indicatedAreaHa: number | null };
-  regencies: { name: string; province: string; incidents: number; high: number; checked: number; openHigh: number; medianMinutes: number | null; indicatedAreaHa: number | null }[];
+  totals: { incidents: number; high: number; checked: number; checkedShare: number | null; medianMinutes: number | null; falseAlarms: number; detections: number };
+  regencies: { name: string; province: string; incidents: number; high: number; checked: number; openHigh: number; medianMinutes: number | null }[];
   villages: { id: string; name: string; district: string; regency: string; incidents: number; high: number; checked: number; detections: number }[];
   checks: Partial<Record<Status, number>>;
   assignments: Record<AssignmentStatus, number>;

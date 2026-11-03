@@ -31,8 +31,6 @@ const text = dict({
     emptyTitle: 'Tidak ada kejadian', empty: 'Tidak ada kejadian pada {date} di {place}. Pilih tanggal lain.', dashboard: 'Buka dasbor',
     note: 'Waktu tanggap adalah median dari deteksi satelit sampai cek lapangan pertama. Tanggal mengikuti WIB.',
     printed: 'Dicetak dari Titik Api, {time} WIB.',
-    areaTotal: 'Indikasi luas area panas {ha}', area: 'Indikasi luas',
-    areaNote: 'Indikasi luas area panas: luas jejak piksel satelit tiap kejadian pada satu lintasan, dijumlahkan. Bukan luas terbakar.',
     danger: 'Bahaya kebakaran',
     dangerNote: 'Bahaya kebakaran: FWI dari data model Open-Meteo dengan kelas BMKG, nilai tertinggi di wilayah tiap kabupaten. Bukan produk resmi BMKG.',
   },
@@ -50,15 +48,12 @@ const text = dict({
     emptyTitle: 'No incidents', empty: 'No incidents on {date} in {place}. Choose another date.', dashboard: 'Open the dashboard',
     note: 'Response time is the median from the satellite detection to the first field check. Dates follow WIB.',
     printed: 'Printed from Titik Api, {time} WIB.',
-    areaTotal: 'Indicated hot area {ha}', area: 'Indicated area',
-    areaNote: 'Indicated hot area: the satellite pixel footprint of each incident on one pass, added up. Not burned area.',
     danger: 'Fire danger',
     dangerNote: 'Fire danger: FWI from Open-Meteo model data with BMKG classes, the highest value over each regency. Not an official BMKG product.',
   },
 });
 
 const hasAny = (counts?: Partial<Record<string, number>> | null) => Object.values(counts ?? {}).some(value => (value ?? 0) > 0);
-const known = (value: number | null | undefined): value is number => value !== null && value !== undefined;
 
 export function RecapPage() {
   const { user } = useSession();
@@ -88,9 +83,6 @@ function RecapView() {
   const empty = Boolean(totals && !totals.incidents && !totals.detections && !hasAny(data?.checks) && !hasAny(data?.assignments));
   // Share and print only when there is a recap to pass on.
   const ready = Boolean(data && totals && !missing && !empty);
-  // The indicated hot area comes with newer servers; without it the column and its note stay away.
-  const areaByRegency = (data?.regencies ?? []).some(row => known(row.indicatedAreaHa));
-  const areaShown = areaByRegency || known(totals?.indicatedAreaHa);
   const dangerShown = danger.size > 0 && (data?.regencies ?? []).some(row => danger.has(`${row.province}/${row.name}`));
   const share = () => {
     if (!data) return;
@@ -135,8 +127,7 @@ function RecapView() {
               <div className="recap-total"><span>{t('checked')}</span><b>{f.num(totals.checked)}</b><small>{t('share_', { p: f.percent(checkedShare(totals)) })}</small></div>
               <div className="recap-total"><span>{t('response')}</span><b>{f.duration(totals.medianMinutes)}</b><small>{t('responseNote')}</small></div>
               <div className="recap-total"><span>{t('falseAlarms')}</span><b>{f.num(totals.falseAlarms)}</b></div>
-              <div className="recap-total"><span>{t('detections')}</span><b>{f.num(totals.detections)}</b>
-                {known(totals.indicatedAreaHa) && <small>{t('areaTotal', { ha: f.ha(totals.indicatedAreaHa) })}</small>}</div>
+              <div className="recap-total"><span>{t('detections')}</span><b>{f.num(totals.detections)}</b></div>
             </section>
 
             {(data.regencies ?? []).length > 0 && (
@@ -146,8 +137,7 @@ function RecapView() {
                   <table className="bd-table recap-regencies">
                     <thead>
                       <tr><th>{t('regency')}</th><th className="num">{t('incidents')}</th><th className="num">{t('high')}</th><th className="num">{t('checked')}</th>
-                        <th className="num">{t('openHigh')}</th><th className="num">{t('response')}</th>{areaByRegency && <th className="num">{t('area')}</th>}
-                        {dangerShown && <th>{t('danger')}</th>}</tr>
+                        <th className="num">{t('openHigh')}</th><th className="num">{t('response')}</th>{dangerShown && <th>{t('danger')}</th>}</tr>
                     </thead>
                     <tbody>
                       {data.regencies.map(row => (
@@ -158,7 +148,6 @@ function RecapView() {
                           <td className="num">{f.num(row.checked)}</td>
                           <td className={`num ${row.openHigh ? 'hot' : ''}`}>{row.openHigh ? f.num(row.openHigh) : '–'}</td>
                           <td className="num">{f.duration(row.medianMinutes)}</td>
-                          {areaByRegency && <td className="num">{known(row.indicatedAreaHa) ? f.ha(row.indicatedAreaHa) : '–'}</td>}
                           {dangerShown && <td><DangerTag day={danger.get(`${row.province}/${row.name}`)} /></td>}
                         </tr>
                       ))}
@@ -200,7 +189,6 @@ function RecapView() {
             </div>
 
             <p className="note">{t('note')}</p>
-            {areaShown && <p className="note">{t('areaNote')}</p>}
             {dangerShown && <p className="note">{t('dangerNote')}</p>}
             <p className="note print-only">{t('printed', { time: f.dayTime(new Date()) })}</p>
           </div>

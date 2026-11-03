@@ -81,10 +81,10 @@ describe('recap helpers', () => {
   it('writes the WhatsApp summary in the chosen language', () => {
     const recap: Recap = {
       date: '2026-10-16', province: 'Sumatera Selatan',
-      totals: { incidents: 1299, high: 40, checked: 130, checkedShare: 0.1, medianMinutes: 83, falseAlarms: 2, detections: 15020, indicatedAreaHa: null },
+      totals: { incidents: 1299, high: 40, checked: 130, checkedShare: 0.1, medianMinutes: 83, falseAlarms: 2, detections: 15020 },
       regencies: [
-        { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', incidents: 400, high: 12, checked: 30, openHigh: 5, medianMinutes: 70, indicatedAreaHa: null },
-        { name: 'Banyu Asin', province: 'Sumatera Selatan', incidents: 0, high: 0, checked: 0, openHigh: 0, medianMinutes: null, indicatedAreaHa: null },
+        { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', incidents: 400, high: 12, checked: 30, openHigh: 5, medianMinutes: 70 },
+        { name: 'Banyu Asin', province: 'Sumatera Selatan', incidents: 0, high: 0, checked: 0, openHigh: 0, medianMinutes: null },
       ],
       villages: [],
       checks: { asap_bara: 5, api_aktif: 3 },
@@ -105,10 +105,9 @@ describe('recap helpers', () => {
     expect(en).toContain('Checked: 130 of 1,299 (10%)');
     expect(en).toContain('Response time (median): 1 h 23 min');
     expect(en).toContain('Assignments: 1 assigned, 4 done');
-    expect(id.join('\n')).not.toContain('Indikasi luas');
-    const withArea = { ...recap, totals: { ...recap.totals, indicatedAreaHa: 2345.6 } };
-    expect(recapText(withArea, 'id', 'Sumatera Selatan', 'u').split('\n')).toContain('Indikasi luas area panas: 2.346 ha (bukan luas terbakar)');
-    expect(recapText(withArea, 'en', 'Sumatera Selatan', 'u').split('\n')).toContain('Indicated hot area: 2,346 ha (not burned area)');
+    // Indicated hot areas are never added up: a sum reads as burned area.
+    expect(id.join('\n')).not.toMatch(/luas|\bha\b/);
+    expect(en.join('\n')).not.toMatch(/area|\bha\b/i);
     expect(id.join('\n')).not.toContain('FWI');
     const danger = recapText(recap, 'id', 'Sumatera Selatan', 'u', ['Ogan Komering Ilir', 'Banyuasin']).split('\n');
     expect(danger).toContain('Bahaya kebakaran tinggi atau sangat tinggi (FWI): Ogan Komering Ilir, Banyuasin');

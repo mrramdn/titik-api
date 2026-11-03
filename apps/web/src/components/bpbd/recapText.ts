@@ -9,7 +9,6 @@ const words = dict({
     title: 'Rekap harian Titik Api, {place}',
     incidents: 'Kejadian: {n}, prioritas tinggi {high}', checked: 'Sudah dicek: {n} dari {total} ({share})',
     response: 'Waktu tanggap (median): {time}', falseAlarms: 'Alarm palsu: {n}', detections: 'Titik panas: {n}',
-    area: 'Indikasi luas area panas: {ha} (bukan luas terbakar)',
     regencies: 'Kabupaten dengan kejadian terbanyak:', regency: '{name}: {n} kejadian, {high} prioritas tinggi, {checked} dicek',
     danger: 'Bahaya kebakaran tinggi atau sangat tinggi (FWI): {list}',
     checks: 'Hasil cek lapangan: {list}', assignments: 'Penugasan: {list}', link: 'Rincian: {url}',
@@ -18,7 +17,6 @@ const words = dict({
     title: 'Titik Api daily recap, {place}',
     incidents: 'Incidents: {n}, high priority {high}', checked: 'Checked: {n} of {total} ({share})',
     response: 'Response time (median): {time}', falseAlarms: 'False alarms: {n}', detections: 'Hotspots: {n}',
-    area: 'Indicated hot area: {ha} (not burned area)',
     regencies: 'Regencies with the most incidents:', regency: '{name}: {n} incidents, {high} high priority, {checked} checked',
     danger: 'High or very high fire danger (FWI): {list}',
     checks: 'Field check results: {list}', assignments: 'Assignments: {list}', link: 'Details: {url}',
@@ -52,7 +50,6 @@ export function recapText(recap: Recap, lang: Lang, place: string, url: string, 
     fill(w.falseAlarms, { n: f.num(totals.falseAlarms) }),
     fill(w.detections, { n: f.num(totals.detections) }),
   ];
-  if (totals.indicatedAreaHa !== null && totals.indicatedAreaHa !== undefined) lines.push(fill(w.area, { ha: f.ha(totals.indicatedAreaHa) }));
   const regencies = (recap.regencies ?? []).filter(row => row.incidents > 0).slice(0, 3);
   if (regencies.length) {
     lines.push('', w.regencies);
