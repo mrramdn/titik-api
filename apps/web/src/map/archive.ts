@@ -40,10 +40,12 @@ export const QUIET_INCIDENTS = 100;
 
 /**
  * The archive day to point to while the live map is quiet: the busiest one, when it had at least QUIET_INCIDENTS
- * incidents. '' in the archive, without an archive, before the count is known, or when the live map is not quiet.
+ * incidents. '' in the archive, without an archive, before the count is known, or when the live map is not quiet. Also
+ * '' while the data is stale (`stalled`: no successful satellite check for 2 hours, as the top bar says): then fewer
+ * hotspots mean missing data, not a quiet day.
  */
-export function quietSuggestion(incidents24h: number | null | undefined, archive: ArchiveDays | null, tanggal: string): string {
-  if (tanggal || !archive || typeof incidents24h !== 'number' || incidents24h >= QUIET_INCIDENTS) return '';
+export function quietSuggestion(incidents24h: number | null | undefined, archive: ArchiveDays | null, tanggal: string, stalled = false): string {
+  if (stalled || tanggal || !archive || typeof incidents24h !== 'number' || incidents24h >= QUIET_INCIDENTS) return '';
   const date = busiestDay(archive.days);
   const day = archive.days.find(item => item.date === date);
   return day && day.incidents >= QUIET_INCIDENTS ? date : '';

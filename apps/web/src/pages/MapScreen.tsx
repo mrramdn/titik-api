@@ -17,6 +17,7 @@ import { useFormat } from '../format';
 import { shortProvince, useRegion, type RegencyRef } from '../region';
 import { useSession } from '../session';
 import { mapPath } from '../routes';
+import { clockOffset, readFreshness } from '../components/shell/freshness';
 
 const text = dict({
   id: {
@@ -257,7 +258,9 @@ export function IncidentList() {
   // summary is not already that, and not in the archive or when the server has no archive to point to.
   const quietPath = '/summary?hours=24';
   const live = useApi<Summary>(archive && !filters.tanggal && summaryPath !== quietPath ? quietPath : null, version);
-  const quietDay = quietSuggestion((summaryPath === quietPath ? server.data : live.data)?.incidents, archive, filters.tanggal);
+  // Not while the data is stale (the top bar's warning), nor before that is known: fewer hotspots then mean missing data.
+  const stalled = !status || (readFreshness(status, Date.now() + clockOffset(status.serverTime))?.stalled ?? true);
+  const quietDay = quietSuggestion((summaryPath === quietPath ? server.data : live.data)?.incidents, archive, filters.tanggal, stalled);
   const hits = useApi<VillageHit[]>(q.trim().length >= 2 ? `/villages?q=${encodeURIComponent(q.trim())}${query}` : null);
   const rows = useMemo(() => (Array.isArray(list.data) ? prepareRows(list.data, filters) : null), [list.data, key]);
   // Counts follow the same filters as the rows: from the rows when the list is complete; from /summary when only

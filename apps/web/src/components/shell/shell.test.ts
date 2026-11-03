@@ -119,6 +119,12 @@ describe('quiet live map', () => {
     expect(quietSuggestion(100, archive, '')).toBe('');
   });
 
+  it('stays away while the data is stale: then fewer hotspots mean missing data, not a quiet day', () => {
+    expect(quietSuggestion(47, archive, '', true)).toBe('');
+    expect(quietSuggestion(0, archive, '', true)).toBe('');
+    expect(quietSuggestion(47, archive, '', false)).toBe('2026-10-23');
+  });
+
   it('stays away in the archive, without an archive, before the count is known and when no day was busy', () => {
     expect(quietSuggestion(12, archive, '2026-10-23')).toBe('');
     expect(quietSuggestion(12, null, '')).toBe('');
