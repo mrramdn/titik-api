@@ -14,7 +14,7 @@ let directory: string;
 const HOUR = 3_600_000;
 // The answer the stand-in for Open-Meteo gives, the URLs it was asked, and whether it hangs or fails.
 let answer = { speed: 12, from: 170 };
-let mode: 'ok' | 'hang' | 'error' = 'ok';
+let mode: 'ok' | 'hang' | 'error' | 'slow' = 'ok';
 const urls: string[] = [];
 const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(String(input));
@@ -23,6 +23,7 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
     return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
   }
   if (mode === 'error') return new Response('down', { status: 500 });
+  if (mode === 'slow') await new Promise(resolve => setTimeout(resolve, 1800));
   const hour = url.searchParams.get('start_hour');
   const time = hour ? [hour] : Array.from({ length: 24 }, (_, k) => `${url.searchParams.get('start_date')}T${String(k).padStart(2, '0')}:00`);
   return new Response(JSON.stringify({ hourly: { time, wind_speed_10m: time.map(() => answer.speed), wind_direction_10m: time.map(() => answer.from) } }),
@@ -106,15 +107,27 @@ test('calm air leaves the villages out; an older incident takes the wind at the 
   assert.equal(urls.length, 2);
 });
 
-test('no answer within 1.5 s or an error leaves the wind out instead of failing', async () => {
+test('no answer within 1.5 s or an error leaves the wind out instead of failing; a late answer serves the next request', async () => {
   clearWindCache();
   mode = 'hang';
   const started = Date.now();
   assert.equal(await wind(ids.recent!), null);
   const waited = Date.now() - started;
   assert.ok(waited >= 1400 && waited < 4000, `${waited} ms`);
+  clearWindCache();
   mode = 'error';
+  const failing = Date.now();
   assert.equal(await wind(ids.recent!), null);
+  assert.ok(Date.now() - failing < 1000, 'an error answers at once');
+  // A slow first answer (a cold connection): left out at 1.5 s, then kept, so the next request has it without asking again.
+  clearWindCache();
+  mode = 'slow';
+  answer = { speed: 7, from: 120 };
+  urls.length = 0;
+  assert.equal(await wind(ids.recent!), null);
+  await new Promise(resolve => setTimeout(resolve, 600));
   mode = 'ok';
+  const kept = await wind(ids.recent!);
+  assert.deepEqual([kept?.speedKmh, kept?.fromDeg, urls.length], [7, 120, 1]);
   assert.equal((await app.inject({ method: 'GET', url: '/api/v1/incidents/00000000-0000-4000-8000-000000000000/wind' })).statusCode, 404);
 });

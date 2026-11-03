@@ -1,7 +1,8 @@
 // The wind at an incident from Open-Meteo (hourly wind_speed_10m in km/h and wind_direction_10m, where the wind comes
 // from), and the villages its smoke may drift toward. Now when the incident was last detected within 24 hours, else
 // at the hour of its last detection: the Forecast API serves the last 92 days, the Historical Weather API older ones.
-// The panel asks while it opens, so the weather service gets 1.5 seconds; without an answer the wind is left out.
+// The panel asks while it opens, so the weather service gets 1.5 seconds; without an answer the wind is left out, and
+// an answer that comes later is kept for the next request.
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { object, requireCondition } from './errors.js';
@@ -20,33 +21,51 @@ export const inSector = (bearing: number, toward: number, half = HALF_SECTOR) =>
 
 interface WindValue { speedKmh: number; fromDeg: number }
 const cache = new Map<string, { at: number; value: WindValue }>();
+const pending = new Map<string, Promise<WindValue | null>>();
 /** Forgets the winds fetched (one per 0.1° cell and hour, kept an hour). */
-export const clearWindCache = () => cache.clear();
+export const clearWindCache = () => { cache.clear(); pending.clear(); };
 
-/** The wind at the centre of a 0.1° cell at a whole UTC hour; null when Open-Meteo does not answer in time. */
+async function fetchWind(url: string, stamp: string, fetchImpl: typeof fetch): Promise<WindValue | null> {
+  try {
+    const response = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), headers: { 'user-agent': 'titik-api (incident wind)' } });
+    if (!response.ok) return null;
+    const hourly = ((await response.json()) as { hourly?: { time?: string[]; wind_speed_10m?: unknown[]; wind_direction_10m?: unknown[] } }).hourly;
+    const index = hourly?.time?.indexOf(stamp) ?? -1;
+    const speed = hourly?.wind_speed_10m?.[index], from = hourly?.wind_direction_10m?.[index];
+    return index < 0 || typeof speed !== 'number' || typeof from !== 'number' ? null : { speedKmh: speed, fromDeg: from };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The wind at the centre of a 0.1° cell at a whole UTC hour; null when Open-Meteo does not answer within 1.5 s. A
+ * slow answer (a cold connection) still lands in the cache, so the next request has it; one request per cell and hour.
+ */
 async function windAt(lon: number, lat: number, hour: Date, fetchImpl: typeof fetch): Promise<WindValue | null> {
   const stamp = hour.toISOString().slice(0, 16);
   const key = `${lon.toFixed(1)},${lat.toFixed(1)},${stamp}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < HOUR) return hit.value;
-  const where = `latitude=${lat.toFixed(1)}&longitude=${lon.toFixed(1)}&hourly=wind_speed_10m,wind_direction_10m&timezone=GMT`;
-  const url = Date.now() - hour.getTime() < 90 * 24 * HOUR
-    ? `${FORECAST_API}?${where}&start_hour=${stamp}&end_hour=${stamp}`
-    : `${ARCHIVE_API}?${where}&start_date=${stamp.slice(0, 10)}&end_date=${stamp.slice(0, 10)}`;
-  try {
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { 'user-agent': 'titik-api (incident wind)' } });
-    if (!response.ok) return null;
-    const hourly = ((await response.json()) as { hourly?: { time?: string[]; wind_speed_10m?: unknown[]; wind_direction_10m?: unknown[] } }).hourly;
-    const index = hourly?.time?.indexOf(stamp) ?? -1;
-    const speed = hourly?.wind_speed_10m?.[index], from = hourly?.wind_direction_10m?.[index];
-    if (index < 0 || typeof speed !== 'number' || typeof from !== 'number') return null;
-    const value = { speedKmh: speed, fromDeg: from };
-    if (cache.size >= 5000) cache.clear();
-    cache.set(key, { at: Date.now(), value });
-    return value;
-  } catch {
-    return null;
+  let job = pending.get(key);
+  if (!job) {
+    const where = `latitude=${lat.toFixed(1)}&longitude=${lon.toFixed(1)}&hourly=wind_speed_10m,wind_direction_10m&timezone=GMT`;
+    const url = Date.now() - hour.getTime() < 90 * 24 * HOUR
+      ? `${FORECAST_API}?${where}&start_hour=${stamp}&end_hour=${stamp}`
+      : `${ARCHIVE_API}?${where}&start_date=${stamp.slice(0, 10)}&end_date=${stamp.slice(0, 10)}`;
+    job = fetchWind(url, stamp, fetchImpl).then(value => {
+      if (value) {
+        if (cache.size >= 5000) cache.clear();
+        cache.set(key, { at: Date.now(), value });
+      }
+      return value;
+    }).finally(() => { if (pending.get(key) === job) pending.delete(key); });
+    pending.set(key, job);
   }
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), TIMEOUT_MS); });
+  try { return await Promise.race([job, late]); }
+  finally { clearTimeout(timer); }
 }
 
 export function installWind(app: FastifyInstance, pool: pg.Pool, fetchImpl?: typeof fetch) {
