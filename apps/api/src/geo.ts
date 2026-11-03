@@ -45,6 +45,13 @@ export const formatWibDateTime = (date: Date) => `${dateFormat.format(date).repl
 const dayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' });
 /** "13.42" on the same WIB day as `now`, else "15 Okt 13.42". */
 export const formatWibWhen = (date: Date, now = new Date()) => (dayFormat.format(date) === dayFormat.format(now) ? formatWib(date) : formatWibDateTime(date));
+/** The WIB day of a moment, "2026-10-23". */
+export const wibDay = (date = new Date()) => dayFormat.format(date);
+/** A day ("2026-10-23") moved by whole days. */
+export const addDays = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+/** True for a real calendar date written as YYYY-MM-DD (2026-02-31 is not one). */
+export const isCalendarDate = (text: string) => /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`))
+  && new Date(`${text}T00:00:00Z`).toISOString().startsWith(text);
 
 export interface ScoreInput {
   bestConfidence: string | null; maxFrp: number | null; viirsCount: number; modisCount: number;

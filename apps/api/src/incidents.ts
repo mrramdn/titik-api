@@ -1,10 +1,82 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { requireCondition, choice, object } from './errors.js';
-import { cardText, type CardIncident, type Level } from './geo.js';
+import { addDays, cardText, isCalendarDate, wibDay, type CardIncident, type Level } from './geo.js';
 import type { Database } from './models.js';
 
 const OPEN = `('ditugaskan', 'menuju')`;
+
+/**
+ * The time window of a list, summary or tile as SQL, sharing one shape between live data and the archive. Live: the
+ * last `hours` hours before now. Archive (`tanggal`, a WIB day): the `hours` hours before the end of that day, so 24
+ * is that day and 72 that day and the two before. Pushes its parameters; `end` is the end of the window as SQL.
+ */
+export function timeWindow(params: unknown[], hours: number, tanggal: string | null) {
+  params.push(hours);
+  const span = `make_interval(hours => $${params.length})`;
+  if (!tanggal) return { end: 'now()', within: (column: string) => `${column} > now() - ${span}` };
+  params.push(tanggal);
+  const end = `(($${params.length}::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')`;
+  return { end, within: (column: string) => `${column} >= ${end} - ${span} AND ${column} < ${end}` };
+}
+export type TimeWindow = ReturnType<typeof timeWindow>;
+
+let firstDay: { at: number; day: string | null } | null = null;
+/**
+ * The archive: from the WIB day of the earliest detection to yesterday. Today belongs to the live data. Without
+ * any detection before today, `first` is after `last` and there is no archive day.
+ */
+export async function archiveBounds(db: Database) {
+  if (!firstDay || Date.now() - firstDay.at > 600_000) {
+    const row = (await db.query(`SELECT to_char((min(acq_at) AT TIME ZONE 'Asia/Jakarta')::date, 'YYYY-MM-DD') AS day FROM detections`)).rows[0];
+    firstDay = { at: Date.now(), day: row?.day ?? null };
+  }
+  const today = wibDay();
+  return { first: firstDay.day && firstDay.day < today ? firstDay.day : today, last: addDays(today, -1) };
+}
+
+/** The `tanggal` of a request: null for live data, else a WIB day inside the archive. */
+export async function archiveDate(db: Database, value: unknown) {
+  if (value === undefined || value === '') return null;
+  const date = String(value);
+  requireCondition(isCalendarDate(date), 400, 'INVALID_INPUT', 'Tanggal tidak valid. Tulis tanggal sebagai TTTT-BB-HH.');
+  const { first, last } = await archiveBounds(db);
+  requireCondition(first <= last, 400, 'INVALID_INPUT', 'Arsip belum tersedia. Lihat data hari ini.');
+  requireCondition(date >= first && date <= last, 400, 'INVALID_INPUT', `Tanggal di luar arsip. Pilih tanggal ${first} sampai ${last}.`);
+  return date;
+}
+
+/**
+ * Cut vector tiles, the least recently used dropped first once they hold more than `limit` bytes together (an
+ * empty tile counts a little too, so many of them cannot grow the map without bound).
+ */
+export class TileCache {
+  private entries = new Map<string, { at: number; body: Buffer }>();
+  private bytes = 0;
+  constructor(private readonly limit: number) {}
+  private size = (body: Buffer) => body.length + 256;
+  get(key: string, ttl: number) {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    this.entries.delete(key);
+    if (Date.now() - entry.at > ttl) { this.bytes -= this.size(entry.body); return undefined; }
+    this.entries.set(key, entry);
+    return entry.body;
+  }
+  set(key: string, body: Buffer) {
+    const old = this.entries.get(key);
+    if (old) { this.entries.delete(key); this.bytes -= this.size(old.body); }
+    this.entries.set(key, { at: Date.now(), body });
+    this.bytes += this.size(body);
+    for (const [oldest, entry] of this.entries) {
+      if (this.bytes <= this.limit) break;
+      this.entries.delete(oldest);
+      this.bytes -= this.size(entry.body);
+    }
+  }
+  clear() { this.entries.clear(); this.bytes = 0; }
+  get totalBytes() { return this.bytes; }
+}
 
 /**
  * Incident columns plus its village, coordinates, latest field check and task (the open one, else the latest),
@@ -116,28 +188,36 @@ const sorts = {
 const levels = ['tinggi', 'sedang', 'rendah'] as const;
 
 // Vector tiles cut by PostGIS (ST_AsMVT). Shapes change only with new reference data; hotspots every ingest.
+// Hotspot tiles take the time window ($4 hours, and $5 the archive day): field checks and tasks are never replayed,
+// an archive tile shows their state now.
 const tileSql = {
-  desa: `SELECT ST_AsMVT(q, 'desa', 4096, 'geom') AS mvt FROM (SELECT id, name, district, regency, peat_share,
+  desa: () => `SELECT ST_AsMVT(q, 'desa', 4096, 'geom') AS mvt FROM (SELECT id, name, district, regency, peat_share,
       ST_AsMVTGeom(geom_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
     FROM villages WHERE $1 >= 8 AND geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q`,
-  kabupaten: `SELECT ST_AsMVT(q, 'kabupaten', 4096, 'geom') AS mvt FROM (SELECT name, province, villages,
+  kabupaten: () => `SELECT ST_AsMVT(q, 'kabupaten', 4096, 'geom') AS mvt FROM (SELECT name, province, villages,
       ST_AsMVTGeom(ST_SimplifyPreserveTopology(geom_3857, CASE WHEN $1 < 7 THEN 400 WHEN $1 < 9 THEN 120 ELSE 30 END), ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
     FROM regencies WHERE geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q`,
-  kejadian: `SELECT ST_AsMVT(q, 'kejadian', 4096, 'geom') AS mvt FROM (SELECT i.id::text AS id, i.level, i.detection_count AS count, i.score,
+  kejadian: (window: TimeWindow) => `SELECT ST_AsMVT(q, 'kejadian', 4096, 'geom') AS mvt FROM (SELECT i.id::text AS id, i.level, i.detection_count AS count, i.score,
       (i.first_verified_at IS NOT NULL) AS verified, i.on_peat AS peat,
       EXISTS (SELECT 1 FROM assignments a WHERE a.incident_id = i.id AND a.status IN ${OPEN}) AS assigned, i.modis_only AS "modisOnly",
       ST_AsMVTGeom(i.centroid_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
-    FROM incidents i WHERE i.village_id IS NOT NULL AND i.last_detected_at > now() - make_interval(hours => $4)
+    FROM incidents i WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}
       AND i.centroid_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156) ORDER BY i.score) q`,
-  deteksi: `SELECT ST_AsMVT(q, 'deteksi', 4096, 'geom') AS mvt FROM (SELECT confidence, (village_id IS NOT NULL) AS inside,
-      CASE WHEN satellite IN ('T', 'A') THEN 'MODIS' ELSE 'VIIRS' END AS sensor, greatest(0, floor(extract(epoch FROM now() - acq_at) / 3600))::integer AS age,
+  // `age` counts hours before the end of the window.
+  deteksi: (window: TimeWindow) => `SELECT ST_AsMVT(q, 'deteksi', 4096, 'geom') AS mvt FROM (SELECT confidence, (village_id IS NOT NULL) AS inside,
+      CASE WHEN satellite IN ('T', 'A') THEN 'MODIS' ELSE 'VIIRS' END AS sensor, greatest(0, floor(extract(epoch FROM ${window.end} - acq_at) / 3600))::integer AS age,
       ST_AsMVTGeom(geom_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
-    FROM detections WHERE $1 >= 7 AND acq_at > now() - make_interval(hours => $4) AND geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q`,
+    FROM detections WHERE $1 >= 7 AND ${window.within('acq_at')} AND geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q`,
 } as const;
 
-const tiles = new Map<string, { at: number; body: Buffer }>();
-/** Forgets every cut tile, so the next request shows new detections, checks and tasks at once. */
-export const clearTileCache = () => tiles.clear();
+/** Live hotspot tiles change with every ingest; archive days and shapes do not. */
+const LIVE_TTL = 120_000, ARCHIVE_TTL = 3_600_000;
+const tiles = new TileCache(32 * 1024 * 1024);
+let archiveDays: { at: number; body: unknown } | null = null;
+/** Forgets every cut tile and the archive day counts, so the next request shows new detections, checks and tasks at once. */
+export const clearTileCache = () => { tiles.clear(); archiveDays = null; firstDay = null; };
+/** Bytes held by the tile cache, for the tests. */
+export const tileCacheBytes = () => tiles.totalBytes;
 
 /** Passes of one satellite over an incident: detections less than 30 minutes apart belong to one pass. */
 function passes(detections: { satellite: string; acq_at: Date }[]) {
@@ -157,22 +237,41 @@ function passes(detections: { satellite: string; acq_at: Date }[]) {
 export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/tiles/:layer/:z/:x/:y', async (request, reply) => {
     const params = object(request.params);
+    const query = object(request.query ?? {});
     const layer = choice(params.layer, ['desa', 'kabupaten', 'kejadian', 'deteksi'] as const, 'Lapisan');
     const z = Number(params.z), x = Number(params.x), y = Number(String(params.y).replace(/\.mvt$/, ''));
     requireCondition([z, x, y].every(Number.isInteger) && z >= 0 && z <= 16 && x >= 0 && y >= 0 && x < 2 ** z && y < 2 ** z, 400, 'INVALID_INPUT', 'Ubin peta tidak valid. Muat ulang peta.');
-    const live = layer === 'kejadian' || layer === 'deteksi';
-    const hours = live ? hoursParam(object(request.query ?? {}).hours, 24, 168) : 0;
-    const ttl = live ? 120_000 : 3_600_000;
-    const key = `${layer}/${z}/${x}/${y}/${hours}`;
-    let entry = tiles.get(key);
-    if (!entry || Date.now() - entry.at > ttl) {
-      const row = (await pool.query(tileSql[layer], live ? [z, x, y, hours] : [z, x, y])).rows[0];
-      entry = { at: Date.now(), body: row?.mvt ?? Buffer.alloc(0) };
-      if (tiles.size > 4000) tiles.clear();
-      tiles.set(key, entry);
+    const hotspots = layer === 'kejadian' || layer === 'deteksi';
+    const hours = hotspots ? hoursParam(query.hours, 24, 168) : 0;
+    const tanggal = hotspots ? await archiveDate(pool, query.tanggal) : null;
+    const ttl = hotspots && !tanggal ? LIVE_TTL : ARCHIVE_TTL;
+    const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}`;
+    let body = tiles.get(key, ttl);
+    if (!body) {
+      const sqlParams: unknown[] = [z, x, y];
+      const sql = layer === 'kejadian' || layer === 'deteksi' ? tileSql[layer](timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
+      body = ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
+      tiles.set(key, body);
     }
     reply.header('Content-Type', 'application/vnd.mapbox-vector-tile').header('Cache-Control', `public, max-age=${ttl / 1000}`);
-    return entry.body;
+    return body;
+  });
+
+  // Every WIB day of the archive with its detections and incidents inside the villages, zero included.
+  app.get('/api/v1/archive/days', async () => {
+    if (archiveDays && Date.now() - archiveDays.at < 600_000) return archiveDays.body;
+    const { first, last } = await archiveBounds(pool);
+    const from = `($1::date::timestamp AT TIME ZONE 'Asia/Jakarta')`, to = `(($2::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')`;
+    const rows = first > last ? [] : (await pool.query(`SELECT to_char(g.day, 'YYYY-MM-DD') AS date, COALESCE(d.n, 0)::integer AS detections, COALESCE(i.n, 0)::integer AS incidents
+      FROM generate_series($1::date, $2::date, interval '1 day') AS g(day)
+      LEFT JOIN (SELECT (acq_at AT TIME ZONE 'Asia/Jakarta')::date AS day, count(*) AS n FROM detections
+        WHERE village_id IS NOT NULL AND acq_at >= ${from} AND acq_at < ${to} GROUP BY 1) d ON d.day = g.day::date
+      LEFT JOIN (SELECT (first_detected_at AT TIME ZONE 'Asia/Jakarta')::date AS day, count(*) AS n FROM incidents
+        WHERE village_id IS NOT NULL AND first_detected_at >= ${from} AND first_detected_at < ${to} GROUP BY 1) i ON i.day = g.day::date
+      ORDER BY g.day`, [first, last])).rows;
+    const body = { data: { first, last, days: rows } };
+    archiveDays = { at: Date.now(), body };
+    return body;
   });
 
   app.get('/api/v1/regions', async () => {
@@ -194,7 +293,8 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/regions/summary', async request => {
     const query = object(request.query ?? {});
     const hours = hoursParam(query.hours, 24, 168);
-    const params: unknown[] = [hours];
+    const params: unknown[] = [];
+    const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     const where = regionFilter(query, params);
     const rows = (await pool.query(`WITH tasks AS (SELECT DISTINCT incident_id FROM assignments WHERE status IN ${OPEN})
       SELECT r.name, r.province, ST_X(r.center) AS lon, ST_Y(r.center) AS lat, count(*)::integer AS incidents,
@@ -202,7 +302,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
         count(*) FILTER (WHERE i.level = 'tinggi' AND i.first_verified_at IS NULL AND t.incident_id IS NULL)::integer AS open,
         count(*) FILTER (WHERE i.first_verified_at IS NOT NULL)::integer AS checked
       FROM incidents i JOIN villages v ON v.id = i.village_id JOIN regencies r ON r.name = v.regency LEFT JOIN tasks t ON t.incident_id = i.id
-      WHERE i.last_detected_at > now() - make_interval(hours => $1)${where}
+      WHERE ${window.within('i.last_detected_at')}${where}
       GROUP BY r.name, r.province, r.center ORDER BY open DESC, high DESC, incidents DESC, r.name`, params)).rows;
     return { data: rows.map(row => ({ name: row.name, province: row.province, center: [row.lon, row.lat], incidents: row.incidents, high: row.high,
       open: row.open, checked: row.checked })) };
@@ -211,15 +311,16 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/summary', async request => {
     const query = object(request.query ?? {});
     const hours = hoursParam(query.hours, 24, 168);
-    const params: unknown[] = [hours];
+    const params: unknown[] = [];
+    const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     const where = regionFilter(query, params);
     const incidents = (await pool.query(`SELECT count(*)::integer AS incidents,
         count(*) FILTER (WHERE i.level = 'tinggi' AND i.first_verified_at IS NULL)::integer AS high_open,
         count(*) FILTER (WHERE i.first_verified_at IS NOT NULL)::integer AS verified,
         count(DISTINCT i.village_id)::integer AS villages
-      FROM incidents i JOIN villages v ON v.id = i.village_id WHERE i.last_detected_at > now() - make_interval(hours => $1)${where}`, params)).rows[0];
+      FROM incidents i JOIN villages v ON v.id = i.village_id WHERE ${window.within('i.last_detected_at')}${where}`, params)).rows[0];
     const detections = (await pool.query(`SELECT count(*)::integer AS n FROM detections d JOIN villages v ON v.id = d.village_id
-      WHERE d.acq_at > now() - make_interval(hours => $1)${where}`, params)).rows[0];
+      WHERE ${window.within('d.acq_at')}${where}`, params)).rows[0];
     return { data: { hours, incidents: incidents.incidents, highOpen: incidents.high_open, verified: incidents.verified, villages: incidents.villages, detections: detections.n } };
   });
 
@@ -258,7 +359,8 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/incidents', async request => {
     const query = object(request.query ?? {});
     const hours = hoursParam(query.hours, 72, 168);
-    const params: unknown[] = [hours];
+    const params: unknown[] = [];
+    const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     let where = regionFilter(query, params);
     if (query.level !== undefined && query.level !== '') {
       const chosen = String(query.level).split(',').map(level => choice(level.trim(), levels, 'Prioritas'));
@@ -271,7 +373,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const sort = choice(query.sort ?? 'priority', ['priority', 'recent', 'size', 'checked'] as const, 'Urutan');
     const limit = query.limit === undefined || query.limit === '' ? 100 : Number(query.limit);
     requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 500, 400, 'INVALID_INPUT', 'Batas daftar harus 1–500.');
-    const result = await pool.query(`${incidentSelect} WHERE i.village_id IS NOT NULL AND i.last_detected_at > now() - make_interval(hours => $1)${where}
+    const result = await pool.query(`${incidentSelect} WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}${where}
       ORDER BY ${sorts[sort]} LIMIT ${limit}`, params);
     return { data: result.rows.map(row => incidentModel(row, Boolean(request.user))) };
   });
