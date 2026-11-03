@@ -140,7 +140,8 @@ function AccountSheet({ onClose }: { onClose(): void }) {
   );
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+/** `freshness` false hides the satellite data status in the top bar (the map in archive mode shows a past day). */
+export function Shell({ children, freshness = true }: { children: ReactNode; freshness?: boolean }) {
   const t = useT(text);
   const { user } = useSession();
   const { pathname } = useLocation();
@@ -153,7 +154,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <header className="topbar">
         <Link to="/" className="brand" aria-label={t('home')}><LogoMark /><span className="brand-name">Titik Api</span></Link>
         <RegionSelect />
-        <Freshness />
+        {freshness && <Freshness />}
         <nav className="topnav" aria-label={t('nav')}>
           {links.map(({ to, key, icon: Icon }) => <Link key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={16} aria-hidden="true" />{t(key)}</Link>)}
         </nav>

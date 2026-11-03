@@ -8,6 +8,7 @@ const text = dict({
   id: {
     legend: 'Legenda', incidents: 'Prioritas kejadian', checked: 'Sudah dicek', assigned: 'Ditugaskan', sizeNote: 'titik panas per kejadian', modisOnly: 'Hanya MODIS, lokasi ±1 km',
     hotspots: 'Titik panas menurut umur', hotspotsConfidence: 'Titik panas menurut keyakinan', newest: '≤ 3 jam', today: 'Hari ini', older: 'Lebih lama',
+    archiveNewest: '21.00–24.00', archiveToday: 'Hari itu', archiveOlder: 'Hari sebelumnya',
     confHigh: 'Tinggi', confNominal: 'Sedang', confLow: 'Rendah', modisRing: 'Piksel MODIS, lokasi ±1 km',
     regencies: 'Kejadian per kabupaten', bubble: 'Prioritas tinggi, belum dicek atau ditugaskan', bubbleNone: 'Tidak ada prioritas tinggi yang menunggu',
     bubbleNote: 'Ukuran lingkaran mengikuti jumlah kejadian. Klik lingkaran atau perbesar peta untuk melihat tiap kejadian.',
@@ -15,6 +16,7 @@ const text = dict({
   en: {
     legend: 'Legend', incidents: 'Incident priority', checked: 'Checked', assigned: 'Assigned', sizeNote: 'hotspots per incident', modisOnly: 'MODIS only, location ±1 km',
     hotspots: 'Hotspots by age', hotspotsConfidence: 'Hotspots by confidence', newest: '≤ 3 h', today: 'Today', older: 'Older',
+    archiveNewest: '21:00–24:00', archiveToday: 'That day', archiveOlder: 'Earlier days',
     confHigh: 'High', confNominal: 'Nominal', confLow: 'Low', modisRing: 'MODIS pixel, location ±1 km',
     regencies: 'Incidents per regency', bubble: 'High priority, not checked or assigned', bubbleNone: 'No high priority waiting',
     bubbleNote: 'Circle size follows the number of incidents. Click a circle or zoom in to see each incident.',
@@ -27,11 +29,15 @@ interface Props {
   bubbles: boolean;
   /** The tiles carry the hotspot age; older tiles only the confidence. */
   ageAware: boolean;
+  /** An archive day: ages count back from the end of that day. */
+  archive: boolean;
   closeButton: ReactNode;
 }
 
-export function Legend({ bubbles, ageAware, closeButton }: Props) {
+export function Legend({ bubbles, ageAware, archive, closeButton }: Props) {
   const t = useT(text), f = useFormat();
+  const [newest, today, older] = !ageAware ? (['confHigh', 'confNominal', 'confLow'] as const)
+    : archive ? (['archiveNewest', 'archiveToday', 'archiveOlder'] as const) : (['newest', 'today', 'older'] as const);
   return (
     <div className="mapcard" role="dialog" aria-label={t('legend')}>
       {bubbles ? (<>
@@ -52,9 +58,9 @@ export function Legend({ bubbles, ageAware, closeButton }: Props) {
         <div className="lg-row lg-sizes"><span><i className="lg-dot lg-s0" />1–4</span><span><i className="lg-dot lg-s1" />5–19</span><span><i className="lg-dot lg-s2" />20+</span><small>{t('sizeNote')}</small></div>
         <h3 className="lg-title">{ageAware ? t('hotspots') : t('hotspotsConfidence')}</h3>
         <div className="lg-row lg-inline">
-          <span><i className="lg-dot lg-small" style={{ background: colors.newest }} />{ageAware ? t('newest') : t('confHigh')}</span>
-          <span><i className="lg-dot lg-small" style={{ background: colors.today }} />{ageAware ? t('today') : t('confNominal')}</span>
-          <span><i className="lg-dot lg-small" style={{ background: colors.older }} />{ageAware ? t('older') : t('confLow')}</span>
+          <span><i className="lg-dot lg-small" style={{ background: colors.newest }} />{t(newest)}</span>
+          <span><i className="lg-dot lg-small" style={{ background: colors.today }} />{t(today)}</span>
+          <span><i className="lg-dot lg-small" style={{ background: colors.older }} />{t(older)}</span>
         </div>
         <div className="lg-row"><i className="lg-dot lg-ring lg-thin" style={{ borderColor: colors.newest }} />{t('modisRing')}</div>
       </>)}

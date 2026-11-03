@@ -6,6 +6,7 @@ import { LevelBadge, RouteButton, ScoreRows, StatusLine, shareText, useApi, useD
 import { dict, useLang, useT, type Vars } from '../i18n';
 import { satelliteName, sensorOf } from '../i18n/common';
 import { useFormat, type Format } from '../format';
+import { panelActions } from '../map/archive';
 import { useSession } from '../session';
 import { useScreen } from './MapScreen';
 
@@ -20,6 +21,7 @@ const text = dict({
     cancelled: 'Tugas dibatalkan', demo: 'akun demo', distance: '{km} dari titik panas', photo: 'Foto cek lapangan',
     privateNote: 'Catatan, foto, dan nama pelapor terlihat setelah masuk.', colTime: 'WIB', colSatellite: 'Satelit', colSensor: 'Sensor',
     colConfidence: 'Keyakinan', colFrp: 'FRP (MW)', moreRows: '{n} titik panas lainnya tidak ditampilkan.', last: 'Titik panas terakhir {ago}.',
+    lastAt: 'Titik panas terakhir {time} WIB.', notReplayed: 'Status lapangan dan tugas tampil seperti sekarang, tidak diputar ulang.',
     scoreConfidence: 'Keyakinan satelit {level}', scoreFrp: 'FRP maks {mw} MW', scoreCount: '{n} titik panas', scorePeat: 'Di lahan gambut',
     scoreNoPeat: 'Di luar peta gambut', scoreSettlement: 'Permukiman terdekat {km}', scoreNoSettlement: 'Jarak ke permukiman tidak diketahui', scoreStatic: 'Dekat sumber panas tetap',
   },
@@ -33,6 +35,7 @@ const text = dict({
     cancelled: 'Task cancelled', demo: 'demo account', distance: '{km} from the hotspot', photo: 'Field check photo',
     privateNote: 'Notes, photos and reporter names are visible after signing in.', colTime: 'WIB', colSatellite: 'Satellite', colSensor: 'Sensor',
     colConfidence: 'Confidence', colFrp: 'FRP (MW)', moreRows: '{n} more hotspots not shown.', last: 'Last hotspot {ago}.',
+    lastAt: 'Last hotspot {time} WIB.', notReplayed: 'Field status and tasks show as they are now; they are not replayed.',
     scoreConfidence: 'Satellite confidence {level}', scoreFrp: 'Max FRP {mw} MW', scoreCount: '{n} hotspots', scorePeat: 'On peatland',
     scoreNoPeat: 'Outside the peat map', scoreSettlement: 'Nearest settlement {km}', scoreNoSettlement: 'Distance to settlement unknown', scoreStatic: 'Near a fixed heat source',
   },
@@ -102,7 +105,8 @@ export function IncidentPanel() {
   const { lang } = useLang();
   const params = useParams();
   const key = params.id ?? params.code!;
-  const { setSelected } = useScreen();
+  const { setSelected, filters } = useScreen();
+  const archived = Boolean(filters.tanggal);
   const { user } = useSession();
   const { version } = useDataVersion();
   const [tab, setTab] = useState<'history' | 'detections'>('history');
@@ -123,7 +127,7 @@ export function IncidentPanel() {
   const byTime = new Map<string, Verification>(verifications.map(v => [v.observedAt, v]));
   const viirs = d.viirsCount ?? detections.filter(x => sensorOf(x.satellite) === 'VIIRS').length;
   const modis = d.modisCount ?? detections.length - viirs;
-  const canCheck = user?.role === 'mpa' || user?.role === 'admin';
+  const actions = panelActions(user?.role, archived);
   return (
     <div className="sidebar-scroll detail ip">
       <section className="ip-head">
@@ -132,6 +136,7 @@ export function IncidentPanel() {
         <h1 className="title-24">{d.village ? t('village', { name: d.village.name }) : t('outside')}</h1>
         {d.village && <p className="subline">{[t('district', { name: d.village.district }), d.village.regency, d.village.province].join(', ')}</p>}
         <StatusLine incident={d} />
+        {actions.notReplayed && <p className="note">{t('notReplayed')}</p>}
         <p className="ip-when">{f.span(d.firstDetectedAt, d.lastDetectedAt)} · {[...new Set(d.satellites ?? [])].map(satelliteName).join(', ')}</p>
       </section>
       <section>
@@ -144,7 +149,7 @@ export function IncidentPanel() {
         {d.modisOnly && <p className="note">{t('modisOnly', { km: f.km(d.locationUncertaintyM ?? 1000) })}</p>}
       </section>
       <section className="ip-actions">
-        {canCheck && <Link to={`/kejadian/${d.id}/cek`} className="btn btn-primary btn-block"><CircleCheck size={16} aria-hidden="true" />{t('check')}</Link>}
+        {actions.check && <Link to={`/kejadian/${d.id}/cek`} className="btn btn-primary btn-block"><CircleCheck size={16} aria-hidden="true" />{t('check')}</Link>}
         <div className="ip-actions-row">
           <RouteButton to={d.centroid} className="btn btn-dark" />
           <button type="button" className="btn btn-dark" onClick={() => void shareText(waText(d, lang))}><Share2 size={16} aria-hidden="true" />{t('share')}</button>
@@ -192,7 +197,7 @@ export function IncidentPanel() {
           {detections.length > 120 && <p className="note ip-more">{t('moreRows', { n: f.num(detections.length - 120) })}</p>}
         </>
       )}
-      <p className="note ip-last">{t('last', { ago: f.ago(d.lastDetectedAt) })}</p>
+      <p className="note ip-last">{archived ? t('lastAt', { time: f.dayTime(d.lastDetectedAt) }) : t('last', { ago: f.ago(d.lastDetectedAt) })}</p>
     </div>
   );
 }

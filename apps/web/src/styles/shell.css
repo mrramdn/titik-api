@@ -129,6 +129,26 @@
 .fclear { height: 28px; padding: 0 4px; border: 0; background: none; color: var(--chrome-text); font-size: 12px; font-weight: 500; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
 .fclear:hover { text-decoration-color: currentColor; }
 
+/* archive mode: a neutral banner over the map screen (amber means a late pass) and one bar per archive day */
+.mapscreen.archive { grid-template-rows: auto minmax(0, 1fr); }
+.archive-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 16px; background: var(--surface-subtle); color: var(--text); border-bottom: 1px solid var(--surface-line); font-size: 13px; line-height: 18px; }
+.archive-bar > .icon { color: var(--text-2); }
+.archive-bar p { flex: 1 1 12em; min-width: 0; font-weight: 500; }
+.archive-pick { flex: 1 0 100%; display: grid; gap: 6px; min-width: 0; }
+.archive-bars { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(7px, 1fr); gap: 2px; height: 56px; overflow-x: auto; scrollbar-width: none; }
+.archive-bars::-webkit-scrollbar { display: none; }
+.archive-bars button { display: flex; align-items: flex-end; height: 100%; padding: 0; border: 0; border-radius: 2px; background: none; cursor: pointer; }
+.archive-bars button:hover { background: var(--chrome-900); }
+.archive-bars i { display: block; width: 100%; border-radius: 2px 2px 0 0; background: var(--chrome-text-3); }
+.archive-bars button:hover i { background: var(--chrome-text-2); }
+.archive-bars button.on i { background: var(--chrome-text); }
+.archive-axis { display: flex; justify-content: space-between; font-size: 11px; line-height: 14px; color: var(--chrome-text-3); }
+.archive-select { width: 100%; }
+@media (max-width: 900px) {
+  .mapscreen.archive { grid-template-rows: auto 42vh 1fr; }
+  .archive-bar { order: -2; }
+}
+
 .sumrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 16px; border-top: 1px solid var(--chrome-line); border-bottom: 1px solid var(--chrome-line); }
 .sumrow > div { display: grid; gap: 2px; min-width: 0; }
 .sumrow b { font-size: 20px; line-height: 24px; font-weight: 600; letter-spacing: -0.3px; color: var(--chrome-text); }

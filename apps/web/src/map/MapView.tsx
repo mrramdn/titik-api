@@ -1,19 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as maplibregl from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Droplets, Earth, Image, Layers, List, Satellite, Trees, X, type LucideIcon } from 'lucide-react';
-import type { RegionSummary } from '../api';
+import { tanggalParam, type RegionSummary } from '../api';
 import { dict, useT } from '../i18n';
 import { useApi } from '../components/ui';
 import { useFormat } from '../format';
 import { ALL_BOUNDS, useRegion } from '../region';
+import { ageClock } from './archive';
 import { checkBadge } from './badge';
-import { dailyLayer } from './imagery';
+import { dailyLayer, dailyLayerFor } from './imagery';
+import { OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
 import {
-  badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius, hoursSinceMidnightWib,
+  badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
   incidentFilter, incidentOpacity, incidentRadius, incidentSortKey, incidentStroke, incidentStrokeWidth, kilometreRadius, levelColor,
   modisDetection, type MapFilters,
 } from './style';
@@ -29,6 +31,8 @@ interface Props {
   /** Changes when a new ingest run lands; tile URLs carry it so the map refreshes. */
   version?: number;
   hours?: number;
+  /** An archive day (YYYY-MM-DD); '' or none for live data. */
+  tanggal?: string;
   bounds?: [number, number, number, number];
   /** The map zooms in at least this far when it fits `bounds` (a regency should open on its incidents). */
   boundsMinZoom?: number;
@@ -69,9 +73,7 @@ const layerInfo: { key: LayerKey; label: Key; source: Key; icon: LucideIcon }[] 
   { key: 'citra', label: 'citra', source: 'citraSource', icon: Image },
 ];
 
-/** Below this zoom the map shows one bubble per regency; incidents and hotspots appear from it. */
-const OVERVIEW_ZOOM = 8;
-const tiles = (layer: 'kejadian' | 'deteksi', hours: number, version: number) => [`${location.origin}/api/v1/tiles/${layer}/{z}/{x}/{y}.mvt?hours=${hours}&v=${version}`];
+const tiles = (layer: 'kejadian' | 'deteksi', hours: number, version: number, tanggal: string) => tileUrls(layer, hours, version, tanggal, location.origin);
 const wide = () => typeof matchMedia === 'function' && matchMedia('(min-width: 1280px)').matches;
 // The legend opens by itself on wide screens until the visitor closes it once.
 const legendKey = 'titikapi.legend';
@@ -79,14 +81,16 @@ const legendClosed = () => { try { return localStorage.getItem(legendKey) === 'c
 const rememberLegend = (closed: boolean) => { try { if (closed) localStorage.setItem(legendKey, 'closed'); else localStorage.removeItem(legendKey); } catch { /* private mode */ } };
 const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoom, selected, focus, initialLayers, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
+export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds, boundsMinZoom, selected, focus, initialLayers, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
   const t = useT(text), f = useFormat();
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ deteksi: true, gambut: false, deforestasi: false, harian: false, citra: false, ...initialLayers });
-  // The newest complete daily image; it changes at midday and in the evening, checked again with every new ingest run.
-  const [daily, setDaily] = useState(dailyLayer);
+  // The newest complete daily image (it changes at midday and in the evening, checked again with every ingest run), or
+  // the archive day's midday image.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const daily = useMemo(() => (tanggal ? dailyLayerFor(tanggal) : dailyLayer()), [tanggal, version, layers.harian]);
   const [panel, setPanel] = useState<'layers' | 'legend' | null>(() => (legend && controls && wide() && !legendClosed() ? 'legend' : null));
   const panelOpen = useRef(panel !== null);
   panelOpen.current = panel !== null;
@@ -97,14 +101,14 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
   // Below the overview zoom the map shows regency bubbles only, and the legend explains just those.
   const [zoomedOut, setZoomedOut] = useState(true);
   const { query, findRegency } = useRegion();
-  const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}` : null, version);
+  const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}${tanggalParam(tanggal)}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
   // refresh keeps the bubbles it already has.
   const overview = bubbles && (Array.isArray(regions.data) || (regions.data === null && !regions.error));
   const handlers = useRef({ onSelect, onVillage, findRegency });
   handlers.current = { onSelect, onVillage, findRegency };
-  const state = useRef({ hours, version, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily });
-  state.current = { hours, version, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily };
+  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily });
+  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily };
 
   useEffect(() => {
     const b = bounds ?? ALL_BOUNDS;
@@ -128,13 +132,13 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
     instance.on('load', collapseAttribution);
     // Own layers go in as soon as the style is ready, so incidents load alongside the base map tiles.
     instance.once('style.load', () => {
-      const { hours: h, version: v } = state.current;
-      const today = hoursSinceMidnightWib();
+      const { hours: h, version: v, tanggal: day } = state.current;
+      const today = ageClock(day);
       const firstSymbol = instance.getStyle().layers?.find(layer => layer.type === 'symbol')?.id;
       instance.addSource('citra', { type: 'raster', tileSize: 256, maxzoom: 15, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg'], attribution: 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)' });
       instance.addLayer({ id: 'citra', type: 'raster', source: 'citra', minzoom: 9, layout: { visibility: 'none' } }, firstSymbol);
-      const day = state.current.daily;
-      instance.addSource('harian', { type: 'raster', tileSize: 256, maxzoom: day.maxzoom, tiles: [day.tiles], attribution: 'NASA EOSDIS GIBS' });
+      const image = state.current.daily;
+      instance.addSource('harian', { type: 'raster', tileSize: 256, maxzoom: image.maxzoom, tiles: [image.tiles], attribution: 'NASA EOSDIS GIBS' });
       // GIBS tiles stop at zoom 9; past that the Sentinel-2 layer (minzoom 9) takes over.
       instance.addLayer({ id: 'harian', type: 'raster', source: 'harian', maxzoom: 9, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('gambut', { type: 'raster', tileSize: 256, maxzoom: 12, tiles: ['https://tiles.globalforestwatch.org/gfw_peatlands/v20230315/is/{z}/{x}/{y}.png'], attribution: 'Global peatland extent · Global Nature Watch (CC BY 4.0)' });
@@ -150,10 +154,10 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
       instance.addLayer({ id: 'desa-label', type: 'symbol', source: 'desa', 'source-layer': 'desa', minzoom: 11, layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'] }, paint: { 'text-color': colors.line, 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 } });
       instance.addSource('fokus', { type: 'geojson', data: empty });
       instance.addLayer({ id: 'fokus-line', type: 'line', source: 'fokus', paint: { 'line-color': colors.ink, 'line-width': 2, 'line-dasharray': [2, 1.2] } });
-      instance.addSource('deteksi', { type: 'vector', tiles: tiles('deteksi', h, v), minzoom: 7, maxzoom: 14 });
+      instance.addSource('deteksi', { type: 'vector', tiles: tiles('deteksi', h, v, day), minzoom: 7, maxzoom: 14 });
       instance.addLayer({ id: 'deteksi-modis', type: 'circle', source: 'deteksi', 'source-layer': 'deteksi', filter: modisDetection, paint: { 'circle-radius': kilometreRadius, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-width': 1, 'circle-stroke-color': colors.newest, 'circle-stroke-opacity': 0.35 } });
       instance.addLayer({ id: 'deteksi', type: 'circle', source: 'deteksi', 'source-layer': 'deteksi', paint: { 'circle-radius': detectionRadius, 'circle-color': detectionColor(today), 'circle-opacity': detectionOpacity(today) } });
-      instance.addSource('kejadian', { type: 'vector', tiles: tiles('kejadian', h, v), maxzoom: 14 });
+      instance.addSource('kejadian', { type: 'vector', tiles: tiles('kejadian', h, v, day), maxzoom: 14 });
       instance.addLayer({ id: 'kejadian', type: 'circle', source: 'kejadian', 'source-layer': 'kejadian', layout: { 'circle-sort-key': incidentSortKey }, paint: {
         'circle-radius': incidentRadius, 'circle-color': levelColor, 'circle-opacity': incidentOpacity, 'circle-stroke-color': incidentStroke, 'circle-stroke-width': incidentStrokeWidth } });
       const badge = checkBadge(2);
@@ -222,10 +226,10 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
   }
   function syncTiles() {
     const m = map.current; if (!m || !ready.current) return;
-    const { hours: h, version: v } = state.current;
-    (m.getSource('kejadian') as maplibregl.VectorTileSource).setTiles(tiles('kejadian', h, v));
-    (m.getSource('deteksi') as maplibregl.VectorTileSource).setTiles(tiles('deteksi', h, v));
-    const today = hoursSinceMidnightWib();
+    const { hours: h, version: v, tanggal: day } = state.current;
+    (m.getSource('kejadian') as maplibregl.VectorTileSource).setTiles(tiles('kejadian', h, v, day));
+    (m.getSource('deteksi') as maplibregl.VectorTileSource).setTiles(tiles('deteksi', h, v, day));
+    const today = ageClock(day);
     m.setPaintProperty('deteksi', 'circle-color', detectionColor(today));
     m.setPaintProperty('deteksi', 'circle-opacity', detectionOpacity(today));
   }
@@ -268,8 +272,7 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
   const filterKey = JSON.stringify(filters ?? {});
   useEffect(syncLayers, [layers]);
   useEffect(syncFilters, [filterKey]);
-  useEffect(syncTiles, [hours, version]);
-  useEffect(() => { const next = dailyLayer(); if (next.tiles !== daily.tiles) setDaily(next); }, [version, layers.harian]);
+  useEffect(syncTiles, [hours, version, tanggal]);
   useEffect(syncDaily, [daily.tiles]);
   useEffect(syncOverview, [regions.data, overview]);
   useEffect(() => syncSelected(), [selected?.id, selected?.detections?.length]);
@@ -313,7 +316,7 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
           ))}
         </div>
       )}
-      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} closeButton={closeButton} />}
+      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} archive={Boolean(tanggal)} closeButton={closeButton} />}
     </div>
   );
 }
