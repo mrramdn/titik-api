@@ -13,7 +13,7 @@ import { ALL_BOUNDS, useRegion } from '../region';
 import { ageClock } from './archive';
 import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
-import { esriSource, ESRI_ZOOM, imageryZoom, OVERVIEW_ZOOM, tileUrls } from './layers';
+import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
@@ -101,19 +101,24 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const padding = () => ({ top: 24, bottom: 24, left: 24, right: panelOpen.current && wide() ? 324 : 24 });
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [ageAware, setAgeAware] = useState(false);
-  // Below the overview zoom the map shows regency bubbles only, and the legend explains just those.
+  // Below the overview zoom the map shows regency bubbles only, and the legend explains just those; from the footprint
+  // zoom hotspots are boxes.
   const [zoomedOut, setZoomedOut] = useState(true);
+  const [closeUp, setCloseUp] = useState(false);
   const { query, findRegency } = useRegion();
   // HD imagery needs the ArcGIS key from GET /config; without one the satellite view stays EOX Sentinel-2 close up.
-  const esriKey = useConfig()?.esriKey ?? null;
+  // A server older than GET /config sends no pixel footprints: its hotspots stay dots at every zoom.
+  const config = useConfig();
+  const esriKey = config?.esriKey ?? null;
+  const footprints = config?.current !== false;
   const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}${tanggalParam(tanggal)}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
   // refresh keeps the bubbles it already has.
   const overview = bubbles && (Array.isArray(regions.data) || (regions.data === null && !regions.error));
   const handlers = useRef({ onSelect, onVillage, findRegency });
   handlers.current = { onSelect, onVillage, findRegency };
-  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey });
-  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey };
+  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints });
+  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints };
 
   useEffect(() => {
     const b = bounds ?? ALL_BOUNDS;
@@ -162,6 +167,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.addSource('deteksi', { type: 'vector', tiles: tiles('deteksi', h, v, day), minzoom: 7, maxzoom: 14 });
       instance.addLayer({ id: 'deteksi-modis', type: 'circle', source: 'deteksi', 'source-layer': 'deteksi', filter: modisDetection, paint: { 'circle-radius': kilometreRadius, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-width': 1, 'circle-stroke-color': colors.newest, 'circle-stroke-opacity': 0.35 } });
       instance.addLayer({ id: 'deteksi', type: 'circle', source: 'deteksi', 'source-layer': 'deteksi', paint: { 'circle-radius': detectionRadius, 'circle-color': detectionColor(today), 'circle-opacity': detectionOpacity(today) } });
+      for (const layer of footprintLayers(today)) instance.addLayer(layer);
       instance.addSource('kejadian', { type: 'vector', tiles: tiles('kejadian', h, v, day), maxzoom: 14 });
       instance.addLayer({ id: 'kejadian', type: 'circle', source: 'kejadian', 'source-layer': 'kejadian', layout: { 'circle-sort-key': incidentSortKey }, paint: {
         'circle-radius': incidentRadius, 'circle-color': levelColor, 'circle-opacity': incidentOpacity, 'circle-stroke-color': incidentStroke, 'circle-stroke-width': incidentStrokeWidth } });
@@ -209,7 +215,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
           setAgeAware(true); instance.off('idle', checkAge);
         }
       });
-      const onZoom = () => setZoomedOut(instance.getZoom() < OVERVIEW_ZOOM);
+      const onZoom = () => { setZoomedOut(instance.getZoom() < OVERVIEW_ZOOM); setCloseUp(instance.getZoom() >= FOOTPRINT_ZOOM); };
       instance.on('zoom', onZoom);
       onZoom();
       ready.current = true;
@@ -222,7 +228,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   function syncLayers() {
     const m = map.current; if (!m || !ready.current) return;
     for (const key of ['gambut', 'deforestasi', 'harian', 'citra'] as const) m.setLayoutProperty(key, 'visibility', state.current.layers[key] ? 'visible' : 'none');
-    for (const id of ['deteksi', 'deteksi-modis']) m.setLayoutProperty(id, 'visibility', state.current.layers.deteksi ? 'visible' : 'none');
+    for (const id of ['deteksi', 'deteksi-modis', 'piksel-fill', 'piksel-line']) m.setLayoutProperty(id, 'visibility', state.current.layers.deteksi ? 'visible' : 'none');
   }
   /** Esri World Imagery joins the detailed imagery from zoom 11 once GET /config brings a key; Sentinel-2 then stops there. */
   function syncImagery() {
@@ -250,6 +256,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     const today = ageClock(day);
     m.setPaintProperty('deteksi', 'circle-color', detectionColor(today));
     m.setPaintProperty('deteksi', 'circle-opacity', detectionOpacity(today));
+    m.setPaintProperty('piksel-fill', 'fill-color', detectionColor(today));
+    m.setPaintProperty('piksel-line', 'line-color', detectionColor(today));
   }
   function syncDaily() {
     const m = map.current; if (!m || !ready.current) return;
@@ -265,8 +273,10 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     const from = on ? OVERVIEW_ZOOM : 0;
     m.setLayerZoomRange('kejadian', from, 24);
     m.setLayerZoomRange('kejadian-cek', Math.max(from, 9), 24);
-    m.setLayerZoomRange('deteksi', on ? OVERVIEW_ZOOM : 7, 24);
-    m.setLayerZoomRange('deteksi-modis', on ? OVERVIEW_ZOOM : 7, 24);
+    // Dots below the footprint zoom, the pixel boxes from it.
+    const [lowest, highest] = dotZoomRange(on, state.current.footprints);
+    m.setLayerZoomRange('deteksi', lowest, highest);
+    m.setLayerZoomRange('deteksi-modis', lowest, highest);
     // Regency names ride with the bubbles below the overview zoom; above it a polygon cut into tiles would repeat its name.
     m.setLayerZoomRange('kabupaten-label', on ? OVERVIEW_ZOOM : 0, on ? OVERVIEW_ZOOM : 9);
   }
@@ -293,7 +303,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   useEffect(syncFilters, [filterKey]);
   useEffect(syncTiles, [hours, version, tanggal]);
   useEffect(syncDaily, [daily.tiles]);
-  useEffect(syncOverview, [regions.data, overview]);
+  useEffect(syncOverview, [regions.data, overview, footprints]);
   useEffect(() => syncSelected(), [selected?.id, selected?.detections?.length]);
   useEffect(syncFocus, [focus]);
   useEffect(() => {
@@ -337,7 +347,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
           ))}
         </div>
       )}
-      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} archive={Boolean(tanggal)} closeButton={closeButton} />}
+      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} archive={Boolean(tanggal)} boxes={closeUp && footprints} closeButton={closeButton} />}
     </div>
   );
 }

@@ -227,6 +227,8 @@
 .lg-ring { background: #fff; border-width: 3px; border-style: solid; box-shadow: none; }
 .lg-thin { width: 14px; height: 14px; border-width: 1.5px; background: transparent; }
 .lg-small { width: 8px; height: 8px; border: 0; box-shadow: none; }
+/* A map area: a faint fill of --c with a firm outline (pixel footprints at 25%, fire danger cells at 35%). */
+.lg-box { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 2px; border: 1px solid var(--c); background: color-mix(in srgb, var(--c) var(--fill, 25%), #fff); }
 .lg-inline { flex-wrap: wrap; gap: 4px 14px; }
 .lg-inline span, .lg-sizes span { display: inline-flex; align-items: center; gap: 6px; }
 .lg-sizes { flex-wrap: wrap; gap: 4px 12px; }

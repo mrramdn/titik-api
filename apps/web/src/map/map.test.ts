@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultFilters, incidentQuery, type ArchiveDays } from '../api';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
-import { ESRI_ATTRIBUTION, ESRI_TILES, esriSource, imageryZoom, tileUrls } from './layers';
+import { dotZoomRange, ESRI_ATTRIBUTION, ESRI_TILES, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, tileUrls } from './layers';
 import { clearedFilters } from './list';
 
 const archive: ArchiveDays = {
@@ -68,6 +68,21 @@ describe('archive mode', () => {
     expect(ageClock('', Date.parse('2026-10-23T06:30:00Z'))).toBe(13.5);
     expect(dailyLayerFor('2026-10-23')).toMatchObject({ satellite: 'NOAA-20', date: '2026-10-23', part: 'midday' });
     expect(dailyLayerFor('2026-10-23').tiles).toContain('/VIIRS_NOAA20_CorrectedReflectance_TrueColor/default/2026-10-23/');
+  });
+});
+
+describe('pixel footprints', () => {
+  it('draws hotspots as dots below zoom 11 and as pixel boxes from it', () => {
+    expect(FOOTPRINT_ZOOM).toBe(11);
+    const [fill, line] = footprintLayers(24);
+    expect(fill).toMatchObject({ id: 'piksel-fill', type: 'fill', source: 'deteksi', 'source-layer': 'piksel', minzoom: 11 });
+    expect(line).toMatchObject({ id: 'piksel-line', type: 'line', source: 'deteksi', 'source-layer': 'piksel', minzoom: 11 });
+    expect(fill!.maxzoom).toBeUndefined();
+    expect(JSON.stringify(fill)).toContain('"age"');
+    expect(dotZoomRange(true, true)).toEqual([8, 11]);
+    expect(dotZoomRange(false, true)).toEqual([7, 11]);
+    // Tiles from an older server have no footprints: the dots stay at every zoom.
+    expect(dotZoomRange(true, false)).toEqual([8, 24]);
   });
 });
 
