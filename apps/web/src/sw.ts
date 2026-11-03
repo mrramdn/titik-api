@@ -6,7 +6,7 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst, NetworkFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
-import { isApiRead, isMapHost, isPhoto, isTile } from './swRoutes';
+import { isApiRead, isMapHost, isPhoto, isTile, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
 
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: (string | { url: string; revision: string | null })[] };
 
@@ -24,7 +24,7 @@ registerRoute(({ url, request }) => request.method === 'GET' && isTile(url),
 // empties this cache when another account, or none, takes over (see accountData.ts).
 registerRoute(({ url, request }) => request.method === 'GET' && isApiRead(url),
   new NetworkFirst({ cacheName: 'api', networkTimeoutSeconds: 4, plugins: [new ExpirationPlugin({ maxEntries: 400, maxAgeSeconds: 3 * 24 * 3600 })] }));
-registerRoute(({ url }) => isPhoto(url), new CacheFirst({ cacheName: 'photos', plugins: [new ExpirationPlugin({ maxEntries: 120 })] }));
+registerRoute(({ url }) => isPhoto(url), new CacheFirst({ cacheName: 'photos', plugins: [new ExpirationPlugin({ maxEntries: 120, maxAgeSeconds: PHOTO_MAX_AGE_SECONDS })] }));
 // Esri World Imagery (/api/v1/imagery/) matches no route on purpose (licence terms): the browser fetches it from the
 // network and no cache here keeps it.
 registerRoute(({ url }) => isMapHost(url),

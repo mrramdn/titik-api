@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cached, isApiRead, isImagery, isMapHost, isPhoto, isTile } from './swRoutes';
+import { cached, isApiRead, isImagery, isMapHost, isPhoto, isTile, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
 
 const at = (path: string) => new URL(path, 'https://titikapi.test');
 
@@ -20,5 +20,11 @@ describe('service worker caches', () => {
     expect(isMapHost(new URL('https://tiles.openfreemap.org/styles/positron'))).toBe(true);
     expect(isMapHost(new URL('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/x.jpg'))).toBe(true);
     expect(cached(at('/peta'))).toBe(false);
+  });
+
+  it('keep a report photo no longer than the API lets a browser keep it, a day', () => {
+    // GET /uploads/ answers Cache-Control: private, max-age=86400; the nightly demo reset deletes demo photos.
+    expect(PHOTO_MAX_AGE_SECONDS).toBeGreaterThan(0);
+    expect(PHOTO_MAX_AGE_SECONDS).toBeLessThanOrEqual(86_400);
   });
 });

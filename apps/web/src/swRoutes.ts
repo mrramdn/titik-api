@@ -11,6 +11,11 @@ export const isApiRead = (url: URL) => url.pathname.startsWith('/api/v1/') && !u
 
 /** Report photos. */
 export const isPhoto = (url: URL) => url.pathname.startsWith('/uploads/');
+/**
+ * A photo stays in the service worker's cache a day at most, as long as the API lets a browser keep it (Cache-Control
+ * on /uploads/), so one deleted at the nightly demo reset is gone from visitors' phones within a day too.
+ */
+export const PHOTO_MAX_AGE_SECONDS = 24 * 3600;
 
 /** Base map, daily imagery, Sentinel-2 and the forest layers from their own hosts. */
 export const isMapHost = (url: URL) => /(openfreemap\.org|tiles\.maps\.eox\.at|tiles\.globalforestwatch\.org|gibs\.earthdata\.nasa\.gov)$/.test(url.hostname);
