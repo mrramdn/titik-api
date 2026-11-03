@@ -67,10 +67,15 @@ test('the first run spins up from the archive and the forecast; the next run sta
   assert.equal(regencies, (await pool.query('SELECT count(*)::int AS n FROM regencies')).rows[0].n, 'every regency has a cell');
   const spinUpStart = addDays(today, -20), archiveUntil = addDays(today, -5);
   const urls: string[] = [];
-  const first = await updateWeather(pool, { fetch: fakeOpenMeteo(today, archiveUntil, weather(0), urls), spinUpStart, sleep: async () => {} });
+  const waits: number[] = [];
+  const first = await updateWeather(pool, { fetch: fakeOpenMeteo(today, archiveUntil, weather(0), urls), spinUpStart, sleep: async ms => { waits.push(ms); } });
   assert.deepEqual([first.skipped, first.cells, first.spinUp, first.failed], [false, cells, cells, 0]);
   const archiveUrls = urls.filter(url => url.includes('archive-api')), forecastUrls = urls.filter(url => url.includes('api.open-meteo.com/v1/forecast'));
-  assert.equal(archiveUrls.length, Math.ceil(cells / 50));
+  // Light archive requests: two weeks of one location count as one Open-Meteo call, at most 64 per request, about 300 a minute.
+  const locations = (url: string) => new URL(url).searchParams.get('latitude')!.split(',').length;
+  assert.equal(archiveUrls.reduce((n, url) => n + locations(url), 0), cells, 'every cell once');
+  assert.ok(archiveUrls.every(url => locations(url) * (21 / 14) <= 64));
+  assert.ok(waits.includes(Math.ceil(((locations(archiveUrls[0]!) * 21) / 14 / 300) * 60_000)) && waits.includes(2000), `paced: ${[...new Set(waits)]}`);
   assert.ok(archiveUrls.every(url => url.includes(`start_date=${addDays(spinUpStart, -1)}`) && url.includes(`end_date=${addDays(today, -1)}`) && url.includes('models=era5')));
   assert.equal(forecastUrls.length, Math.ceil(cells / 50));
   assert.ok(forecastUrls.every(url => url.includes('past_days=10') && url.includes('forecast_days=3') && url.includes('timezone=Asia%2FJakarta')));
@@ -124,7 +129,7 @@ test('dry days continue from the stored day: a rainless fixture counts on', asyn
   assert.deepEqual(rows.map(row => row.dry_days), Array.from({ length: 12 }, (_, k) => before + k + 1));
 });
 
-test('Open-Meteo errors are retried on 429 and 5xx, never on 4xx; a failed run keeps the last values and logs one line', async () => {
+test('Open-Meteo errors are retried on 429 and 5xx only; a failed run keeps the last values and logs one line', async () => {
   const snapshot = async () => (await pool.query('SELECT count(*)::int AS n, max(fetched_at) AS at FROM weather_daily')).rows[0];
   const beforeRows = await snapshot();
   let calls = 0;
@@ -140,6 +145,10 @@ test('Open-Meteo errors are retried on 429 and 5xx, never on 4xx; a failed run k
   calls = 0;
   const refused = await updateWeather(pool, { fetch: (async () => { calls++; return new Response('bad', { status: 400 }); }) as typeof fetch, sleep: async () => {} });
   assert.equal(calls, refused.requests, 'a 400 is not retried');
+  calls = 0;
+  const offline = await updateWeather(pool, { fetch: (async () => { calls++; throw new TypeError('fetch failed'); }) as typeof fetch, sleep: async () => {} });
+  assert.equal(calls, offline.requests, 'a network error or timeout is not retried either');
+  assert.equal(offline.rows, 0);
   // A 429 then an answer: the retry succeeds.
   let first = true;
   const inner = fakeOpenMeteo(today, addDays(today, -5), weather(0), []);

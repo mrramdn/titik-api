@@ -32,9 +32,16 @@ const REFETCH_DAYS = 10;
 const FORECAST_DAYS = 3;
 /** The Forecast API serves up to 92 past days; older ones come from the archive. */
 const MAX_PAST_DAYS = 92;
-/** Locations per request: at most 50, and for the archive no more than about 250 weighted calls per request. */
+/** Locations per request. */
 const MAX_LOCATIONS = 50;
-const ARCHIVE_CALL_BUDGET = 250;
+/**
+ * Open-Meteo counts every two weeks of one location as a call (free tier: 600 a minute, 5,000 an hour, 10,000 a day).
+ * Long archive requests are kept light, about 64 calls (4 locations for the whole spin-up), and spaced to about 300
+ * calls a minute: heavy ones were slowed down past the timeout.
+ */
+const ARCHIVE_CALLS_PER_REQUEST = 64;
+const ARCHIVE_CALLS_PER_MINUTE = 300;
+const FORECAST_PAUSE_MS = 2_000;
 const RETRY_WAITS = [5_000, 20_000, 60_000];
 const LOCK = 4157_2027;
 const userAgent = 'titik-api (fire danger map)';
@@ -44,7 +51,7 @@ export interface WeatherOptions {
   fetch?: typeof fetch;
   now?: Date;
   spinUpStart?: string;
-  /** Pause between two Forecast API requests, and between two archive requests (ms). */
+  /** Pause after a Forecast API request, and after an archive request (ms); by default 2 s and the archive pacing. */
   pauseMs?: number;
   archivePauseMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -100,22 +107,21 @@ export function parseLocations(body: unknown, count: number): Series[] {
   });
 }
 
-/** One GET with a 20 s timeout and up to three retries, with growing waits, on 429, 5xx, timeouts and network errors. */
+/**
+ * One GET with a 20 s timeout and up to three retries, with growing waits, on 429 and 5xx. A timeout or a network
+ * error is not retried: the same heavy request would only count again; the next run asks once more.
+ */
 async function getJson(url: string, fetchImpl: typeof fetch, sleep: (ms: number) => Promise<void>) {
   for (let attempt = 0; ; attempt++) {
-    let failure: string;
-    let response: Response | undefined;
+    let response: Response;
     try {
       response = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), headers: { 'user-agent': userAgent } });
     } catch (error) {
-      failure = (error as Error).message;
+      throw new Error(`Open-Meteo ${(error as Error).message}`);
     }
-    if (response) {
-      if (response.ok) return response.json() as Promise<unknown>;
-      if (response.status !== 429 && response.status < 500) throw new Error(`Open-Meteo HTTP ${response.status}`);
-      failure = `HTTP ${response.status}`;
-    }
-    if (attempt >= RETRY_WAITS.length) throw new Error(`Open-Meteo ${failure!}`);
+    if (response.ok) return response.json() as Promise<unknown>;
+    const retry = response.status === 429 || response.status >= 500;
+    if (!retry || attempt >= RETRY_WAITS.length) throw new Error(`Open-Meteo HTTP ${response.status}`);
     await sleep(RETRY_WAITS[attempt]!);
   }
 }
@@ -210,10 +216,11 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
       }
       const series = new Map<number, Series>();
       const failures: string[] = [];
-      let lastRequest: 'forecast' | 'archive' | null = null;
-      const request = async (kind: 'forecast' | 'archive', url: string, chunk: Cell[]) => {
-        if (lastRequest) await sleep(kind === 'archive' || lastRequest === 'archive' ? options.archivePauseMs ?? 30_000 : options.pauseMs ?? 2_000);
-        lastRequest = kind;
+      // Each request waits out the pause the one before it asked for.
+      let pause = 0;
+      const request = async (url: string, chunk: Cell[], pauseAfter: number) => {
+        if (pause) await sleep(pause);
+        pause = pauseAfter;
         result.requests++;
         try { return parseLocations(await getJson(url, fetchImpl, sleep), chunk.length); }
         catch (error) { result.failed++; failures.push((error as Error).message); return null; }
@@ -224,11 +231,13 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
         let pastDays = Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000)));
         if (archive) {
           const days = Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000);
-          const size = Math.max(1, Math.min(MAX_LOCATIONS, Math.floor(ARCHIVE_CALL_BUDGET / Math.max(1, days / 14))));
+          const weight = Math.max(1, days / 14);
+          const size = Math.max(1, Math.min(MAX_LOCATIONS, Math.floor(ARCHIVE_CALLS_PER_REQUEST / weight)));
+          const archivePause = options.archivePauseMs ?? Math.ceil(((size * weight) / ARCHIVE_CALLS_PER_MINUTE) * 60_000);
           let lastDay: string | null = null;
           for (let k = 0; k < group.length; k += size) {
             const chunk = group.slice(k, k + size);
-            const answer = await request('archive', archiveUrl(chunk, startDay, addDays(today, -1)), chunk);
+            const answer = await request(archiveUrl(chunk, startDay, addDays(today, -1)), chunk, archivePause);
             answer?.forEach((hours, index) => {
               archived.set(chunk[index]!.id, hours);
               const latest = [...hours.keys()].at(-1)?.slice(0, 10);
@@ -240,7 +249,7 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
         }
         for (let k = 0; k < group.length; k += MAX_LOCATIONS) {
           const chunk = group.slice(k, k + MAX_LOCATIONS);
-          const answer = await request('forecast', forecastUrl(chunk, pastDays), chunk);
+          const answer = await request(forecastUrl(chunk, pastDays), chunk, options.pauseMs ?? FORECAST_PAUSE_MS);
           chunk.forEach((cell, index) => {
             if (answer || archived.has(cell.id)) series.set(cell.id, merge(archived.get(cell.id), answer?.[index]));
           });
