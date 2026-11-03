@@ -240,7 +240,26 @@
 .lg-bubble { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; background: var(--priority-high); color: #fff; font-size: 11px; font-weight: 700; font-style: normal; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12); }
 .lg-bubble-none { width: 20px; height: 20px; margin: 0 3px; background: var(--text-2); }
 .lg-note { margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--text-3); }
+.lg-range { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lg-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--surface-line); }
+.lg-link:hover { text-decoration-color: currentColor; }
+.mapcard :is(a, button):focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 @media (max-width: 600px) { .mapcard { left: 10px; right: 56px; width: auto; } }
+
+/* fire danger: the day switch over the map's top left and the card for one grid cell */
+.risk-days { position: absolute; top: 10px; left: 10px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; max-width: calc(100% - 76px); padding: 5px 6px 5px 10px; border-radius: var(--radius-md); background: #fff; color: var(--text); font-size: 12px; line-height: 16px; box-shadow: 0 0 0 2px rgb(0 0 0 / 0.1); }
+.risk-days b { font-weight: 600; }
+.risk-days > span { color: var(--text-2); }
+.risk-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-sm); background: var(--surface-subtle); }
+.risk-seg button { height: 24px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.risk-seg button:hover { color: var(--text); }
+.risk-seg button.on { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.risk-seg button:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.risk-class { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; font-weight: 600; }
+.risk-facts { display: grid; margin: 0; }
+.risk-facts > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-top: 1px solid var(--surface-line); }
+.risk-facts dt { color: var(--text-2); }
+.risk-facts dd { margin: 0; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- sign-in and about ---------- */
 .login .role:disabled { cursor: progress; opacity: 0.7; }

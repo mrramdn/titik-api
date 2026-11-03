@@ -1,7 +1,9 @@
-// The map legend: regency bubbles when zoomed out, else incident priority and the hotspots.
+// The map legend: regency bubbles when zoomed out, else incident priority and the hotspots; the fire danger classes
+// while that layer is on.
 import type { CSSProperties, ReactNode } from 'react';
 import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
+import { RiskLegend } from './RiskParts';
 import { colors } from './style';
 
 const text = dict({
@@ -35,10 +37,12 @@ interface Props {
   archive: boolean;
   /** Zoomed in far enough that hotspots are drawn as pixel boxes. */
   boxes: boolean;
+  /** The fire danger cells are on screen. */
+  risk: boolean;
   closeButton: ReactNode;
 }
 
-export function Legend({ bubbles, ageAware, archive, boxes, closeButton }: Props) {
+export function Legend({ bubbles, ageAware, archive, boxes, risk, closeButton }: Props) {
   const t = useT(text), f = useFormat();
   const [newest, today, older] = !ageAware ? (['confHigh', 'confNominal', 'confLow'] as const)
     : archive ? (['archiveNewest', 'archiveToday', 'archiveOlder'] as const) : (['newest', 'today', 'older'] as const);
@@ -71,6 +75,7 @@ export function Legend({ bubbles, ageAware, archive, boxes, closeButton }: Props
         {boxes ? <p className="lg-note">{t('boxes')}</p>
           : <div className="lg-row"><i className="lg-dot lg-ring lg-thin" style={{ borderColor: colors.newest }} />{t('modisRing')}</div>}
       </>)}
+      {risk && <RiskLegend />}
     </div>
   );
 }

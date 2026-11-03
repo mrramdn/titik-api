@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import * as maplibregl from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Droplets, Earth, Image, Layers, List, Satellite, Trees, X, type LucideIcon } from 'lucide-react';
-import { tanggalParam, type RegionSummary } from '../api';
+import { Droplets, Earth, Gauge, Image, Layers, List, Satellite, Trees, X, type LucideIcon } from 'lucide-react';
+import { tanggalParam, type RegionSummary, type Risk } from '../api';
 import { dict, useT } from '../i18n';
 import { useApi } from '../components/ui';
 import { useConfig } from '../config';
@@ -15,6 +15,8 @@ import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
 import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, OVERVIEW_ZOOM, tileUrls } from './layers';
 import { Legend } from './Legend';
+import { OPEN_METEO_ATTRIBUTION, RISK_OPACITY, riskFeatures, riskFill, riskPath } from './risk';
+import { RiskCell, RiskDays } from './RiskParts';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
   incidentFilter, incidentOpacity, incidentRadius, incidentSortKey, incidentStroke, incidentStrokeWidth, kilometreRadius, levelColor,
@@ -24,7 +26,7 @@ import {
 export type { MapFilters } from './style';
 maplibregl.setWorkerUrl(workerUrl);
 
-export type LayerKey = 'deteksi' | 'gambut' | 'deforestasi' | 'harian' | 'citra';
+export type LayerKey = 'deteksi' | 'gambut' | 'deforestasi' | 'risiko' | 'harian' | 'citra';
 export interface Selected { id: string; centroid: [number, number]; detections?: [number, number][] }
 interface Props {
   /** Map filters; optional so existing callers keep working. */
@@ -40,6 +42,8 @@ interface Props {
   selected?: Selected | null;
   focus?: GeoJSON.Geometry | null;
   initialLayers?: Partial<Record<LayerKey, boolean>>;
+  /** The fire danger day shown first: 0 today, 1 tomorrow, 2 the day after. */
+  initialRiskDay?: number;
   onSelect?: (id: string) => void;
   onVillage?: (id: string) => void;
   controls?: boolean;
@@ -56,14 +60,14 @@ const text = dict({
     deteksi: 'Titik panas satelit', deteksiSource: 'NASA FIRMS, VIIRS 375 m dan MODIS 1 km', gambut: 'Lahan gambut', gambutSource: 'Global peatland extent',
     deforestasi: 'Peringatan gangguan hutan', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Citra satelit harian', harianSource: '{satellite}, {date} {part} · NASA GIBS',
     morning: 'pagi', midday: 'siang', citra: 'Citra detail', citraSource: 'Sentinel-2 cloudless 2023, EOX', citraEsri: 'Sentinel-2 cloudless 2023, EOX · dari dekat Esri World Imagery',
-    satellite: 'Tampilan satelit',
+    risiko: 'Bahaya kebakaran (FWI)', risikoSource: 'Dihitung dari Open-Meteo, kelas BMKG', satellite: 'Tampilan satelit',
   },
   en: {
     map: 'Hotspot map', layers: 'Layers', layersTitle: 'Map layers', legend: 'Legend', close: 'Close',
     deteksi: 'Satellite hotspots', deteksiSource: 'NASA FIRMS, VIIRS 375 m and MODIS 1 km', gambut: 'Peatland', gambutSource: 'Global peatland extent',
     deforestasi: 'Forest disturbance alerts', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Daily satellite image', harianSource: '{satellite}, {date} {part} · NASA GIBS',
     morning: 'morning', midday: 'midday', citra: 'Detailed imagery', citraSource: 'Sentinel-2 cloudless 2023, EOX', citraEsri: 'Sentinel-2 cloudless 2023, EOX · close up Esri World Imagery',
-    satellite: 'Satellite view',
+    risiko: 'Fire danger (FWI)', risikoSource: 'Computed from Open-Meteo, BMKG classes', satellite: 'Satellite view',
   },
 });
 type Key = keyof typeof text.id;
@@ -72,6 +76,7 @@ const layerInfo: { key: LayerKey; label: Key; source: Key; icon: LucideIcon }[] 
   { key: 'deteksi', label: 'deteksi', source: 'deteksiSource', icon: Satellite },
   { key: 'gambut', label: 'gambut', source: 'gambutSource', icon: Droplets },
   { key: 'deforestasi', label: 'deforestasi', source: 'deforestasiSource', icon: Trees },
+  { key: 'risiko', label: 'risiko', source: 'risikoSource', icon: Gauge },
   { key: 'harian', label: 'harian', source: 'harianSource', icon: Earth },
   { key: 'citra', label: 'citra', source: 'citraSource', icon: Image },
 ];
@@ -84,17 +89,17 @@ const legendClosed = () => { try { return localStorage.getItem(legendKey) === 'c
 const rememberLegend = (closed: boolean) => { try { if (closed) localStorage.setItem(legendKey, 'closed'); else localStorage.removeItem(legendKey); } catch { /* private mode */ } };
 const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds, boundsMinZoom, selected, focus, initialLayers, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
+export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds, boundsMinZoom, selected, focus, initialLayers, initialRiskDay = 0, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
   const t = useT(text), f = useFormat();
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
-  const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ deteksi: true, gambut: false, deforestasi: false, harian: false, citra: false, ...initialLayers });
+  const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ deteksi: true, gambut: false, deforestasi: false, risiko: false, harian: false, citra: false, ...initialLayers });
   // The newest complete daily image (it changes at midday and in the evening, checked again with every ingest run), or
   // the archive day's midday image.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const daily = useMemo(() => (tanggal ? dailyLayerFor(tanggal) : dailyLayer()), [tanggal, version, layers.harian]);
-  const [panel, setPanel] = useState<'layers' | 'legend' | null>(() => (legend && controls && wide() && !legendClosed() ? 'legend' : null));
+  const [panel, setPanel] = useState<'layers' | 'legend' | 'risk' | null>(() => (legend && controls && wide() && !legendClosed() ? 'legend' : null));
   const panelOpen = useRef(panel !== null);
   panelOpen.current = panel !== null;
   /** Fitting a region leaves room for an open legend or layer card on the right. */
@@ -111,14 +116,23 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const config = useConfig();
   const esriKey = config?.esriKey ?? null;
   const footprints = config?.current !== false;
+  // Fire danger (GET /risk, which came with GET /config): fetched while the layer is on; three days live, one in the
+  // archive. Nothing is drawn until the weather has been fetched once (fetchedAt).
+  const riskOn = layers.risiko && config?.current !== false;
+  const risk = useApi<Risk>(riskOn ? riskPath(tanggal) : null, version);
+  const riskData = riskOn && risk.data?.fetchedAt ? risk.data : null;
+  const [riskDay, setRiskDay] = useState(initialRiskDay);
+  const shownDay = Math.max(0, Math.min(riskDay, (riskData?.cells[0]?.days.length ?? 1) - 1));
+  const [riskCell, setRiskCell] = useState<number | null>(null);
   const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}${tanggalParam(tanggal)}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
   // refresh keeps the bubbles it already has.
   const overview = bubbles && (Array.isArray(regions.data) || (regions.data === null && !regions.error));
-  const handlers = useRef({ onSelect, onVillage, findRegency });
-  handlers.current = { onSelect, onVillage, findRegency };
-  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints });
-  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints };
+  const onRiskCell = (index: number) => { setRiskCell(index); setPanel('risk'); };
+  const handlers = useRef({ onSelect, onVillage, findRegency, onRiskCell });
+  handlers.current = { onSelect, onVillage, findRegency, onRiskCell };
+  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay });
+  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay };
 
   useEffect(() => {
     const b = bounds ?? ALL_BOUNDS;
@@ -155,6 +169,9 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.addLayer({ id: 'gambut', type: 'raster', source: 'gambut', paint: { 'raster-opacity': 0.3 }, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('deforestasi', { type: 'raster', tileSize: 256, maxzoom: 14, tiles: ['https://tiles.globalforestwatch.org/gfw_integrated_alerts/latest/dynamic/{z}/{x}/{y}.png'], attribution: 'Integrated deforestation alerts (UMD/GLAD, WUR) · Global Nature Watch' });
       instance.addLayer({ id: 'deforestasi', type: 'raster', source: 'deforestasi', paint: { 'raster-opacity': 0.85 }, layout: { visibility: 'none' } }, firstSymbol);
+      // Fire danger cells over the imagery and under the place names; Open-Meteo's attribution shows while they do.
+      instance.addSource('risiko', { type: 'geojson', data: empty, attribution: OPEN_METEO_ATTRIBUTION });
+      instance.addLayer({ id: 'risiko', type: 'fill', source: 'risiko', paint: { 'fill-color': riskFill, 'fill-opacity': RISK_OPACITY }, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('kabupaten', { type: 'vector', tiles: [`${location.origin}/api/v1/tiles/kabupaten/{z}/{x}/{y}.mvt`], maxzoom: 12 });
       instance.addLayer({ id: 'kabupaten-line', type: 'line', source: 'kabupaten', 'source-layer': 'kabupaten', paint: { 'line-color': colors.line, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.35], 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.6] } });
       instance.addLayer({ id: 'kabupaten-label', type: 'symbol', source: 'kabupaten', 'source-layer': 'kabupaten', maxzoom: 9, layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'] }, paint: { 'text-color': colors.line, 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 } });
@@ -194,9 +211,17 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
         const center = camera?.center ?? ((feature.geometry as GeoJSON.Point).coordinates as [number, number]);
         instance.flyTo({ center, zoom: Math.max(camera?.zoom ?? 0, OVERVIEW_ZOOM + 0.4), duration: 800 });
       });
+      const onIncident = (point: maplibregl.PointLike) => instance.queryRenderedFeatures(point, { layers: ['kejadian', 'wilayah-bubble'].filter(id => instance.getLayer(id)) }).length > 0;
+      // While the fire danger cells are on screen a tap explains the cell under it instead of opening the village.
+      const riskShown = () => instance.getLayoutProperty('risiko', 'visibility') === 'visible';
       instance.on('click', 'desa-fill', event => {
-        if (instance.queryRenderedFeatures(event.point, { layers: ['kejadian', 'wilayah-bubble'].filter(id => instance.getLayer(id)) }).length) return;
+        if (riskShown() || onIncident(event.point)) return;
         const id = event.features?.[0]?.properties?.id; if (id) handlers.current.onVillage?.(String(id));
+      });
+      instance.on('click', 'risiko', event => {
+        if (onIncident(event.point)) return;
+        const cell = event.features?.[0]?.properties?.cell;
+        if (typeof cell === 'number') handlers.current.onRiskCell(cell);
       });
       let hovered: string | number | undefined;
       instance.on('mousemove', 'desa-fill', event => {
@@ -219,7 +244,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.on('zoom', onZoom);
       onZoom();
       ready.current = true;
-      syncLayers(); syncImagery(); syncFilters(); syncOverview(); syncSelected(true); syncFocus();
+      syncLayers(); syncImagery(); syncRisk(); syncFilters(); syncOverview(); syncSelected(true); syncFocus();
     });
     return () => { ready.current = false; instance.remove(); map.current = null; setHost(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,6 +267,13 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     const [from, to] = imageryZoom(esri).citra;
     m.setLayerZoomRange('citra', from, to);
     if (esri) m.setLayoutProperty('esri', 'visibility', state.current.layers.citra ? 'visible' : 'none');
+  }
+  /** The fire danger grid for the chosen day; hidden while the layer is off or nothing has been computed. */
+  function syncRisk() {
+    const m = map.current; if (!m || !ready.current) return;
+    const { risk: data, riskDay: day } = state.current;
+    (m.getSource('risiko') as maplibregl.GeoJSONSource).setData(data ? riskFeatures(data, day) : empty);
+    m.setLayoutProperty('risiko', 'visibility', data ? 'visible' : 'none');
   }
   function syncFilters() {
     const m = map.current; if (!m || !ready.current) return;
@@ -300,6 +332,9 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const filterKey = JSON.stringify(filters ?? {});
   useEffect(syncLayers, [layers]);
   useEffect(syncImagery, [esriKey, layers.citra]);
+  useEffect(syncRisk, [riskData, shownDay]);
+  // The cell card goes with the layer.
+  useEffect(() => { if (!riskData && panel === 'risk') setPanel(null); }, [riskData]);
   useEffect(syncFilters, [filterKey]);
   useEffect(syncTiles, [hours, version, tanggal]);
   useEffect(syncDaily, [daily.tiles]);
@@ -327,9 +362,13 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     if (next === 'legend') rememberLegend(false);
     setPanel(next);
   };
+  // The fire danger layer is offered once GET /config shows a server that has GET /risk.
+  const shownLayers = layerInfo.filter(({ key }) => key !== 'risiko' || config?.current === true || layers.risiko);
+  const cellDay = panel === 'risk' && riskData && riskCell !== null ? riskData.cells[riskCell]?.days[shownDay] : undefined;
   return (
     <div className={`map-pane ${className ?? ''}`}>
       <div ref={container} className="map" role="region" aria-label={t('map')} />
+      {riskOn && <RiskDays risk={risk} day={shownDay} onDay={setRiskDay} />}
       {host && createPortal(<>
         <button type="button" className={`mapctl-btn ${panel === 'layers' ? 'on' : ''}`} aria-label={t('layers')} title={t('layers')} aria-expanded={panel === 'layers'} onClick={() => toggle('layers')}><Layers size={18} /></button>
         <button type="button" className={`mapctl-btn ${panel === 'legend' ? 'on' : ''}`} aria-label={t('legend')} title={t('legend')} aria-expanded={panel === 'legend'} onClick={() => toggle('legend')}><List size={18} /></button>
@@ -339,7 +378,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       {panel === 'layers' && (
         <div className="mapcard" role="dialog" aria-label={t('layersTitle')}>
           <div className="mapcard-head"><h3>{t('layersTitle')}</h3>{closeButton}</div>
-          {layerInfo.map(({ key, label, source, icon: Icon }) => (
+          {shownLayers.map(({ key, label, source, icon: Icon }) => (
             <label key={key} className="maplayer"><Icon size={18} className="icon" aria-hidden="true" />
               <span>{t(label)}<small>{key === 'harian' ? t('harianSource', { satellite: daily.satellite, date: f.day(`${daily.date}T12:00:00+07:00`), part: t(daily.part) })
                 : key === 'citra' && esriKey ? t('citraEsri') : t(source)}</small></span>
@@ -347,7 +386,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
           ))}
         </div>
       )}
-      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} archive={Boolean(tanggal)} boxes={closeUp && footprints} closeButton={closeButton} />}
+      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} archive={Boolean(tanggal)} boxes={closeUp && footprints} risk={Boolean(riskData)} closeButton={closeButton} />}
+      {cellDay && <RiskCell day={cellDay} closeButton={closeButton} />}
     </div>
   );
 }
