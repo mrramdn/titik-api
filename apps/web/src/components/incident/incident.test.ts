@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { Wind } from '../../api';
+import { areaText, indicatedArea } from './area';
 import { downwindLine, smokeSentence, windLine, windText } from './wind';
+
+describe('indicated hot area', () => {
+  it('shows hectares in each language, marks MODIS-only areas as coarse, and nothing without an area', () => {
+    expect(indicatedArea({ indicatedAreaHa: 12.46, modisOnly: false }, 'id')).toBe('12,5 ha');
+    expect(indicatedArea({ indicatedAreaHa: 12.46, modisOnly: false }, 'en')).toBe('12.5 ha');
+    expect(indicatedArea({ indicatedAreaHa: 186.2, modisOnly: true }, 'id')).toBe('186 ha (kasar, MODIS ±1 km)');
+    expect(indicatedArea({ indicatedAreaHa: 186.2, modisOnly: true }, 'en')).toBe('186 ha (coarse, MODIS ±1 km)');
+    expect(indicatedArea({ indicatedAreaHa: null, modisOnly: false }, 'id')).toBeNull();
+    expect(areaText.id.help).toBe('Luas jejak piksel pada satu lintasan satelit. Bukan luas terbakar.');
+    expect(Object.keys(areaText.en).sort()).toEqual(Object.keys(areaText.id).sort());
+  });
+});
 
 const wind = (extra: Partial<Wind> = {}): Wind => ({
   mode: 'now', at: '2026-10-23T06:00:00Z', speedKmh: 12.4, fromDeg: 90, towardDeg: 270, calm: false,

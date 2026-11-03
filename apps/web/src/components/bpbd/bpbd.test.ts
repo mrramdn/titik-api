@@ -105,5 +105,9 @@ describe('recap helpers', () => {
     expect(en).toContain('Checked: 130 of 1,299 (10%)');
     expect(en).toContain('Response time (median): 1 h 23 min');
     expect(en).toContain('Assignments: 1 assigned, 4 done');
+    expect(id.join('\n')).not.toContain('Indikasi luas');
+    const withArea = { ...recap, totals: { ...recap.totals, indicatedAreaHa: 2345.6 } };
+    expect(recapText(withArea, 'id', 'Sumatera Selatan', 'u').split('\n')).toContain('Indikasi luas area panas: 2.346 ha (bukan luas terbakar)');
+    expect(recapText(withArea, 'en', 'Sumatera Selatan', 'u').split('\n')).toContain('Indicated hot area: 2,346 ha (not burned area)');
   });
 });

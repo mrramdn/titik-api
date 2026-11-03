@@ -222,8 +222,9 @@
 @media (max-width: 520px) {
   .recap-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .recap-total > b { font-size: 20px; line-height: 26px; }
-  /* Phone tables keep the columns that fit: regencies without high priority and response time, villages without hotspots. */
-  .recap-regencies :is(th, td):is(:nth-child(3), :nth-child(6)), .recap-villages :is(th, td):nth-child(5) { display: none; }
+  /* Phone tables keep the columns that fit: regencies without high priority, response time and the columns after it,
+     villages without hotspots. */
+  .recap-regencies :is(th, td):is(:nth-child(3), :nth-child(n+6)), .recap-villages :is(th, td):nth-child(5) { display: none; }
   .recap-total:nth-child(n) { border-left: 1px solid var(--surface-line); border-top: 1px solid var(--surface-line); }
   .recap-total:nth-child(odd) { border-left: 0; }
   .recap-total:nth-child(-n+2) { border-top: 0; }

@@ -5,6 +5,7 @@ import type { IncidentDetail, ScorePart, TimelineEvent, Verification } from '../
 import { LevelBadge, RouteButton, ScoreRows, StatusLine, shareText, useApi, useDataVersion, waText } from '../components/ui';
 import { useWind, WindFacts } from '../components/incident/Wind';
 import { smokeSentence } from '../components/incident/wind';
+import { areaText, indicatedArea } from '../components/incident/area';
 import { dict, useLang, useT, type Vars } from '../i18n';
 import { satelliteName, sensorOf } from '../i18n/common';
 import { useFormat, type Format } from '../format';
@@ -103,7 +104,7 @@ function settlementFact(d: IncidentDetail, t: T, f: Format) {
 }
 
 export function IncidentPanel() {
-  const t = useT(text), f = useFormat();
+  const t = useT(text), f = useFormat(), a = useT(areaText);
   const { lang } = useLang();
   const params = useParams();
   const key = params.id ?? params.code!;
@@ -131,6 +132,7 @@ export function IncidentPanel() {
   const viirs = d.viirsCount ?? detections.filter(x => sensorOf(x.satellite) === 'VIIRS').length;
   const modis = d.modisCount ?? detections.length - viirs;
   const actions = panelActions(user?.role, archived);
+  const area = indicatedArea(d, lang);
   return (
     <div className="sidebar-scroll detail ip">
       <section className="ip-head">
@@ -148,6 +150,13 @@ export function IncidentPanel() {
           <div><span className="label">{t('frp')}</span><b>{d.maxFrp === null || d.maxFrp === undefined ? '–' : `${f.num(d.maxFrp, 1)} MW`}</b></div>
           <div><span className="label">{t('peat')}</span><b>{d.onPeat ? t('yes') : t('no')}</b></div>
           <div><span className="label">{t('settlement')}</span>{settlementFact(d, t, f)}</div>
+          {area && (
+            <div className="ip-area">
+              <span className="label">{a('label')}</span>
+              <b>{f.ha(d.indicatedAreaHa!)}{d.modisOnly && <small> {a('coarse')}</small>}</b>
+              <small>{a('help')}</small>
+            </div>
+          )}
         </div>
         {d.modisOnly && <p className="note">{t('modisOnly', { km: f.km(d.locationUncertaintyM ?? 1000) })}</p>}
       </section>
