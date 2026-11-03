@@ -7,14 +7,17 @@ import { Droplets, Earth, Gauge, Image, Layers, List, Satellite, Trees, X, type 
 import { tanggalParam, type RegionSummary, type Risk } from '../api';
 import { dict, useT } from '../i18n';
 import { useApi } from '../components/ui';
-import { useConfig } from '../config';
+import { refuseImagery, useConfig } from '../config';
 import { useFormat } from '../format';
 import { ALL_BOUNDS, useRegion } from '../region';
 import { useSession } from '../session';
 import { ageClock } from './archive';
 import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
-import { dotZoomRange, esriSource, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, keepAttributionOpen, OVERVIEW_ZOOM, tileUrls } from './layers';
+import {
+  dotZoomRange, EOX_ATTRIBUTION, EOX_TILES, esriSource, esriWatch, ESRI_ZOOM, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, keepAttributionOpen, OVERVIEW_ZOOM,
+  sentinelUnderEsri, tileUrls,
+} from './layers';
 import { Legend } from './Legend';
 import { riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
 import { OPEN_METEO_ATTRIBUTION } from '../components/OpenMeteo';
@@ -116,9 +119,11 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   // A demo session sees its own field checks and tasks on the incident dots too; everyone else sees real ones only.
   const demo = Boolean(useSession().user?.demo);
   // HD imagery when GET /config offers it (the API serves Esri's tiles); otherwise the satellite view stays EOX
-  // Sentinel-2 close up. A server older than GET /config sends no pixel footprints: its hotspots stay dots at every zoom.
+  // Sentinel-2 close up, also once the API stops serving Esri's tiles to this visitor (esriRefused). A server older
+  // than GET /config sends no pixel footprints: its hotspots stay dots at every zoom.
   const config = useConfig();
-  const hdImagery = config?.hdImagery ?? false;
+  const [esriRefused, setEsriRefused] = useState(false);
+  const hdImagery = (config?.hdImagery ?? false) && !esriRefused;
   const imageryAttribution = config?.imageryAttribution ?? null;
   const footprints = config?.current !== false;
   // Fire danger (GET /risk, which came with GET /config): fetched while the layer is on; three days live, one in the
@@ -170,12 +175,23 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     // MapLibre folds the attribution away on every drag; Esri's comes straight back.
     instance.on('drag', syncAttribution);
     instance.on('resize', syncAttribution);
+    // When the API refuses Esri's tiles (a cap, too many from this address) or Esri keeps failing, the close-up goes
+    // back to Sentinel-2 instead of staying empty. With a listener here MapLibre no longer prints other errors itself.
+    const esriGivesWay = esriWatch();
+    instance.on('error', event => {
+      const { sourceId, error } = event as maplibregl.ErrorEvent & { sourceId?: string };
+      if (sourceId !== 'esri') { console.error(error); return; }
+      if (esriGivesWay((error as { status?: unknown }).status)) {
+        refuseImagery();
+        setEsriRefused(true);
+      }
+    });
     // Own layers go in as soon as the style is ready, so incidents load alongside the base map tiles.
     instance.once('style.load', () => {
       const { hours: h, version: v, tanggal: day, demo: d } = state.current;
       const today = ageClock(day);
       const firstSymbol = instance.getStyle().layers?.find(layer => layer.type === 'symbol')?.id;
-      instance.addSource('citra', { type: 'raster', tileSize: 256, maxzoom: 15, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg'], attribution: 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)' });
+      instance.addSource('citra', { type: 'raster', tileSize: 256, maxzoom: 15, tiles: [EOX_TILES], attribution: EOX_ATTRIBUTION });
       instance.addLayer({ id: 'citra', type: 'raster', source: 'citra', minzoom: 9, layout: { visibility: 'none' } }, firstSymbol);
       const image = state.current.daily;
       instance.addSource('harian', { type: 'raster', tileSize: 256, maxzoom: image.maxzoom, tiles: [image.tiles], attribution: 'NASA EOSDIS GIBS' });
@@ -271,19 +287,26 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     for (const key of ['gambut', 'deforestasi', 'harian', 'citra'] as const) m.setLayoutProperty(key, 'visibility', state.current.layers[key] ? 'visible' : 'none');
     for (const id of ['deteksi', 'deteksi-modis', 'piksel-fill', 'piksel-line']) m.setLayoutProperty(id, 'visibility', state.current.layers.deteksi ? 'visible' : 'none');
   }
-  /** Esri World Imagery joins the detailed imagery from zoom 11 once GET /config offers it; Sentinel-2 then stops there. */
+  /**
+   * Esri World Imagery joins the detailed imagery from zoom 11 once GET /config offers it, over a coarse Sentinel-2 for
+   * the tiles it lacks; the full Sentinel-2 layer then stops at 11. When Esri is refused both go and Sentinel-2 is back.
+   */
   function syncImagery() {
     const m = map.current; if (!m || !ready.current) return;
     const { hdImagery: hd, imageryAttribution: credit } = state.current;
     const source = esriSource({ hdImagery: hd, imageryAttribution: credit }, location.origin);
     if (source && !m.getSource('esri')) {
+      m.addSource('citra-latar', sentinelUnderEsri());
+      m.addLayer({ id: 'citra-latar', type: 'raster', source: 'citra-latar', minzoom: ESRI_ZOOM, layout: { visibility: 'none' } }, 'harian');
       m.addSource('esri', source);
       m.addLayer({ id: 'esri', type: 'raster', source: 'esri', minzoom: ESRI_ZOOM, layout: { visibility: 'none' } }, 'harian');
+    } else if (!source && m.getSource('esri')) {
+      for (const id of ['esri', 'citra-latar']) { m.removeLayer(id); m.removeSource(id); }
     }
     const esri = Boolean(m.getLayer('esri'));
     const [from, to] = imageryZoom(esri).citra;
     m.setLayerZoomRange('citra', from, to);
-    if (esri) m.setLayoutProperty('esri', 'visibility', state.current.layers.citra ? 'visible' : 'none');
+    if (esri) for (const id of ['citra-latar', 'esri']) m.setLayoutProperty(id, 'visibility', state.current.layers.citra ? 'visible' : 'none');
     syncAttribution();
   }
   /** Esri's attribution is held open while its imagery shows on a wide map; when it goes, the attribution folds again. */

@@ -30,6 +30,16 @@ export function loadConfig(): Promise<Config> {
   return pending;
 }
 
+/**
+ * The API stopped serving Esri tiles to this visitor (a cap, its share of the day, refused): maps opened later in this
+ * page's life go without HD imagery, as if GET /config had said so. A reload asks again.
+ */
+export function refuseImagery() {
+  if (!settled?.hdImagery) return;
+  settled = { ...settled, hdImagery: false, imageryAttribution: null };
+  pending = Promise.resolve(settled);
+}
+
 /** The settings, null until GET /config has answered once. */
 export function useConfig(): Config | null {
   const [config, setConfig] = useState<Config | null>(settled);

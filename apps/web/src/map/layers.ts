@@ -74,3 +74,39 @@ export const imageryZoom = (esri: boolean) => ({
   citra: [9, esri ? ESRI_ZOOM : 24] as [number, number],
   esri: [ESRI_ZOOM, 24] as [number, number],
 });
+
+/** Sentinel-2 cloudless 2023 by EOX, the detailed imagery from zoom 9. */
+export const EOX_TILES = 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg';
+export const EOX_ATTRIBUTION = 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)';
+
+/**
+ * Sentinel-2 under Esri from zoom 11, drawn from zoom 11 tiles only (a few per screen, stretched closer in), so a tile
+ * Esri does not have is not left empty: past the edge of the covered area (the API answers 404 there, which MapLibre
+ * does not report), one that failed, one still on its way.
+ */
+export const sentinelUnderEsri = (): RasterSourceSpecification =>
+  ({ type: 'raster', tileSize: 256, minzoom: ESRI_ZOOM, maxzoom: ESRI_ZOOM, tiles: [EOX_TILES], attribution: EOX_ATTRIBUTION });
+
+/**
+ * What a failed Esri tile says about the rest of the visit: 'off' when the API will not serve this visitor for now (403
+ * refused, 429 its share of the day or too many requests, 503 a cap reached), 'flaky' when Esri failed for that tile
+ * (another 5xx), null for anything else (no signal, a cancelled request).
+ */
+export function esriTileError(status: unknown): 'off' | 'flaky' | null {
+  if (status === 403 || status === 429 || status === 503) return 'off';
+  return typeof status === 'number' && status >= 500 && status < 600 ? 'flaky' : null;
+}
+
+/**
+ * Reads the Esri tile errors of one map and says when Esri should give way to Sentinel-2 for the rest of the visit:
+ * at the first refusal, or once three tiles failed within a minute (one slow tile alone does not end HD imagery).
+ */
+export function esriWatch(limit = 3, windowMs = 60_000) {
+  let failures: number[] = [];
+  return (status: unknown, now = Date.now()) => {
+    const kind = esriTileError(status);
+    if (kind !== 'flaky') return kind === 'off';
+    failures = [...failures.filter(at => now - at < windowMs), now];
+    return failures.length >= limit;
+  };
+}

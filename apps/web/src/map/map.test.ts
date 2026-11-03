@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defaultFilters, incidentQuery, type ArchiveDays, type FwiClass, type RegencyRiskDay, type Risk, type RiskDay } from '../api';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
 import { readConfig } from '../config';
-import { dotZoomRange, ESRI_DATA_ATTRIBUTION, ESRI_TILES, esriAttribution, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, keepAttributionOpen, tileUrls } from './layers';
+import {
+  dotZoomRange, EOX_ATTRIBUTION, EOX_TILES, ESRI_DATA_ATTRIBUTION, ESRI_TILES, esriAttribution, esriSource, esriTileError, esriWatch, footprintLayers, FOOTPRINT_ZOOM,
+  imageryZoom, keepAttributionOpen, sentinelUnderEsri, tileUrls,
+} from './layers';
 import { clearedFilters } from './list';
 import { fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskOpacity, riskPath, riskText } from './risk';
 
@@ -135,6 +138,39 @@ describe('HD imagery', () => {
     // A server from before the proxy sends a key instead: no HD imagery.
     expect(readConfig({ esriKey: 'AAPK' } as never)).toEqual({ hdImagery: false, imageryAttribution: null });
     expect(readConfig(null)).toEqual({ hdImagery: false, imageryAttribution: null });
+  });
+
+  it('gives way to Sentinel-2 when the API refuses Esri tiles, or after three failed tiles within a minute', () => {
+    for (const status of [403, 429, 503]) expect(esriTileError(status), String(status)).toBe('off');
+    for (const status of [500, 502, 504]) expect(esriTileError(status), String(status)).toBe('flaky');
+    // No signal, a cancelled request and a tile outside the area (404, which MapLibre does not report anyway).
+    for (const status of [0, 404, 200, undefined, '503']) expect(esriTileError(status), String(status)).toBeNull();
+    expect(esriWatch()(503, 0)).toBe(true);
+    const flaky = esriWatch();
+    expect([flaky(502, 0), flaky(504, 20_000), flaky(0, 30_000)]).toEqual([false, false, false]);
+    expect(flaky(502, 59_000)).toBe(true);
+    // Failures spread over minutes are slow tiles, not Esri down.
+    const slow = esriWatch();
+    expect([slow(502, 0), slow(502, 40_000), slow(502, 80_000)]).toEqual([false, false, false]);
+    expect(slow(502, 90_000)).toBe(true);
+  });
+
+  it('puts a coarse Sentinel-2 under Esri, from zoom 11 tiles only, for the tiles Esri does not have', () => {
+    expect(sentinelUnderEsri()).toEqual({ type: 'raster', tileSize: 256, minzoom: 11, maxzoom: 11, tiles: [EOX_TILES], attribution: EOX_ATTRIBUTION });
+    expect(EOX_TILES).toBe('https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg');
+  });
+
+  it('keeps a refusal for the rest of the visit: the next map opens without Esri', async () => {
+    vi.resetModules();
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ data: { hdImagery: true, imageryAttribution: 'Esri' } }), { status: 200 }));
+    try {
+      const { loadConfig, refuseImagery } = await import('../config');
+      expect(await loadConfig()).toMatchObject({ hdImagery: true, imageryAttribution: 'Esri' });
+      refuseImagery();
+      expect(await loadConfig()).toEqual({ hdImagery: false, imageryAttribution: null, current: true });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
