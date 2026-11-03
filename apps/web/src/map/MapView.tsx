@@ -11,6 +11,7 @@ import { useFormat } from '../format';
 import { ALL_BOUNDS, useRegion } from '../region';
 import { checkBadge } from './badge';
 import { dailyLayer } from './imagery';
+import { Legend } from './Legend';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius, hoursSinceMidnightWib,
   incidentFilter, incidentOpacity, incidentRadius, incidentSortKey, incidentStroke, incidentStrokeWidth, kilometreRadius, levelColor,
@@ -50,22 +51,12 @@ const text = dict({
     deteksi: 'Titik panas satelit', deteksiSource: 'NASA FIRMS, VIIRS 375 m dan MODIS 1 km', gambut: 'Lahan gambut', gambutSource: 'Global peatland extent',
     deforestasi: 'Peringatan gangguan hutan', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Citra satelit harian', harianSource: '{satellite}, {date} {part} · NASA GIBS',
     morning: 'pagi', midday: 'siang', citra: 'Citra detail', citraSource: 'Sentinel-2 cloudless 2023, EOX', satellite: 'Tampilan satelit',
-    incidents: 'Prioritas kejadian', checked: 'Sudah dicek', assigned: 'Ditugaskan', sizeNote: 'titik panas per kejadian', modisOnly: 'Hanya MODIS, lokasi ±1 km',
-    hotspots: 'Titik panas menurut umur', hotspotsConfidence: 'Titik panas menurut keyakinan', newest: '≤ 3 jam', today: 'Hari ini', older: 'Lebih lama',
-    confHigh: 'Tinggi', confNominal: 'Sedang', confLow: 'Rendah', modisRing: 'Piksel MODIS, lokasi ±1 km',
-    regencies: 'Kejadian per kabupaten', bubble: 'Prioritas tinggi, belum dicek atau ditugaskan', bubbleNone: 'Tidak ada prioritas tinggi yang menunggu',
-    bubbleNote: 'Ukuran lingkaran mengikuti jumlah kejadian. Klik lingkaran atau perbesar peta untuk melihat tiap kejadian.',
   },
   en: {
     map: 'Hotspot map', layers: 'Layers', layersTitle: 'Map layers', legend: 'Legend', close: 'Close',
     deteksi: 'Satellite hotspots', deteksiSource: 'NASA FIRMS, VIIRS 375 m and MODIS 1 km', gambut: 'Peatland', gambutSource: 'Global peatland extent',
     deforestasi: 'Forest disturbance alerts', deforestasiSource: 'GLAD-L, GLAD-S2, RADD', harian: 'Daily satellite image', harianSource: '{satellite}, {date} {part} · NASA GIBS',
     morning: 'morning', midday: 'midday', citra: 'Detailed imagery', citraSource: 'Sentinel-2 cloudless 2023, EOX', satellite: 'Satellite view',
-    incidents: 'Incident priority', checked: 'Checked', assigned: 'Assigned', sizeNote: 'hotspots per incident', modisOnly: 'MODIS only, location ±1 km',
-    hotspots: 'Hotspots by age', hotspotsConfidence: 'Hotspots by confidence', newest: '≤ 3 h', today: 'Today', older: 'Older',
-    confHigh: 'High', confNominal: 'Nominal', confLow: 'Low', modisRing: 'MODIS pixel, location ±1 km',
-    regencies: 'Incidents per regency', bubble: 'High priority, not checked or assigned', bubbleNone: 'No high priority waiting',
-    bubbleNote: 'Circle size follows the number of incidents. Click a circle or zoom in to see each incident.',
   },
 });
 type Key = keyof typeof text.id;
@@ -87,7 +78,6 @@ const legendKey = 'titikapi.legend';
 const legendClosed = () => { try { return localStorage.getItem(legendKey) === 'closed'; } catch { return false; } };
 const rememberLegend = (closed: boolean) => { try { if (closed) localStorage.setItem(legendKey, 'closed'); else localStorage.removeItem(legendKey); } catch { /* private mode */ } };
 const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
-const levelKey = { tinggi: 'high', sedang: 'medium', rendah: 'low' } as const;
 
 export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoom, selected, focus, initialLayers, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
   const t = useT(text), f = useFormat();
@@ -323,34 +313,7 @@ export function MapView({ filters, version = 0, hours = 24, bounds, boundsMinZoo
           ))}
         </div>
       )}
-      {panel === 'legend' && (
-        <div className="mapcard" role="dialog" aria-label={t('legend')}>
-          {overview && zoomedOut ? (<>
-            <div className="mapcard-head"><h3>{t('regencies')}</h3>{closeButton}</div>
-            <div className="lg-row"><i className="lg-bubble">12</i>{t('bubble')}</div>
-            <div className="lg-row"><i className="lg-bubble lg-bubble-none" />{t('bubbleNone')}</div>
-            <p className="lg-note">{t('bubbleNote')}</p>
-          </>) : (<>
-            <div className="mapcard-head"><h3>{t('incidents')}</h3>{closeButton}</div>
-            <div className="lg-row lg-inline">
-              {(['tinggi', 'sedang', 'rendah'] as const).map(level => <span key={level}><i className="lg-dot" style={{ background: colors[levelKey[level]] }} />{f.level(level)}</span>)}
-            </div>
-            <div className="lg-row lg-inline">
-              <span><i className="lg-dot lg-ring" style={{ borderColor: colors.checked }} />{t('checked')}</span>
-              <span><i className="lg-dot lg-ring" style={{ borderColor: colors.assigned }} />{t('assigned')}</span>
-            </div>
-            <div className="lg-row"><i className="lg-dot" style={{ background: colors.high, opacity: 0.55 }} />{t('modisOnly')}</div>
-            <div className="lg-row lg-sizes"><span><i className="lg-dot lg-s0" />1–4</span><span><i className="lg-dot lg-s1" />5–19</span><span><i className="lg-dot lg-s2" />20+</span><small>{t('sizeNote')}</small></div>
-            <h3 className="lg-title">{ageAware ? t('hotspots') : t('hotspotsConfidence')}</h3>
-            <div className="lg-row lg-inline">
-              <span><i className="lg-dot lg-small" style={{ background: colors.newest }} />{ageAware ? t('newest') : t('confHigh')}</span>
-              <span><i className="lg-dot lg-small" style={{ background: colors.today }} />{ageAware ? t('today') : t('confNominal')}</span>
-              <span><i className="lg-dot lg-small" style={{ background: colors.older }} />{ageAware ? t('older') : t('confLow')}</span>
-            </div>
-            <div className="lg-row"><i className="lg-dot lg-ring lg-thin" style={{ borderColor: colors.newest }} />{t('modisRing')}</div>
-          </>)}
-        </div>
-      )}
+      {panel === 'legend' && <Legend bubbles={overview && zoomedOut} ageAware={ageAware} closeButton={closeButton} />}
     </div>
   );
 }
