@@ -46,4 +46,16 @@ describe('wind in the incident panel', () => {
     expect(smokeSentence(null, 'id')).toBeNull();
     expect(Object.keys(windText.en).sort()).toEqual(Object.keys(windText.id).sort());
   });
+
+  it('puts the smoke line into the WhatsApp message, before the links', async () => {
+    Object.assign(globalThis, { location: { origin: 'https://titikapi.test' } });
+    const { waText } = await import('../ui');
+    const incident = { village: { id: 'v', name: 'Cengal', district: 'Cengal', regency: 'Ogan Komering Ilir', province: 'Sumatera Selatan', center: [105, -3] },
+      level: 'tinggi', detectionCount: 12, onPeat: true, lastDetectedAt: '2026-10-23T06:24:00Z', nearestPlace: null, modisOnly: false, locationUncertaintyM: null,
+      centroid: [105.4, -3.4], sharePath: '/k/abc' } as unknown as Parameters<typeof waText>[0];
+    const lines = waText(incident, 'id', smokeSentence(wind(), 'id')).split('\n');
+    expect(lines[2]).toBe('Asap mengarah ke Desa Sungai Pasir, Desa Cengal.');
+    expect(lines[3]).toMatch(/^Lokasi: /);
+    expect(waText(incident, 'id', null)).not.toContain('Asap');
+  });
 });
