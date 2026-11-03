@@ -23,7 +23,8 @@
 .lp-actions .btn { height: 44px; padding: 0 16px; font-size: 15px; white-space: normal; text-align: center; line-height: 18px; }
 .lp-figure { margin: 28px 0 0; }
 .lp-figure img { display: block; width: 100%; height: auto; border-radius: var(--radius-lg); border: 1px solid var(--surface-line); background: #e8e6e1; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 32px rgb(0 0 0 / 0.1); }
-.lp-figure figcaption { margin-top: 10px; font-size: 13px; line-height: 18px; color: var(--text-3); }
+/* Small text in --text-2: --text-3 measures 3.45:1 on the page and 3.74:1 on white, under the 4.5:1 that AA asks. */
+.lp-figure figcaption { margin-top: 10px; font-size: 13px; line-height: 18px; color: var(--text-2); }
 
 /* sections */
 .lp-section { padding: 40px 0; }
@@ -52,7 +53,7 @@
 .lp-step { display: grid; gap: 8px; align-content: start; padding: 16px; border-radius: var(--radius-lg); border: 1px solid var(--surface-line); background: var(--surface-card); }
 .lp-step-head { display: flex; align-items: center; justify-content: space-between; }
 .lp-step-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--radius-md); background: rgb(255 90 31 / 0.1); color: var(--brand-press); }
-.lp-step-num { font-size: 13px; font-weight: 600; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lp-step-num { font-size: 13px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .lp-step h3 { font-size: 16px; line-height: 22px; font-weight: 600; }
 .lp-step p { color: var(--text-2); line-height: 21px; }
 
@@ -96,7 +97,8 @@
 .lp-foot a { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; color: var(--chrome-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
 .lp-foot a:hover { text-decoration-color: currentColor; }
 .lp-foot a:focus-visible { outline: 2px solid var(--chrome-text); outline-offset: 2px; border-radius: 4px; }
-.lp-foot p { font-size: 13px; line-height: 18px; color: var(--chrome-text-3); }
+/* --chrome-text-3 measures 4.49:1 here, just under the 4.5:1 of AA: the demo and emergency note gets --chrome-text-2. */
+.lp-foot p { font-size: 13px; line-height: 18px; color: var(--chrome-text-2); }
 
 @media (min-width: 560px) {
   .lp-actions { display: flex; flex-wrap: wrap; }

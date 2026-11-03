@@ -31,6 +31,22 @@ const ingest = (minutes: number): IngestStatus => ({
 });
 const summary = { detections: 614, incidents: 291 };
 
+/** sRGB relative luminance of [r, g, b] (0 to 255). */
+function luminance(rgb: number[]) {
+  const channel = (value: number) => { const v = value / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * channel(rgb[0]!) + 0.7152 * channel(rgb[1]!) + 0.0722 * channel(rgb[2]!);
+}
+/** A CSS colour (#rrggbb or rgb(r g b / a)) laid over an opaque background, as [r, g, b]. */
+function over(color: string, background: number[]) {
+  const hex = /^#([0-9a-f]{6})$/i.exec(color);
+  const parts = hex ? [0, 2, 4].map(at => parseInt(hex[1]!.slice(at, at + 2), 16)).concat(1)
+    : (/^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/\s*([\d.]+))?\s*\)$/.exec(color)?.slice(1).map(value => (value === undefined ? 1 : Number(value))) ?? []);
+  if (parts.length !== 4) throw new Error(`not a colour: ${color}`);
+  const alpha = parts[3]!;
+  return parts.slice(0, 3).map((value, index) => value * alpha + background[index]! * (1 - alpha));
+}
+const contrast = (a: number[], b: number[]) => { const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (high! + 0.05) / (low! + 0.05); };
+
 describe('the landing page', () => {
   const archive: ArchiveDays = { first: '2026-10-08', last: '2026-11-02', days: [
     { date: '2026-10-22', detections: 23316, incidents: 3237 },
@@ -125,6 +141,27 @@ describe('the landing page', () => {
     expect(status(true)).not.toContain('30 menit');
     expect(status(true)).toContain('Demo dengan data satelit asli');
     expect(status(true)).toContain('bukan sistem peringatan resmi');
+  });
+
+  it('keeps its text at 4.5:1 contrast or more, small print included', () => {
+    // Every text colour in landing.css against the backgrounds it sits on: the page and the cards, or the dark footer.
+    const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const root = /:root\s*\{([^}]*)\}/.exec(read('./styles.css'))?.[1] ?? '';
+    const tokens = Object.fromEntries([...root.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(match => [match[1], match[2]!.trim()]));
+    const resolve = (value: string) => value.replace(/var\(--([\w-]+)\)/g, (_match, name: string) => tokens[name] ?? name);
+    const page = over(tokens['surface-bg']!, [0, 0, 0]), card = over(tokens['surface-card']!, [0, 0, 0]), dark = over(tokens['chrome-950']!, [0, 0, 0]);
+    const checked: string[] = [];
+    for (const [, selector, body] of read('./styles/landing.css').matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const color = /(?:^|;)\s*color:\s*([^;]+)/.exec(body!)?.[1]?.trim();
+      // Separators drawn with ::after and icons are decoration, not text.
+      if (!color || /::(?:after|before)|icon|svg/.test(selector!)) continue;
+      const name = selector!.trim().replace(/\s+/g, ' ');
+      for (const background of /lp-foot/.test(name) ? [dark] : [page, card]) {
+        expect(contrast(over(resolve(color), background), background), `${name}: ${color}`).toBeGreaterThanOrEqual(4.5);
+      }
+      checked.push(name);
+    }
+    expect(checked).toEqual(expect.arrayContaining(['.lp-figure figcaption', '.lp-step-num', '.lp-foot p', '.lp-stat dt']));
   });
 
   it('shows real screenshots at the size its markup says, each a light WebP file', () => {
