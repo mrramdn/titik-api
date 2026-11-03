@@ -30,3 +30,9 @@ export function legacyMapTarget(search: string, state?: unknown): string | null 
     || (typeof state === 'object' && state !== null && MAP_STATE.some(key => key in state));
   return forMap ? `${MAP_PATH}${search}` : null;
 }
+
+export type DemoRole = 'mpa' | 'kades' | 'bpbd';
+/** Each demo role's own page: volunteers on their tasks, village heads on their village, agencies on the dashboard. */
+export const demoHome: Record<DemoRole, string> = { mpa: '/tugas', kades: '/desa-saya', bpbd: '/dasbor' };
+/** "Coba sebagai …": the role's own page with ?lihat=, which opens that shared demo account (see demoLink.ts). */
+export const tryPath = (role: DemoRole) => `${demoHome[role]}?lihat=${role}`;

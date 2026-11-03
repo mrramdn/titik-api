@@ -22,6 +22,7 @@ import { DashboardPage } from './pages/Dashboard';
 import { RecapPage } from './pages/Recap';
 import { VillagePage } from './pages/Village';
 import { AboutPage } from './pages/About';
+import { DemoLink } from './components/shell/DemoLink';
 import { HOME_PATH, legacyMapTarget, MAP_PATH } from './routes';
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
@@ -42,24 +43,26 @@ createRoot(document.getElementById('root')!).render(
         <RegionProvider>
           <DataVersionProvider>
             <BrowserRouter>
-              <Routes>
-                <Route index element={<Home />} />
-                <Route element={<MapScreen />}>
-                  <Route path={MAP_PATH} element={<IncidentList />} />
-                  <Route path="/kejadian/:id" element={<IncidentPanel />} />
-                  <Route path="/k/:code" element={<IncidentPanel />} />
-                </Route>
-                <Route path="/kejadian/:id/cek" element={<VerifyPage />} />
-                <Route path="/masuk" element={<LoginPage />} />
-                <Route path="/tugas" element={<TugasPage />} />
-                <Route path="/peringatan" element={<Navigate to="/tugas" replace />} />
-                <Route path="/desa-saya" element={<MyVillagesPage />} />
-                <Route path="/dasbor" element={<DashboardPage />} />
-                <Route path="/rekap" element={<RecapPage />} />
-                <Route path="/desa/:id" element={<VillagePage />} />
-                <Route path="/tentang" element={<AboutPage />} />
-                <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
-              </Routes>
+              <DemoLink>
+                <Routes>
+                  <Route index element={<Home />} />
+                  <Route element={<MapScreen />}>
+                    <Route path={MAP_PATH} element={<IncidentList />} />
+                    <Route path="/kejadian/:id" element={<IncidentPanel />} />
+                    <Route path="/k/:code" element={<IncidentPanel />} />
+                  </Route>
+                  <Route path="/kejadian/:id/cek" element={<VerifyPage />} />
+                  <Route path="/masuk" element={<LoginPage />} />
+                  <Route path="/tugas" element={<TugasPage />} />
+                  <Route path="/peringatan" element={<Navigate to="/tugas" replace />} />
+                  <Route path="/desa-saya" element={<MyVillagesPage />} />
+                  <Route path="/dasbor" element={<DashboardPage />} />
+                  <Route path="/rekap" element={<RecapPage />} />
+                  <Route path="/desa/:id" element={<VillagePage />} />
+                  <Route path="/tentang" element={<AboutPage />} />
+                  <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
+                </Routes>
+              </DemoLink>
             </BrowserRouter>
           </DataVersionProvider>
         </RegionProvider>
