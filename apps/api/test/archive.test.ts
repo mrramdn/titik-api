@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/app.js';
 import { TileCache, clearTileCache, tileCacheBytes } from '../src/incidents.js';
 import { addDays, wibDay } from '../src/geo.js';
+import { lonLatToPixel } from '../src/peat.js';
 import { emptyDatabase, insertDetection, insertIncident, bigVillage, testPool, tileOf, wibMidnight } from './fixtures.js';
 import { readTile } from './mvt.js';
 
@@ -120,6 +121,40 @@ test('hotspot tiles follow the archive day; archive tiles are cached for an hour
   assert.ok(tileCacheBytes() > 0);
   clearTileCache();
   assert.equal(tileCacheBytes(), 0);
+});
+
+test('from zoom 11 the detection tile carries each pixel footprint in a second layer', async () => {
+  const { x, y } = tile12();
+  const z12 = readTile((await get(`/tiles/deteksi/12/${x}/${y}.mvt?hours=24&tanggal=${day}`)).rawPayload);
+  assert.deepEqual(z12.map(layer => layer.name), ['deteksi', 'piksel']);
+  const [deteksi, piksel] = z12 as [typeof z12[0], typeof z12[0]];
+  assert.equal(piksel.features.length, deteksi.features.length);
+  assert.deepEqual(piksel.features.map(f => [f.properties.sensor, f.properties.age]).sort(), deteksi.features.map(f => [f.properties.sensor, f.properties.age]).sort());
+  // Box sizes in tile units: scan × track km, stretched by 1/cos(latitude) on the Mercator grid (4096 units per tile).
+  const unit = (2 * Math.PI * 6378137) / 2 ** 12 / 4096;
+  const stretch = 1 / Math.cos((centre.lat * Math.PI) / 180);
+  const size = (feature: (typeof piksel.features)[0]) => [feature.bbox![2] - feature.bbox![0], feature.bbox![3] - feature.bbox![1]];
+  const viirs = piksel.features.find(f => f.properties.sensor === 'VIIRS' && f.properties.age === 0)!;
+  const modis = piksel.features.find(f => f.properties.sensor === 'MODIS')!;
+  for (const [feature, scan, track] of [[viirs, 0.4, 0.37], [modis, 1.2, 1.1]] as const) {
+    const [w, h] = size(feature);
+    assert.ok(Math.abs(w! - (scan * 1000 * stretch) / unit) <= 1.5, `width ${w}`);
+    assert.ok(Math.abs(h! - (track * 1000 * stretch) / unit) <= 1.5, `height ${h}`);
+  }
+  // Below zoom 11 only the points.
+  const t10 = tileOf(centre.lon, centre.lat, 10);
+  const z10 = readTile((await get(`/tiles/deteksi/10/${t10.x}/${t10.y}.mvt?hours=24&tanggal=${day}`)).rawPayload);
+  assert.deepEqual(z10.map(layer => layer.name), ['deteksi']);
+  // A footprint reaches into the next tile even when its point lies outside it: the MODIS box is 1.2 km wide, a
+  // zoom 16 tile 611 m, and the neighbour on the nearer side starts at most 306 m from the point.
+  const m = { lon: centre.lon - 0.004, lat: centre.lat - 0.002 };
+  const [px, py] = lonLatToPixel(m.lon, m.lat, 16);
+  const fraction = px / 256 - Math.floor(px / 256);
+  const neighbour = { x: Math.floor(px / 256) + (fraction > 0.5 ? 1 : -1), y: Math.floor(py / 256) };
+  const next = readTile((await get(`/tiles/deteksi/16/${neighbour.x}/${neighbour.y}.mvt?hours=24&tanggal=${day}`)).rawPayload);
+  assert.ok(next.find(layer => layer.name === 'piksel')?.features.some(f => f.properties.sensor === 'MODIS'), 'the MODIS box is drawn in the neighbour tile');
+  const gap = Math.min(fraction, 1 - fraction) * 611;
+  if (gap > 15) assert.ok(!next.find(layer => layer.name === 'deteksi')?.features.some(f => f.properties.sensor === 'MODIS'), 'its point is not');
 });
 
 test('the tile cache drops the least recently used tiles once it holds too many bytes', () => {

@@ -7,6 +7,17 @@ import type { Database } from './models.js';
 const OPEN = `('ditugaskan', 'menuju')`;
 
 /**
+ * A detection's pixel footprint as SQL: an axis-aligned box around its Web Mercator point, `scan` × `track` km
+ * (the pixel size FIRMS gives along scan and track; VIIRS 0.375 km and MODIS 1 km when missing), widened by
+ * 1/cos(latitude) as Mercator stretches distances. An approximation: real pixels turn slightly with the orbit.
+ */
+export function footprintSql(alias: string) {
+  const size = (column: string) => `COALESCE(${alias}.${column}, CASE WHEN ${alias}.satellite IN ('T', 'A') THEN 1.0 ELSE 0.375 END) * 500 / cos(radians(${alias}.latitude))`;
+  return `ST_MakeEnvelope(ST_X(${alias}.geom_3857) - ${size('scan')}, ST_Y(${alias}.geom_3857) - ${size('track')},
+    ST_X(${alias}.geom_3857) + ${size('scan')}, ST_Y(${alias}.geom_3857) + ${size('track')}, 3857)`;
+}
+
+/**
  * The time window of a list, summary or tile as SQL, sharing one shape between live data and the archive. Live: the
  * last `hours` hours before now. Archive (`tanggal`, a WIB day): the `hours` hours before the end of that day, so 24
  * is that day and 72 that day and the two before. Pushes its parameters; `end` is the end of the window as SQL.
@@ -203,11 +214,20 @@ const tileSql = {
       ST_AsMVTGeom(i.centroid_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
     FROM incidents i WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}
       AND i.centroid_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156) ORDER BY i.score) q`,
-  // `age` counts hours before the end of the window.
-  deteksi: (window: TimeWindow) => `SELECT ST_AsMVT(q, 'deteksi', 4096, 'geom') AS mvt FROM (SELECT confidence, (village_id IS NOT NULL) AS inside,
-      CASE WHEN satellite IN ('T', 'A') THEN 'MODIS' ELSE 'VIIRS' END AS sensor, greatest(0, floor(extract(epoch FROM ${window.end} - acq_at) / 3600))::integer AS age,
-      ST_AsMVTGeom(geom_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
-    FROM detections WHERE $1 >= 7 AND ${window.within('acq_at')} AND geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q`,
+  // From zoom 11 a second layer, piksel, holds each detection's pixel footprint (see footprintSql) with the same
+  // properties. Its candidates reach 2.6 km past the tile, as a MODIS pixel at the edge of a scan is up to 4.8 km
+  // wide; ST_AsMVTGeom clips every box to the tile and its buffer. `age` counts hours before the end of the window.
+  deteksi: (window: TimeWindow) => `WITH d AS (
+      SELECT confidence, (village_id IS NOT NULL) AS inside, CASE WHEN satellite IN ('T', 'A') THEN 'MODIS' ELSE 'VIIRS' END AS sensor,
+        greatest(0, floor(extract(epoch FROM ${window.end} - acq_at) / 3600))::integer AS age, satellite, latitude, scan, track, geom_3857
+      FROM detections WHERE $1 >= 7 AND ${window.within('acq_at')}
+        AND geom_3857 && ST_Expand(ST_TileEnvelope($1, $2, $3, margin => 0.0156), CASE WHEN $1 >= 11 THEN 2600 ELSE 0 END))
+    SELECT (SELECT ST_AsMVT(q, 'deteksi', 4096, 'geom') FROM (SELECT confidence, inside, sensor, age,
+          ST_AsMVTGeom(geom_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
+        FROM d WHERE geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q)
+      || (SELECT ST_AsMVT(p, 'piksel', 4096, 'geom') FROM (SELECT confidence, inside, sensor, age,
+          ST_AsMVTGeom(${footprintSql('d')}, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
+        FROM d WHERE $1 >= 11) p) AS mvt`,
 } as const;
 
 /** Live hotspot tiles change with every ingest; archive days and shapes do not. */
