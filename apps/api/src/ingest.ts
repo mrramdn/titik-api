@@ -6,7 +6,7 @@ import type pg from 'pg';
 import { createPool } from './db.js';
 import { feedActive, feeds, fetchFeed, parseFirmsCsv, snapshotFeed, type FirmsRow } from './firms.js';
 import { scoreIncident } from './geo.js';
-import { clearTileCache, refreshVerificationSummary } from './incidents.js';
+import { clearTileCache, footprintSql, refreshVerificationSummary } from './incidents.js';
 import { migrate } from './migrate.js';
 import { loadPeatMask, type PeatMask } from './peat.js';
 import { dataDir, loadReference } from './reference.js';
@@ -230,8 +230,9 @@ async function incidentsOnDays(client: pg.PoolClient | pg.Pool, days: string[]) 
 }
 
 /**
- * Recomputes what an incident is made of, then its score. Counts and times use every detection; location (centroid,
- * village, peat, nearest settlement), confidence and FRP use the VIIRS points when there are any, else MODIS.
+ * Recomputes what an incident is made of, then its score and indicated hot area. Counts and times use every
+ * detection; location (centroid, village, peat, nearest settlement), confidence, FRP and area use the VIIRS points
+ * when there are any, else MODIS.
  */
 export async function refreshIncidents(client: pg.PoolClient | pg.Pool, ids: string[]) {
   for (let start = 0; start < ids.length; start += 2000) await refreshBatch(client, ids.slice(start, start + 2000));
@@ -282,9 +283,38 @@ async function refreshBatch(client: pg.PoolClient | pg.Pool, ids: string[]) {
   await client.query(`UPDATE incidents i SET score = u.score, level = u.level, score_parts = u.parts
     FROM unnest($1::uuid[], $2::integer[], $3::text[], $4::jsonb[]) AS u(id, score, level, parts) WHERE i.id = u.id`,
   [scored.map(s => s.id), scored.map(s => s.score), scored.map(s => s.level), scored.map(s => JSON.stringify(s.parts))]);
+  await refreshIndicatedArea(client, ids);
 }
 
-/** Rescores every incident detected in the last `days` WIB days, for example after the scoring rules change. */
+/**
+ * The indicated hot area of each incident: its detections split into passes (one satellite, each detection at most
+ * 30 minutes after the one before, as in the incident history), the pixel footprints of a pass merged, and the
+ * largest pass kept. Footprints come from VIIRS when it saw the incident, else from MODIS (coarse, 1 km pixels).
+ * Areas are measured on the Mercator grid and scaled by cos²(latitude) to square metres on the ground.
+ */
+async function refreshIndicatedArea(client: pg.PoolClient | pg.Pool, ids: string[]) {
+  await client.query(`UPDATE incidents i SET indicated_area_ha = a.ha
+    FROM (
+      SELECT incident_id, round((max(m2) / 10000)::numeric, 1) AS ha FROM (
+        SELECT incident_id, ST_Area(ST_Union(${footprintSql('p')})) * cos(radians(avg(latitude))) ^ 2 AS m2
+        FROM (
+          SELECT incident_id, satellite, latitude, scan, track, geom_3857,
+            count(*) FILTER (WHERE starts) OVER (PARTITION BY incident_id, satellite ORDER BY acq_at, id) AS pass
+          FROM (
+            SELECT id, incident_id, satellite, acq_at, latitude, scan, track, geom_3857,
+              COALESCE(acq_at - lag(acq_at) OVER (PARTITION BY incident_id, satellite ORDER BY acq_at, id) > interval '30 minutes', true) AS starts,
+              bool_or(satellite NOT IN ${MODIS}) OVER (PARTITION BY incident_id) AS has_viirs
+            FROM detections WHERE incident_id = ANY($1::uuid[])) d
+          WHERE CASE WHEN has_viirs THEN satellite NOT IN ${MODIS} ELSE satellite IN ${MODIS} END) p
+        GROUP BY incident_id, satellite, pass) s
+      GROUP BY incident_id) a
+    WHERE i.id = a.incident_id`, [ids]);
+}
+
+/**
+ * Rescores every incident detected in the last `days` WIB days and recomputes its indicated area, for example after
+ * the scoring rules change.
+ */
 export async function refreshRecent(pool: pg.Pool, days = 8) {
   const ids = (await pool.query(`SELECT id FROM incidents WHERE first_detected_at > now() - make_interval(days => $1)`, [days])).rows.map(row => row.id as string);
   await refreshIncidents(pool, ids);

@@ -146,6 +146,7 @@ export function incidentModel(row: Record<string, any>, team = true) {
     latestCheck: row.check_status ? { status: row.check_status, observedAt: row.check_observed_at.toISOString(), demo: row.check_demo } : null,
     assignment: assignmentModel(row, 'task_', team),
     nearestPlace: nearestPlace(row),
+    indicatedAreaHa: row.indicated_area_ha === null || row.indicated_area_ha === undefined ? null : Number(row.indicated_area_ha),
     card: village ? cardText(cardIncident(row)) : null,
     sharePath: `/k/${row.code}`,
   };

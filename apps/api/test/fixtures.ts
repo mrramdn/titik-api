@@ -1,6 +1,7 @@
 // Shared set-up for the integration tests that write their own rows: a pool on the test database, empty tables and
 // direct inserts with exact times and places (FIRMS files only carry minutes).
 import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
 import { createPool } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
 import { loadReference } from '../src/reference.js';
@@ -57,6 +58,15 @@ export async function insertIncident(pool: Pool, i: IncidentFixture) {
       level, score, best_confidence)
     SELECT $1, $2, $3, $4, 1, 1, '{N21}', g, ST_Transform(g, 3857), $7, $8, 'nominal' FROM (SELECT ST_SetSRID(ST_MakePoint($5, $6), 4326) AS g) p RETURNING id`,
   [incidentCode(), i.villageId, i.first, i.last, i.lon, i.lat, i.level ?? 'sedang', i.score ?? 40])).rows[0].id as string;
+}
+
+/** A signed-in account of the given role; returns its bearer token. */
+export async function signIn(pool: Pool, role: 'mpa' | 'kades' | 'bpbd' | 'admin') {
+  const token = randomUUID();
+  const user = (await pool.query(`INSERT INTO users (name, email, password_hash, role, organization) VALUES ($1, $2, 'x', $3, 'Uji') RETURNING id`,
+    [`Akun uji ${role}`, `${role}-${token.slice(0, 8)}@titikapi.test`, role])).rows[0].id;
+  await pool.query(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '1 day')`, [createHash('sha256').update(token).digest('hex'), user]);
+  return token;
 }
 
 /** A large village and a point well inside it, for rows that must fall in the covered area. */
