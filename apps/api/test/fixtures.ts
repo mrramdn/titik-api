@@ -61,13 +61,22 @@ export async function insertIncident(pool: Pool, i: IncidentFixture) {
   [incidentCode(), i.villageId, i.first, i.last, i.lon, i.lat, i.level ?? 'sedang', i.score ?? 40])).rows[0].id as string;
 }
 
-/** A signed-in account of the given role; returns its bearer token. */
-export async function signIn(pool: Pool, role: 'mpa' | 'kades' | 'bpbd' | 'admin') {
+export interface Account { id: string; token: string }
+/**
+ * A signed-in account of the given role, with its bearer token. A 'demo' account has an address of the shared demo
+ * domain, so what it does stays in the demo scope; a 'real' account's checks and tasks are what everyone sees.
+ */
+export async function account(pool: Pool, role: 'mpa' | 'kades' | 'bpbd' | 'admin', kind: 'demo' | 'real' = 'demo'): Promise<Account> {
   const token = randomUUID();
-  const user = (await pool.query(`INSERT INTO users (name, email, password_hash, role, organization) VALUES ($1, $2, 'x', $3, 'Uji') RETURNING id`,
-    [`Akun uji ${role}`, `${role}-${token.slice(0, 8)}@titikapi.test`, role])).rows[0].id;
-  await pool.query(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '1 day')`, [createHash('sha256').update(token).digest('hex'), user]);
-  return token;
+  const id = (await pool.query(`INSERT INTO users (name, email, password_hash, role, organization) VALUES ($1, $2, 'x', $3, 'Uji') RETURNING id`,
+    [kind === 'demo' ? `Akun uji ${role}` : `Akun nyata ${role}`, `${role}-${token.slice(0, 8)}@${kind === 'demo' ? 'titikapi.test' : 'example.org'}`, role])).rows[0].id;
+  await pool.query(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '1 day')`, [createHash('sha256').update(token).digest('hex'), id]);
+  return { id, token };
+}
+
+/** A signed-in demo account of the given role; returns its bearer token. */
+export async function signIn(pool: Pool, role: 'mpa' | 'kades' | 'bpbd' | 'admin') {
+  return (await account(pool, role)).token;
 }
 
 /** A large village and a point well inside it, for rows that must fall in the covered area. */

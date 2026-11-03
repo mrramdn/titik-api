@@ -17,6 +17,7 @@ import { cardText, formatDistance, formatWib, scoreIncident, sizePoints, uncerta
 import { lonLatToPixel, type PeatMask } from '../src/peat.js';
 import { pushAlerts } from '../src/push.js';
 import { defaultWindows, learnWindows, nextWindow } from '../src/status.js';
+import { account, type Account } from './fixtures.js';
 
 const testUrl = process.env.TEST_DATABASE_URL ?? 'postgres://titikapi:titikapi@localhost:5442/titikapi_test';
 assert.ok(new URL(testUrl).pathname.endsWith('_test'), 'Integration tests require a dedicated database ending in _test.');
@@ -71,6 +72,8 @@ async function incidentAt(point: { lon: number; lat: number }) {
 }
 const incident = async (id: string) => (await pool.query('SELECT * FROM incidents WHERE id = $1', [id])).rows[0];
 const mpaId = demoAccounts[0].id, bpbdId = demoAccounts[2].id;
+/** Real accounts: their checks and tasks are public, unlike those of the shared demo accounts (see demo-scope.test.ts). */
+let real: { mpa: Account; bpbd: Account };
 
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'titikapi-api-'));
@@ -91,7 +94,8 @@ before(async () => {
     if (inside.rows[0].ok) { village = candidate; corner = { x: Number(candidate.x0), y: Number(candidate.y0) }; break; }
   }
   assert.ok(village, 'a village that holds the fixture block');
-  await resetDemo(pool);
+  await resetDemo(pool, join(directory, 'uploads'));
+  real = { mpa: await account(pool, 'mpa', 'real'), bpbd: await account(pool, 'bpbd', 'real') };
   app = (await createApp({ pool, uploadsDir: join(directory, 'uploads'), webDir: web, logger: false, origins: [origin], demoLogin: true,
     pushSender: async (subscription, payload) => { pushed.push({ endpoint: subscription.endpoint, payload }); } })).app;
 });
@@ -250,7 +254,8 @@ test('push: a browser subscribes and receives the newest alert as a test notific
 });
 
 test('field reports: role guard, offline time, one copy per client id, false alarms teach the triage', async () => {
-  const mpa = await demo('mpa');
+  // A real volunteer: what the shared demo accounts report stays in the demo scope.
+  const mpa = real.mpa.token;
   const kades = await demo('kades');
   const row = (await pool.query('SELECT first_detected_at FROM incidents WHERE id = $1', [firstIncident])).rows[0];
   const clientUuid = randomUUID();
@@ -363,13 +368,15 @@ test('clustering stops at 3 km grid cells and a second pass keeps ids, reports a
   crossCell = [await incidentAt(pt(2900, 2500)), await incidentAt(pt(3100, 2500))];
   assert.notEqual(crossCell[0], crossCell[1], '200 m apart but in two grid cells');
   assert.equal(new Set([s1, s2, s3]).size, 3);
-  // A report on s3, then an older open task on s2 and a newer one on s3.
+  // A demo report on s3, then an older open demo task on s2, a newer one on s3, and a real task on s3.
   const mpa = await demo('mpa');
   const report = await call('POST', `/incidents/${s3}/verifications`, mpa, { clientUuid: randomUUID(), status: 'api_aktif', observedAt: new Date().toISOString() });
   assert.equal(report.statusCode, 201, report.body);
-  const task = async (incidentId: string, minutesAgo: number) => (await pool.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, created_at, updated_at)
-    VALUES ($1, $2, $3, now() - make_interval(mins => $4), now() - make_interval(mins => $4)) RETURNING id`, [incidentId, mpaId, bpbdId, minutesAgo])).rows[0].id as string;
-  const older = await task(s2, 10), newer = await task(s3, 5);
+  const task = async (incidentId: string, minutesAgo: number, demoTask = true) => (await pool.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by,
+      created_at, updated_at, is_demo)
+    VALUES ($1, $2, $3, now() - make_interval(mins => $4), now() - make_interval(mins => $4), $5) RETURNING id`,
+  [incidentId, demoTask ? mpaId : real.mpa.id, demoTask ? bpbdId : real.bpbd.id, minutesAgo, demoTask])).rows[0].id as string;
+  const older = await task(s2, 10), newer = await task(s3, 5), realTask = await task(s3, 4, false);
   // Pass 2 fills the gaps: without cells all five points would chain into one incident.
   const pass2 = { ...empty, N21: csv('N21', chain([5600, 6600], 1.0)) };
   const second = await ingest(pool, { source: 'fixture', peat, texts: pass2 });
@@ -377,9 +384,9 @@ test('clustering stops at 3 km grid cells and a second pass keeps ids, reports a
   assert.equal(await incidentAt(pt(5600, 2500)), s1, 'cell x 3–6 km keeps its incident');
   for (const x of [6100, 6600, 7100]) assert.equal(await incidentAt(pt(x, 2500)), s2, 'cell x 6–9 km: the older incident absorbs the newer');
   assert.equal(await incident(s3), undefined);
-  assert.ok((await incident(s2)).first_verified_at, 'the report moved with the merge');
-  const tasks = (await pool.query('SELECT id, incident_id, status FROM assignments WHERE id = ANY($1::uuid[]) ORDER BY created_at', [[older, newer]])).rows;
-  assert.deepEqual(tasks.map(row => [row.incident_id, row.status]), [[s2, 'ditugaskan'], [s2, 'dibatalkan']], 'one open task stays open');
+  assert.ok((await incident(s2)).first_verified_any_at, 'the report moved with the merge');
+  const tasks = (await pool.query('SELECT id, incident_id, status FROM assignments WHERE id = ANY($1::uuid[]) ORDER BY created_at', [[older, newer, realTask]])).rows;
+  assert.deepEqual(tasks.map(row => [row.incident_id, row.status]), [[s2, 'ditugaskan'], [s2, 'dibatalkan'], [s2, 'ditugaskan']], 'one open task per scope stays open');
   // The same files again change nothing; a new pass elsewhere the same day keeps every id.
   const again = await ingest(pool, { source: 'fixture', peat, texts: pass2 });
   assert.equal(again.inserted, 0);
@@ -397,7 +404,7 @@ test('clustering stops at 3 km grid cells and a second pass keeps ids, reports a
   const split = await incidentAt(pt(5100, 2500));
   assert.notEqual(split, s2);
   assert.equal(await incidentAt(pt(5600, 2500)), split);
-  assert.ok((await incident(s2)).first_verified_at);
+  assert.ok((await incident(s2)).first_verified_any_at);
   assert.equal((await pool.query("SELECT incident_id FROM assignments WHERE id = $1", [older])).rows[0].incident_id, s2);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM detections WHERE village_id IS NOT NULL AND incident_id IS NULL')).rows[0].n, 0);
   const widths = (await pool.query(`SELECT incident_id, ST_XMax(ST_Extent(geom_3857)) - ST_XMin(ST_Extent(geom_3857)) AS w, ST_YMax(ST_Extent(geom_3857)) - ST_YMin(ST_Extent(geom_3857)) AS h
@@ -434,18 +441,19 @@ test('tasks: BPBD assigns a squad, the squad sets off, any field check closes it
   assert.equal(task.assignedBy, 'Petugas BPBD/Daops (demo)');
   assert.equal(task.note, 'Cek dari jalan kanal.');
   const push = JSON.parse(pushed.at(-1)!.payload);
-  assert.equal(push.title, `Tugas cek lapangan: Desa ${village.name}`);
+  assert.equal(push.title, `Demo · Tugas cek lapangan: Desa ${village.name}`, 'a demo account is told the task is demo');
   assert.equal(push.url, '/tugas');
   const twice = await call('POST', `/incidents/${target}/assignments`, bpbd, { assigneeId: mpaId });
   assert.equal(twice.statusCode, 409);
   assert.equal(twice.json().error.code, 'ASSIGNMENT_OPEN');
-  const assigned = (await call('GET', '/incidents?hours=24&status=assigned')).json().data as any[];
+  // A demo task: demo sessions see it with its note, visitors not at all (a real task shows its squad to the public
+  // without the note: see demo-scope.test.ts).
+  const assigned = (await call('GET', '/incidents?hours=24&status=assigned', mpa)).json().data as any[];
   assert.ok(assigned.some(item => item.id === target && item.assignment.status === 'ditugaskan' && item.assignment.assignee.id === mpaId));
-  const publicTask = assigned.find(item => item.id === target).assignment;
-  assert.deepEqual([publicTask.note, publicTask.assignedBy], ['', ''], 'the note and who assigned it are for signed-in teams');
-  const teamTask = ((await call('GET', '/incidents?hours=24&status=assigned', mpa)).json().data as any[]).find(item => item.id === target).assignment;
+  const teamTask = assigned.find(item => item.id === target).assignment;
   assert.deepEqual([teamTask.note, teamTask.assignedBy], ['Cek dari jalan kanal.', 'Petugas BPBD/Daops (demo)']);
-  assert.ok(!(await call('GET', '/incidents?hours=24&status=open')).json().data.some((item: any) => item.id === target));
+  assert.ok(!(await call('GET', '/incidents?hours=24&status=assigned')).json().data.some((item: any) => item.id === target), 'visitors do not see a demo task');
+  assert.ok(!(await call('GET', '/incidents?hours=24&status=open', mpa)).json().data.some((item: any) => item.id === target));
   const mine = (await call('GET', '/me/assignments', mpa)).json().data as any[];
   assert.equal(mine[0].id, task.id);
   assert.equal(mine[0].incident.id, target);
@@ -483,7 +491,7 @@ test('tasks: BPBD assigns a squad, the squad sets off, any field check closes it
   assert.equal(cancelled.json().data.status, 'dibatalkan');
   assert.ok(cancelled.json().data.closedAt);
   assert.equal((await call('PATCH', `/assignments/${second.id}`, bpbd, { status: 'dibatalkan' })).statusCode, 409);
-  assert.ok((await call('GET', `/incidents/${spare}`)).json().data.timeline.some((event: any) => event.kind === 'cancelled'));
+  assert.ok((await call('GET', `/incidents/${spare}`, bpbd)).json().data.timeline.some((event: any) => event.kind === 'cancelled'));
   // Squads to choose from, nearest first.
   const options = await call('GET', `/assignees?incident=${spare}`, bpbd);
   assert.equal(options.statusCode, 200, options.body);
@@ -560,7 +568,8 @@ test('the daily recap counts one WIB day and adds up', async () => {
   const response = await call('GET', `/recap?date=${wibDay}`, bpbd);
   assert.equal(response.statusCode, 200, response.body);
   const recap = response.json().data;
-  const expected = (await pool.query(`SELECT count(*)::int AS n, count(*) FILTER (WHERE first_verified_at IS NOT NULL)::int AS checked,
+  // A demo BPBD account counts demo field checks too: the summary of every check.
+  const expected = (await pool.query(`SELECT count(*)::int AS n, count(*) FILTER (WHERE first_verified_any_at IS NOT NULL)::int AS checked,
       count(*) FILTER (WHERE level = 'tinggi')::int AS high, COALESCE(sum(detection_count), 0)::int AS detections
     FROM incidents WHERE village_id IS NOT NULL AND to_char(first_detected_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = $1`, [wibDay])).rows[0];
   assert.equal(recap.date, wibDay);
@@ -571,7 +580,7 @@ test('the daily recap counts one WIB day and adds up', async () => {
   assert.equal(recap.totals.detections, expected.detections);
   assert.equal(recap.totals.checkedShare, expected.checked / expected.n);
   assert.equal(typeof recap.totals.medianMinutes, 'number');
-  assert.equal(recap.totals.falseAlarms, (await pool.query(`SELECT count(*)::int AS n FROM incidents WHERE village_id IS NOT NULL AND latest_status = 'alarm_palsu'
+  assert.equal(recap.totals.falseAlarms, (await pool.query(`SELECT count(*)::int AS n FROM incidents WHERE village_id IS NOT NULL AND latest_status_any = 'alarm_palsu'
     AND to_char(first_detected_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = $1`, [wibDay])).rows[0].n);
   assert.equal(recap.regencies.reduce((n: number, r: any) => n + r.incidents, 0), expected.n);
   assert.ok(recap.villages.length >= 1 && recap.villages.length <= 15);
@@ -671,7 +680,7 @@ test('an ingest notifies for a new alert or an incident that just became high pr
   await pushAlerts(pool, pass2.alerts.map(alert => alert.id), async (subscription, payload) => { sent.push({ endpoint: subscription.endpoint, payload: JSON.parse(payload) }); });
   const toVolunteer = sent.filter(item => item.endpoint === 'https://push.example/abc');
   assert.equal(toVolunteer.length, 1);
-  assert.equal(toVolunteer[0]!.payload.title, `2 peringatan baru · Desa ${village.name} dan 1 lainnya`);
+  assert.equal(toVolunteer[0]!.payload.title, `Demo · 2 peringatan baru · Desa ${village.name} dan 1 lainnya`, 'the volunteer is the demo account');
   assert.match(toVolunteer[0]!.payload.body, /titik panas · .* · prioritas tinggi\. Titik panas perlu dicek di lapangan\.$/);
   // Another user who starts watching the village gets alerts; the volunteer's inbox stays as it was.
   await pool.query('UPDATE alerts SET read_at = now() WHERE user_id = $1', [mpaId]);
@@ -691,12 +700,17 @@ test('a shared link shows the alert text in the preview', async () => {
 
 test('the demo reset keeps satellite data, takes back what demo accounts did and seeds example tasks', async () => {
   const detections = (await pool.query('SELECT count(*)::int AS n FROM detections')).rows[0].n;
-  await resetDemo(pool);
+  const realChecks = (await pool.query('SELECT count(*)::int AS n FROM verifications WHERE NOT is_demo')).rows[0].n;
+  assert.ok(realChecks >= 2);
+  await resetDemo(pool, join(directory, 'uploads'));
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM detections')).rows[0].n, detections);
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM verifications WHERE NOT is_demo")).rows[0].n, 0);
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM static_sources WHERE kind = 'alarm_palsu'")).rows[0].n, 0);
-  const tasks = (await pool.query('SELECT status, assignee_id, assigned_by FROM assignments ORDER BY status')).rows;
-  assert.deepEqual(tasks.map(row => row.status), ['ditugaskan', 'menuju'], 'earlier tasks are gone, two examples are back');
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM verifications WHERE is_demo AND note NOT LIKE 'Contoh dari akun demo.%'")).rows[0].n, 0,
+    'demo reports are gone, only the examples are back');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM verifications WHERE NOT is_demo')).rows[0].n, realChecks, 'reports from real accounts stay');
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM static_sources WHERE kind = 'alarm_palsu'")).rows[0].n, 1, 'and so does their false alarm');
+  const tasks = (await pool.query('SELECT status, assignee_id, assigned_by FROM assignments WHERE is_demo ORDER BY status')).rows;
+  assert.deepEqual(tasks.map(row => row.status), ['ditugaskan', 'menuju'], 'earlier demo tasks are gone, two examples are back');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM assignments WHERE NOT is_demo')).rows[0].n, 1, 'the task between real accounts stays');
   assert.ok(tasks.every(row => row.assigned_by === bpbdId));
   assert.equal(tasks.find(row => row.status === 'ditugaskan')!.assignee_id, mpaId);
   assert.equal(tasks.find(row => row.status === 'menuju')!.assignee_id, demoSquads[0].id);
