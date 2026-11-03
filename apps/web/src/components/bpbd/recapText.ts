@@ -11,6 +11,7 @@ const words = dict({
     response: 'Waktu tanggap (median): {time}', falseAlarms: 'Alarm palsu: {n}', detections: 'Titik panas: {n}',
     area: 'Indikasi luas area panas: {ha} (bukan luas terbakar)',
     regencies: 'Kabupaten dengan kejadian terbanyak:', regency: '{name}: {n} kejadian, {high} prioritas tinggi, {checked} dicek',
+    danger: 'Bahaya kebakaran tinggi atau sangat tinggi (FWI): {list}',
     checks: 'Hasil cek lapangan: {list}', assignments: 'Penugasan: {list}', link: 'Rincian: {url}',
   },
   en: {
@@ -19,6 +20,7 @@ const words = dict({
     response: 'Response time (median): {time}', falseAlarms: 'False alarms: {n}', detections: 'Hotspots: {n}',
     area: 'Indicated hot area: {ha} (not burned area)',
     regencies: 'Regencies with the most incidents:', regency: '{name}: {n} incidents, {high} high priority, {checked} checked',
+    danger: 'High or very high fire danger (FWI): {list}',
     checks: 'Field check results: {list}', assignments: 'Assignments: {list}', link: 'Details: {url}',
   },
 });
@@ -36,7 +38,8 @@ export function longDate(date: string, lang: Lang) {
 /** Share of checked incidents, from the server when it sends one. */
 export const checkedShare = (totals: Recap['totals']) => totals.checkedShare ?? (totals.incidents ? totals.checked / totals.incidents : null);
 
-export function recapText(recap: Recap, lang: Lang, place: string, url: string) {
+/** `danger` names the regencies at tinggi or sangat tinggi fire danger on that date, when it is known. */
+export function recapText(recap: Recap, lang: Lang, place: string, url: string, danger: string[] = []) {
   const f = formatter(lang), w = words[lang];
   const totals = recap.totals;
   const lines = [
@@ -55,6 +58,7 @@ export function recapText(recap: Recap, lang: Lang, place: string, url: string) 
     lines.push('', w.regencies);
     for (const row of regencies) lines.push(fill(w.regency, { name: row.name, n: f.num(row.incidents), high: f.num(row.high), checked: f.num(row.checked) }));
   }
+  if (danger.length) lines.push('', fill(w.danger, { list: danger.join(', ') }));
   const checks = statusOrder.filter(status => (recap.checks?.[status] ?? 0) > 0)
     .map(status => `${f.num(recap.checks[status] ?? 0)} ${statusLabel[lang][status].toLowerCase()}`);
   const tasks = assignmentOrder.filter(status => (recap.assignments?.[status] ?? 0) > 0)

@@ -109,5 +109,10 @@ describe('recap helpers', () => {
     const withArea = { ...recap, totals: { ...recap.totals, indicatedAreaHa: 2345.6 } };
     expect(recapText(withArea, 'id', 'Sumatera Selatan', 'u').split('\n')).toContain('Indikasi luas area panas: 2.346 ha (bukan luas terbakar)');
     expect(recapText(withArea, 'en', 'Sumatera Selatan', 'u').split('\n')).toContain('Indicated hot area: 2,346 ha (not burned area)');
+    expect(id.join('\n')).not.toContain('FWI');
+    const danger = recapText(recap, 'id', 'Sumatera Selatan', 'u', ['Ogan Komering Ilir', 'Banyuasin']).split('\n');
+    expect(danger).toContain('Bahaya kebakaran tinggi atau sangat tinggi (FWI): Ogan Komering Ilir, Banyuasin');
+    expect(danger.at(-1)).toBe('Rincian: u');
+    expect(recapText(recap, 'en', 'Sumatera Selatan', 'u', ['Ogan Komering Ilir']).split('\n')).toContain('High or very high fire danger (FWI): Ogan Komering Ilir');
   });
 });
