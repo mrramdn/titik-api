@@ -22,7 +22,8 @@ const text = dict({
     detected: 'Terdeteksi {satellite}, {n} titik panas', detectedNoCount: 'Terdeteksi {satellite}', assigned: 'Ditugaskan ke {who}', assignedNoWho: 'Ditugaskan ke regu MPA',
     enroute: '{who} menuju lokasi', enrouteNoWho: 'Regu MPA menuju lokasi', checked: 'Dicek di lapangan.', checkedBy: 'Dicek oleh {who}.', placeDir: '{dir} {name}',
     cancelled: 'Tugas dibatalkan', demo: 'akun demo', distance: '{km} dari titik panas', photo: 'Foto cek lapangan',
-    privateNote: 'Catatan, foto, dan nama pelapor terlihat setelah masuk.', colTime: 'WIB', colSatellite: 'Satelit', colSensor: 'Sensor',
+    privateNote: 'Catatan, foto, dan nama pelapor terlihat setelah masuk.',
+    demoPrivateNote: 'Catatan, foto, dan nama pelapor dari akun nyata tidak tampil untuk akun demo.', colTime: 'WIB', colSatellite: 'Satelit', colSensor: 'Sensor',
     colConfidence: 'Keyakinan', colFrp: 'FRP (MW)', moreRows: '{n} titik panas lainnya tidak ditampilkan.', last: 'Titik panas terakhir {ago}.',
     lastAt: 'Titik panas terakhir {time} WIB.', notReplayed: 'Status lapangan dan tugas tampil seperti sekarang, tidak diputar ulang.',
     scoreConfidence: 'Keyakinan satelit {level}', scoreFrp: 'FRP maks {mw} MW', scoreCount: '{n} titik panas', scorePeat: 'Di lahan gambut',
@@ -36,7 +37,8 @@ const text = dict({
     detected: 'Detected by {satellite}, {n} hotspots', detectedNoCount: 'Detected by {satellite}', assigned: 'Assigned to {who}', assignedNoWho: 'Assigned to an MPA team',
     enroute: '{who} on the way', enrouteNoWho: 'MPA team on the way', checked: 'Checked in the field.', checkedBy: 'Checked by {who}.', placeDir: '{dir} of {name}',
     cancelled: 'Task cancelled', demo: 'demo account', distance: '{km} from the hotspot', photo: 'Field check photo',
-    privateNote: 'Notes, photos and reporter names are visible after signing in.', colTime: 'WIB', colSatellite: 'Satellite', colSensor: 'Sensor',
+    privateNote: 'Notes, photos and reporter names are visible after signing in.',
+    demoPrivateNote: 'Notes, photos and reporter names from real accounts are not shown to demo accounts.', colTime: 'WIB', colSatellite: 'Satellite', colSensor: 'Sensor',
     colConfidence: 'Confidence', colFrp: 'FRP (MW)', moreRows: '{n} more hotspots not shown.', last: 'Last hotspot {ago}.',
     lastAt: 'Last hotspot {time} WIB.', notReplayed: 'Field status and tasks show as they are now; they are not replayed.',
     scoreConfidence: 'Satellite confidence {level}', scoreFrp: 'Max FRP {mw} MW', scoreCount: '{n} hotspots', scorePeat: 'On peatland',
@@ -191,6 +193,7 @@ export function IncidentPanel() {
             );
           })}
           {!user && verifications.length > 0 && <li className="note">{t('privateNote')}</li>}
+          {user?.demo && verifications.some(v => !v.demo) && <li className="note">{t('demoPrivateNote')}</li>}
         </ol>
       ) : (
         <>

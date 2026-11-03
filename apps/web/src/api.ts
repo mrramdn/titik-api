@@ -49,6 +49,8 @@ export interface IncidentVillage { id: string; name: string; district: string; r
  * Field checks and tasks follow the session everywhere (incidents, history, counts, dashboard, recap, export): visitors
  * and real accounts get real ones only; a demo session gets real and demo ones together. The shared demo accounts
  * never change what anyone else sees. The kejadian tiles do the same with &lihat=demo (see map/layers.ts tileUrls).
+ * Notes, photos and who filed a check or assigned a task come to signed-in accounts only, and to a demo session (open to
+ * anyone) for demo rows only: it reads real checks and tasks as a visitor does (empty or left out).
  */
 export interface Incident {
   id: string; code: string; village: IncidentVillage | null;
