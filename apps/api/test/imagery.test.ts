@@ -7,7 +7,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { createApp } from '../src/app.js';
 import { migrate } from '../src/migrate.js';
 import {
-  cleanAttribution, cycleStart, envInteger, FALLBACK_ATTRIBUTION, fromApp, imageryDefaults, parseTile, privateCacheControl, tileBounds, type ImageryOptions,
+  addressKey, cleanAttribution, cycleStart, envInteger, FALLBACK_ATTRIBUTION, fromApp, imageryDefaults, parseTile, privateCacheControl, tileBounds, type ImageryOptions,
 } from '../src/imagery.js';
 import { signIn, testPool } from './fixtures.js';
 
@@ -155,18 +155,30 @@ test('a billing cycle starts on the cycle day, or on the last day of a shorter m
 });
 
 test('caps and the cycle day come from the environment, with defaults; Esri\'s copyrightText becomes plain text', () => {
-  assert.deepEqual(pickCaps(imageryDefaults({})), { key: undefined, monthlyCap: 1_000_000, dailyCap: 33_000, cycleDay: 1, flushMs: 30_000 });
-  assert.deepEqual(pickCaps(imageryDefaults({ ARCGIS_API_KEY: 'k', ARCGIS_MONTHLY_TILE_CAP: '500000', ARCGIS_DAILY_TILE_CAP: '0', ARCGIS_CYCLE_DAY: '23' })),
-    { key: 'k', monthlyCap: 500_000, dailyCap: 0, cycleDay: 23, flushMs: 30_000 });
-  assert.deepEqual(pickCaps(imageryDefaults({ ARCGIS_API_KEY: '', ARCGIS_MONTHLY_TILE_CAP: 'lots', ARCGIS_DAILY_TILE_CAP: '-1', ARCGIS_CYCLE_DAY: '32' })),
-    { key: undefined, monthlyCap: 1_000_000, dailyCap: 33_000, cycleDay: 1, flushMs: 30_000 });
+  assert.deepEqual(pickCaps(imageryDefaults({})), { key: undefined, monthlyCap: 1_000_000, dailyCap: 33_000, addressDailyCap: 5_000, cycleDay: 1, flushMs: 30_000 });
+  assert.deepEqual(pickCaps(imageryDefaults({ ARCGIS_API_KEY: 'k', ARCGIS_MONTHLY_TILE_CAP: '500000', ARCGIS_DAILY_TILE_CAP: '0', ARCGIS_ADDRESS_DAILY_TILE_CAP: '1200', ARCGIS_CYCLE_DAY: '23' })),
+    { key: 'k', monthlyCap: 500_000, dailyCap: 0, addressDailyCap: 1200, cycleDay: 23, flushMs: 30_000 });
+  assert.deepEqual(pickCaps(imageryDefaults({ ARCGIS_API_KEY: '', ARCGIS_MONTHLY_TILE_CAP: 'lots', ARCGIS_DAILY_TILE_CAP: '-1', ARCGIS_ADDRESS_DAILY_TILE_CAP: 'many', ARCGIS_CYCLE_DAY: '32' })),
+    { key: undefined, monthlyCap: 1_000_000, dailyCap: 33_000, addressDailyCap: 5_000, cycleDay: 1, flushMs: 30_000 });
   assert.equal(envInteger(' 12 ', 1, 1, 31), 12);
   assert.equal(envInteger('2.5', 1, 1, 31), 1);
   assert.equal(cleanAttribution('Source: Esri, Vantor,\n  Earthstar Geographics, and the GIS User Community'), 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community');
   assert.equal(cleanAttribution('Esri <img src=x onerror=alert(1)>Vantor‮'), 'Esri Vantor');
   for (const value of ['', '   ', '<b></b>', 'x'.repeat(301), 42, null, undefined, { text: 'Esri' }]) assert.equal(cleanAttribution(value), null, String(value));
 });
-const pickCaps = ({ key, monthlyCap, dailyCap, cycleDay, flushMs }: ImageryOptions) => ({ key, monthlyCap, dailyCap, cycleDay, flushMs });
+const pickCaps = ({ key, monthlyCap, dailyCap, addressDailyCap, cycleDay, flushMs }: ImageryOptions) => ({ key, monthlyCap, dailyCap, addressDailyCap, cycleDay, flushMs });
+
+test('a share is counted per IPv4 address and per IPv6 /64, which one client can fill with addresses', () => {
+  assert.equal(addressKey('203.0.113.9'), '203.0.113.9');
+  assert.equal(addressKey('::ffff:203.0.113.9'), '203.0.113.9', 'IPv4 on a dual-stack socket');
+  for (const ip of ['2001:db8:85a3:1::1', '2001:0db8:85a3:0001:ffff:0:0:2', '2001:DB8:85A3:1:abcd::', '2001:db8:85a3:1::1%eth0']) {
+    assert.equal(addressKey(ip), '2001:db8:85a3:1::/64', ip);
+  }
+  assert.equal(addressKey('2001:db8::1'), '2001:db8:0:0::/64');
+  assert.equal(addressKey('2001:db8:85a3:2::1'), '2001:db8:85a3:2::/64');
+  assert.equal(addressKey('64:ff9b::192.0.2.33'), '64:ff9b:0:0::/64', 'an IPv4 tail counts as two groups');
+  assert.equal(addressKey('::1'), '0:0:0:0::/64');
+});
 
 test('a tile goes to Esri as z/y/x with the key and comes back as its bytes and type, private, without a cookie', async () => {
   await pool.query('DELETE FROM imagery_usage');
@@ -361,6 +373,48 @@ test('the monthly cap counts the billing cycle from imagery_usage, and a new cyc
   const counted = await usage();
   assert.equal(counted['2026-11-14'], 1);
   assert.equal(counted['2026-10-15'], 3);
+});
+
+test('one address takes at most its share of a day: 429 before Esri is asked, logged once, and the next day it starts again', async () => {
+  await pool.query('DELETE FROM imagery_usage');
+  clock = Date.parse('2026-11-16T10:00:00Z');
+  const app = await imageryApp({ dailyCap: 100, addressDailyCap: 2 });
+  answer = {};
+  calls.length = 0;
+  const from = (remoteAddress: string) => app.inject({ method: 'GET', url: `/api/v1/imagery/${OKI}`, headers: sameOrigin, remoteAddress });
+  const warnings = () => logged('its daily share is used').length;
+  const before = warnings();
+  assert.equal((await from('203.0.113.9')).statusCode, 200);
+  assert.equal((await from('203.0.113.9')).statusCode, 200);
+  const refused = await from('203.0.113.9');
+  empty(refused, 429);
+  assert.equal(refused.headers['retry-after'], String(14 * 3600), 'until the next UTC day');
+  empty(await from('203.0.113.9'), 429);
+  assert.equal(warnings(), before + 1, 'logged once a day');
+  assert.equal(tileCalls(), 2, 'Esri is not asked past the share');
+  assert.equal((await from('198.51.100.7')).statusCode, 200, 'another address has a share of its own');
+  // An IPv6 client gets one share for its /64.
+  assert.equal((await from('2001:db8:85a3:1::1')).statusCode, 200);
+  assert.equal((await from('2001:db8:85a3:1:ffff::2')).statusCode, 200);
+  empty(await from('2001:db8:85a3:1::abcd'), 429);
+  assert.equal((await from('2001:db8:85a3:2::1')).statusCode, 200, 'another /64');
+  clock = Date.parse('2026-11-17T00:00:01Z');
+  assert.equal((await from('203.0.113.9')).statusCode, 200, 'a new UTC day');
+  await close(app);
+  assert.deepEqual(await usage(), { '2026-11-16': 6, '2026-11-17': 1 }, 'a refused request costs nothing');
+});
+
+test('a tile the caps stop does not use up the share of its address', async () => {
+  await pool.query('DELETE FROM imagery_usage');
+  clock = Date.parse('2026-11-18T10:00:00Z');
+  const app = await imageryApp({ dailyCap: 2, addressDailyCap: 2 });
+  answer = {};
+  const from = (remoteAddress: string) => app.inject({ method: 'GET', url: `/api/v1/imagery/${OKI}`, headers: sameOrigin, remoteAddress });
+  assert.equal((await from('203.0.113.9')).statusCode, 200);
+  assert.equal((await from('198.51.100.7')).statusCode, 200);
+  for (let k = 0; k < 3; k++) empty(await from('198.51.100.7'), 503);
+  assert.equal(logged('its daily share is used').filter(line => line.includes('198.51.100.7')).length, 0, 'the cap answered, not the share');
+  await close(app);
 });
 
 test('the log warns once at 75% of the monthly cap', async () => {

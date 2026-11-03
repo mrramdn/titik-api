@@ -2,7 +2,8 @@
 // Agreement (E204, 3.1(d)(2)) one upstream response may serve one visitor only, so nothing is cached or shared here:
 // every tile is fetched for the request that asked for it and goes out private to that browser. Only pages of this
 // app may ask, only zoom 11–18 over the two provinces, for display. Esri sets no cap on the free tier (2,000,000
-// tiles per billing cycle), so every request to Esri is first counted against our own daily and monthly caps.
+// tiles per billing cycle), so every request to Esri is first counted against our own daily and monthly caps. The
+// origin check only reads headers, which a script can send too, so one address may also take only a share of a day.
 import type { FastifyBaseLogger, FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { areaBoxes, type Box } from './firms.js';
@@ -30,6 +31,11 @@ export interface ImageryOptions {
   /** Requests to Esri per billing cycle and per UTC day; at a cap the tiles stop until the cycle or the day turns. */
   monthlyCap: number;
   dailyCap: number;
+  /**
+   * Requests to Esri one address (an IPv6 address by its /64) may cause per UTC day, so one client cannot use up the
+   * daily cap; past it that address gets 429 until the day turns.
+   */
+  addressDailyCap: number;
   /** Day of the month (1–31) the Esri billing cycle starts, the sign-up day; in a shorter month, its last day. */
   cycleDay: number;
   /** Milliseconds between writes of the count to imagery_usage. */
@@ -43,12 +49,16 @@ export function envInteger(value: string | undefined, fallback: number, min: num
   return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
 }
 
-/** The monthly cap defaults to half the free tier, the daily one to a thirtieth of that. */
+/**
+ * The monthly cap defaults to half the free tier, the daily one to a thirtieth of that. One address gets 5,000 a day:
+ * a long look around close up takes one or two thousand, and it takes seven addresses to use up the day.
+ */
 export const imageryDefaults = (env: NodeJS.ProcessEnv = process.env): ImageryOptions => ({
   key: env.ARCGIS_API_KEY || undefined,
   fetch,
   monthlyCap: envInteger(env.ARCGIS_MONTHLY_TILE_CAP, 1_000_000, 0, 1_000_000_000),
   dailyCap: envInteger(env.ARCGIS_DAILY_TILE_CAP, 33_000, 0, 1_000_000_000),
+  addressDailyCap: envInteger(env.ARCGIS_ADDRESS_DAILY_TILE_CAP, 5_000, 0, 1_000_000_000),
   cycleDay: envInteger(env.ARCGIS_CYCLE_DAY, 1, 1, 31),
   flushMs: 30_000,
   now: Date.now,
@@ -79,7 +89,8 @@ export function parseTile(params: unknown, boxes: readonly Box[] = areaBoxes): T
 /**
  * True for a request from a page of this app: Sec-Fetch-Site same-origin or, from a browser that does not send it,
  * an Origin (else a Referer) at one of the allowed origins. Another site, a typed address and a request with neither
- * header are refused.
+ * header are refused. It keeps other sites' pages away, but it is no proof: a script can send the same headers, and
+ * then only the share per address limits it.
  */
 export function fromApp(headers: FastifyRequest['headers'], origins: Iterable<string>): boolean {
   const site = headers['sec-fetch-site'];
@@ -91,6 +102,23 @@ export function fromApp(headers: FastifyRequest['headers'], origins: Iterable<st
     if (origin && (from === origin || from.startsWith(`${origin}/`))) return true;
   }
   return false;
+}
+
+/**
+ * What a share is counted for: an IPv4 address as it is (also IPv6-mapped), an IPv6 address by its /64 network, which
+ * one client can fill with addresses of its own.
+ */
+export function addressKey(ip: string): string {
+  const address = ip.trim().toLowerCase().replace(/%.*$/, '');
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address)?.[1];
+  if (mapped) return mapped;
+  if (!address.includes(':')) return address;
+  // An IPv4 tail stands for the last two groups.
+  const groups = (part: string) => (part ? part.split(':').flatMap(group => (group.includes('.') ? ['0', '0'] : [group])) : []);
+  const [head = '', tail] = address.split('::');
+  const left = groups(head), right = tail === undefined ? [] : groups(tail);
+  const full = tail === undefined ? left : [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+  return `${full.slice(0, 4).map(group => (Number.parseInt(group, 16) || 0).toString(16)).join(':')}::/64`;
 }
 
 /**
@@ -285,6 +313,48 @@ class Budget {
 }
 
 /**
+ * Requests to Esri per address today (UTC). An address has an entry only while it holds a counted request, so there are
+ * never more entries than the daily cap lets through.
+ */
+class Shares {
+  private day = '';
+  private used = new Map<string, number>();
+  private warned = new Set<string>();
+
+  constructor(private log: FastifyBaseLogger, private options: Pick<ImageryOptions, 'addressDailyCap' | 'now'>) {}
+
+  /** Counts one request for the address, or refuses it once the address has used its share of the day (logged once). */
+  take(address: string): boolean {
+    const day = utcDay(this.options.now());
+    if (day !== this.day) {
+      this.day = day;
+      this.used.clear();
+      this.warned.clear();
+    }
+    const used = this.used.get(address) ?? 0;
+    if (used >= this.options.addressDailyCap) {
+      if (!this.warned.has(address)) {
+        this.warned.add(address);
+        this.log.warn({ address, addressDailyCap: this.options.addressDailyCap }, 'Esri imagery stopped for one address: its daily share is used');
+      }
+      return false;
+    }
+    this.used.set(address, used + 1);
+    return true;
+  }
+
+  /** Gives back a request that did not go to Esri after all (a cap stopped it). */
+  giveBack(address: string) {
+    const used = this.used.get(address) ?? 0;
+    if (used > 1) this.used.set(address, used - 1);
+    else this.used.delete(address);
+  }
+}
+
+/** Whole seconds until the next UTC day, when an address's share starts again. */
+const untilNextDay = (ms: number) => Math.ceil(((Math.floor(ms / DAY_MS) + 1) * DAY_MS - ms) / 1000);
+
+/**
  * GET /api/v1/imagery/:z/:y/:x, a pass-through for Esri World Imagery tiles with the key added. Returns what GET
  * /config tells the web app about it.
  */
@@ -292,6 +362,7 @@ export function installImagery(app: FastifyInstance, pool: pg.Pool, origins: Ite
   const settings: ImageryOptions = { ...imageryDefaults(), ...options };
   const { key, now, fetch: fetchImpl } = settings;
   const budget = new Budget(pool, app.log, settings);
+  const shares = new Shares(app.log, settings);
   let attribution: string | null = null;
   let attributionAt = -Infinity;
 
@@ -327,7 +398,12 @@ export function installImagery(app: FastifyInstance, pool: pg.Pool, origins: Ite
     if (!fromApp(request.headers, origins)) return reply.code(403).send();
     const tile = parseTile(request.params);
     if (!tile) return reply.code(404).send();
-    if (!(await budget.take())) return reply.code(503).send();
+    const address = addressKey(request.ip);
+    if (!shares.take(address)) return reply.code(429).header('Retry-After', String(untilNextDay(now()))).send();
+    if (!(await budget.take())) {
+      shares.giveBack(address);
+      return reply.code(503).send();
+    }
     const result = await fetchEsri(fetchImpl, `${SERVICE}/tile/${tile.z}/${tile.y}/${tile.x}?token=${encodeURIComponent(key)}`, MAX_TILE_BYTES, true);
     if (!result.ok) {
       request.log.warn({ status: result.status, reason: result.reason, z: tile.z, y: tile.y, x: tile.x }, 'Esri imagery tile failed');
