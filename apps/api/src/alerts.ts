@@ -48,7 +48,7 @@ export function installAlerts(app: FastifyInstance, pool: pg.Pool, send?: Sender
       readAt: row.read_at?.toISOString() ?? null, sharedAt: row.shared_at?.toISOString() ?? null,
       village: { id: row.ref_id, name: row.ref_name },
       card: cardText(cardIncident(row)),
-      incident: incidentModel(row),
+      incident: incidentModel(row, user),
     })), meta: { unread: result.rows.filter(row => !row.read_at).length } };
   });
 

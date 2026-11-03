@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { requireCondition, choice, object } from './errors.js';
 import { addDays, cardText, isCalendarDate, wibDay, type CardIncident, type Level } from './geo.js';
-import type { Database } from './models.js';
+import type { Database, User } from './models.js';
 
 const OPEN = `('ditugaskan', 'menuju')`;
 
@@ -14,6 +14,15 @@ const OPEN = `('ditugaskan', 'menuju')`;
  */
 export type Scope = 'real' | 'demo';
 export const scopeOf = (request: FastifyRequest): Scope => (request.user?.demo ? 'demo' : 'real');
+
+/** Who reads a response: the signed-in account, or nothing for a visitor. */
+export type Viewer = Pick<User, 'demo'> | null | undefined;
+/**
+ * Whether the viewer reads the private part of a field check or task (its note, photo, and who filed or assigned it).
+ * Signed-in teams do and visitors do not. A demo session is open to anyone, so it does for demo rows only, which other
+ * visitors typed on the shared accounts: a real volunteer's notes, photos and name stay with real accounts.
+ */
+export const seesPrivate = (viewer: Viewer, demoRow: boolean) => Boolean(viewer) && (!viewer!.demo || demoRow);
 
 /** SQL for a scope: the incident's field check summary as the scope sees it, and the condition on rows that carry is_demo. */
 export function scopeSql(scope: Scope) {
@@ -131,11 +140,11 @@ export function incidentSelect(scope: Scope) {
   lc.status AS check_status, lc.observed_at AS check_observed_at, lc.is_demo AS check_demo,
   task.id AS task_id, task.status AS task_status, task.note AS task_note, task.created_at AS task_created_at, task.updated_at AS task_updated_at,
   task.closed_at AS task_closed_at, task.assignee_id AS task_assignee_id, task.assignee_name AS task_assignee_name,
-  task.assignee_organization AS task_assignee_organization, task.assigned_by_name AS task_assigned_by
+  task.assignee_organization AS task_assignee_organization, task.assigned_by_name AS task_assigned_by, task.is_demo AS task_is_demo
   FROM incidents i LEFT JOIN villages v ON v.id = i.village_id
   LEFT JOIN LATERAL (SELECT c.status, c.observed_at, c.is_demo FROM verifications c WHERE c.incident_id = i.id${s.rows('c')}
     ORDER BY c.observed_at DESC, c.received_at DESC LIMIT 1) lc ON true
-  LEFT JOIN LATERAL (SELECT a.id, a.status, a.note, a.created_at, a.updated_at, a.closed_at, a.assignee_id, u.name AS assignee_name,
+  LEFT JOIN LATERAL (SELECT a.id, a.status, a.note, a.created_at, a.updated_at, a.closed_at, a.assignee_id, a.is_demo, u.name AS assignee_name,
       u.organization AS assignee_organization, b.name AS assigned_by_name
     FROM assignments a JOIN users u ON u.id = a.assignee_id JOIN users b ON b.id = a.assigned_by
     WHERE a.incident_id = i.id${s.rows('a')} ORDER BY (a.status IN ${OPEN}) DESC, a.created_at DESC LIMIT 1) task ON true`;
@@ -165,10 +174,10 @@ export function assignmentModel(row: Record<string, any>, prefix = 'task_', team
 }
 
 /**
- * A row of incidentSelect as the API returns it; field checks and the task are those of the row's scope. `team` is false
- * for visitors who are not signed in: they see the squad of a task, not its note.
+ * A row of incidentSelect as the API returns it; field checks and the task are those of the row's scope. Visitors see
+ * the squad of a task, not its note or who assigned it, and so does a demo session for a real task (see seesPrivate).
  */
-export function incidentModel(row: Record<string, any>, team = true) {
+export function incidentModel(row: Record<string, any>, viewer: Viewer) {
   const village = row.village_id ? { id: row.village_id, name: row.village_name, district: row.village_district, regency: row.village_regency,
     province: row.village_province, center: [row.village_lon, row.village_lat] as [number, number] } : null;
   return {
@@ -181,7 +190,7 @@ export function incidentModel(row: Record<string, any>, team = true) {
     settlementMeters: row.settlement_m, score: row.score, scoreParts: row.score_parts, level: row.level,
     firstVerifiedAt: row.scope_verified_at?.toISOString() ?? null, latestStatus: row.scope_status ?? null,
     latestCheck: row.check_status ? { status: row.check_status, observedAt: row.check_observed_at.toISOString(), demo: row.check_demo } : null,
-    assignment: assignmentModel(row, 'task_', team),
+    assignment: assignmentModel(row, 'task_', seesPrivate(viewer, Boolean(row.task_is_demo))),
     nearestPlace: nearestPlace(row),
     indicatedAreaHa: row.indicated_area_ha === null || row.indicated_area_ha === undefined ? null : Number(row.indicated_area_ha),
     card: village ? cardText(cardIncident(row)) : null,
@@ -436,7 +445,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
       GROUP BY day ORDER BY day`, [id]);
     return { data: { id: village.id, name: village.name, district: village.district, regency: village.regency, province: village.province,
       peatShare: Number(village.peat_share), areaHa: Number(village.area_ha), center: [village.lon, village.lat], centerSource: village.center_source,
-      geometry: village.geometry, incidents: incidents.rows.map(row => incidentModel(row, Boolean(request.user))), daily: daily.rows } };
+      geometry: village.geometry, incidents: incidents.rows.map(row => incidentModel(row, request.user)), daily: daily.rows } };
   });
 
   // The incident list for the map sidebar, the volunteer and the agency queues, with the same filters as the map.
@@ -460,19 +469,19 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 500, 400, 'INVALID_INPUT', 'Batas daftar harus 1–500.');
     const result = await pool.query(`${incidentSelect(scope)} WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}${where}
       ORDER BY ${sortSql(sort, scope)} LIMIT ${limit}`, params);
-    return { data: result.rows.map(row => incidentModel(row, Boolean(request.user))) };
+    return { data: result.rows.map(row => incidentModel(row, request.user)) };
   });
 
   app.get('/api/v1/incidents/:id', async request => {
     const scope = scopeOf(request);
     const s = scopeSql(scope);
     const row = await getIncident(pool, String(object(request.params).id), scope);
-    const signedIn = Boolean(request.user);
+    const viewer = request.user;
     const detections = await pool.query(`SELECT id, satellite, acq_at, latitude, longitude, confidence, confidence_pct, frp, bright_ti4, scan, track, daynight,
         on_peat, near_static
       FROM detections WHERE incident_id = $1 ORDER BY acq_at, id`, [row.id]);
-    // The public sees what was found and when; who checked it, their notes and photos are for signed-in teams. Field
-    // checks and tasks are those of the scope.
+    // The public sees what was found and when; who checked it, their notes and photos are for signed-in teams, and for a
+    // demo session only on demo checks (see seesPrivate). Field checks and tasks are those of the scope.
     const verifications = await pool.query(`SELECT v.id, v.status, v.false_alarm_kind, v.observed_at, v.received_at, v.distance_m, v.is_demo,
         v.note, v.photo_url, v.photo_thumb_url, u.name AS reporter, u.role AS reporter_role
       FROM verifications v JOIN users u ON u.id = v.user_id WHERE v.incident_id = $1${s.rows('v')} ORDER BY v.observed_at DESC`, [row.id]);
@@ -487,9 +496,9 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
         ...(task.status === 'dibatalkan' && task.closed_at ? [{ kind: 'cancelled' as const, at: task.closed_at.toISOString(), actor: task.assignee }] : []),
       ]),
       ...verifications.rows.map(v => ({ kind: 'checked' as const, at: v.observed_at.toISOString(), status: v.status, demo: v.is_demo,
-        ...(signedIn ? { actor: v.reporter } : {}) })),
+        ...(seesPrivate(viewer, v.is_demo) ? { actor: v.reporter } : {}) })),
     ].sort((a, b) => a.at.localeCompare(b.at) || order[a.kind] - order[b.kind]);
-    return { data: { ...incidentModel(row, signedIn),
+    return { data: { ...incidentModel(row, viewer),
       detections: detections.rows.map(d => ({ id: Number(d.id), satellite: d.satellite, sensor: d.satellite === 'T' || d.satellite === 'A' ? 'MODIS' : 'VIIRS',
         acqAt: d.acq_at.toISOString(), latitude: d.latitude, longitude: d.longitude, confidence: d.confidence, confidencePct: d.confidence_pct,
         frp: d.frp === null ? null : Number(d.frp), brightTi4: d.bright_ti4 === null ? null : Number(d.bright_ti4),
@@ -497,7 +506,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
         onPeat: d.on_peat, nearStatic: d.near_static })),
       verifications: verifications.rows.map(v => ({ id: v.id, status: v.status, falseAlarmKind: v.false_alarm_kind, observedAt: v.observed_at.toISOString(),
         receivedAt: v.received_at.toISOString(), distanceMeters: v.distance_m, demo: v.is_demo,
-        ...(signedIn ? { note: v.note, photoUrl: v.photo_url, photoThumbUrl: v.photo_thumb_url, reporter: v.reporter } : {}) })),
+        ...(seesPrivate(viewer, v.is_demo) ? { note: v.note, photoUrl: v.photo_url, photoThumbUrl: v.photo_thumb_url, reporter: v.reporter } : {}) })),
       timeline } };
   });
 }

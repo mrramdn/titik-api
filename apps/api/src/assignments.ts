@@ -97,7 +97,7 @@ export function installAssignments(app: FastifyInstance, pool: pg.Pool, send?: S
     const rows = (await pool.query(`SELECT ${taskColumns('my_')}, inc.* FROM assignments a ${taskJoins} JOIN (${incidentSelect(scope)}) inc ON inc.id = a.incident_id
       WHERE a.assignee_id = $1${scopeSql(scope).rows('a')} AND (a.status IN ${OPEN} OR a.closed_at > now() - interval '7 days')
       ORDER BY a.created_at DESC LIMIT 100`, [user.id])).rows;
-    return { data: rows.map(row => ({ ...assignmentModel(row, 'my_')!, incident: incidentModel(row) })) };
+    return { data: rows.map(row => ({ ...assignmentModel(row, 'my_')!, incident: incidentModel(row, user) })) };
   });
 
   // Squads that can take a task, nearest first: distance from the closest village they watch to the incident. A demo

@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { authenticated } from './auth.js';
 import { choice, object } from './errors.js';
 import { confidenceLabel, falseAlarmLabel, formatWib, satelliteLabel, statusLabel } from './geo.js';
-import { regionFilter, scopeOf, scopeSql } from './incidents.js';
+import { regionFilter, scopeOf, scopeSql, seesPrivate } from './incidents.js';
 
 const ranges = { '24h': '24 hours', '7d': '7 days' } as const;
 const rangeOf = (query: unknown) => ranges[choice(object(query ?? {}).range ?? '24h', ['24h', '7d'] as const, 'Rentang')];
@@ -17,10 +17,11 @@ export const countByStatus = (rows: { status: string; count: number }[]) =>
 // high-priority ones nobody has checked or been sent to yet, and the tasks under way. Every number uses the same
 // incidents (detected in the chosen range, inside the chosen region), so the counts never contradict each other.
 // The median runs from the satellite pass to the first field check, so it includes the hours FIRMS needs to
-// publish a detection. Field checks and tasks are those of the viewer's scope: a demo session also counts demo ones.
+// publish a detection. Field checks and tasks are those of the viewer's scope: a demo session also counts demo ones, and
+// reads real field checks as visitors would (see seesPrivate).
 export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/dashboard', async request => {
-    authenticated(request, 'bpbd');
+    const user = authenticated(request, 'bpbd');
     const range = rangeOf(request.query);
     const rp: unknown[] = [range];
     const where = regionFilter(object(request.query ?? {}), rp);
@@ -74,19 +75,23 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
       villages: villages.rows.map(row => ({ id: row.id, name: row.name, district: row.district, regency: row.regency, center: [row.lon, row.lat], incidents: row.incidents,
         detections: row.detections, verified: row.verified, openHigh: row.open_high, assigned: row.assigned, maxScore: row.max_score, onPeat: row.on_peat,
         lastDetectedAt: row.last_detected_at.toISOString(), medianMinutesToVerification: median(row.median_minutes) })),
-      recentVerifications: recent.rows.map(row => ({ id: row.id, status: row.status, falseAlarmKind: row.false_alarm_kind, observedAt: row.observed_at.toISOString(),
-        receivedAt: row.received_at.toISOString(), distanceMeters: row.distance_m, note: row.note, photoThumbUrl: row.photo_thumb_url, demo: row.is_demo,
-        reporter: row.reporter, incidentId: row.incident_id, villageName: row.village_name,
-        minutesFromDetection: Math.round((row.observed_at.getTime() - row.first_detected_at.getTime()) / 60000) })),
+      recentVerifications: recent.rows.map(row => {
+        const shown = seesPrivate(user, row.is_demo);
+        return { id: row.id, status: row.status, falseAlarmKind: row.false_alarm_kind, observedAt: row.observed_at.toISOString(),
+          receivedAt: row.received_at.toISOString(), distanceMeters: row.distance_m, note: shown ? row.note : '', photoThumbUrl: shown ? row.photo_thumb_url : null,
+          demo: row.is_demo, reporter: shown ? row.reporter : '', incidentId: row.incident_id, villageName: row.village_name,
+          minutesFromDetection: Math.round((row.observed_at.getTime() - row.first_detected_at.getTime()) / 60000) };
+      }),
       verificationsFromDemoAccounts: { total: demoShare.total, demo: demoShare.demo },
     } };
   });
 
   // Field reports in the shape of the SiPongi+ groundcheck form, so an agency can pass them on. The first field check
   // of each incident in the viewer's scope: real accounts export real checks only. A demo row was typed on an account
-  // every visitor shares, so its note and photo stay out and its place is the incident centre.
+  // every visitor shares, so its note and photo stay out and its place is the incident centre. A demo session is open to
+  // anyone, so the real rows it gets carry no volunteer's position, note or photo either.
   app.get('/api/v1/export/groundcheck.csv', async (request, reply) => {
-    authenticated(request, 'bpbd');
+    const user = authenticated(request, 'bpbd');
     const range = rangeOf(request.query);
     const rp: unknown[] = [range];
     const where = regionFilter(object(request.query ?? {}), rp);
@@ -107,14 +112,15 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
     const sensor = (row: Record<string, any>) => [row.viirs_count > 0 ? 'VIIRS' : '', row.modis_count > 0 ? 'MODIS' : ''].filter(Boolean).join('+');
     const lines = rows.map(row => {
       const demo = Boolean(row.status && row.is_demo);
-      const checker = (value: unknown, centre: number) => (value === null || value === undefined ? '' : demo ? centre : value);
+      const hidden = demo || user.demo;
+      const checker = (value: unknown, centre: number) => (value === null || value === undefined ? '' : demo ? centre : hidden ? '' : value);
       return [row.code, date.format(row.first_detected_at), formatWib(row.first_detected_at), row.province, row.regency, row.district, row.village,
         row.lat.toFixed(5), row.lon.toFixed(5), row.satellites.map((s: string) => satelliteLabel[s] ?? s).join('/'), sensor(row), row.detection_count,
         confidenceLabel[row.best_confidence] ?? '', row.modis_pct ?? '', row.max_frp ?? '', row.on_peat ? 'ya' : 'tidak', row.score, row.level,
         row.status ? statusLabel[row.status] : 'belum dicek', row.status ? (row.status === 'alarm_palsu' ? 'ya' : 'tidak') : '',
         row.false_alarm_kind ? falseAlarmLabel[row.false_alarm_kind] : '', row.observed_at ? `${date.format(row.observed_at)} ${formatWib(row.observed_at)}` : '',
         row.observed_at ? Math.round((row.observed_at.getTime() - row.first_detected_at.getTime()) / 60000) : '', checker(row.v_lat, row.lat), checker(row.v_lon, row.lon),
-        row.distance_m ?? '', demo ? '' : row.note ?? '', !demo && row.photo_url ? `${origin}${row.photo_url}` : '', row.status ? (row.is_demo ? 'ya' : 'tidak') : '',
+        row.distance_m ?? '', hidden ? '' : row.note ?? '', !hidden && row.photo_url ? `${origin}${row.photo_url}` : '', row.status ? (row.is_demo ? 'ya' : 'tidak') : '',
       ].map(cell).join(',');
     });
     reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="titik-api-groundcheck-${date.format(new Date())}.csv"`);

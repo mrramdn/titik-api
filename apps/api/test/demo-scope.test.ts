@@ -267,6 +267,11 @@ test('one open task per incident in each scope: a demo task never blocks a real 
   const shown = (await data(`/incidents/${incidents.C}`)).assignment;
   assert.deepEqual([shown.id, shown.assignee.id, shown.note, shown.assignedBy], [realTask.json().data.id, real.mpa.id, '', '']);
   assert.deepEqual([(await data(`/incidents/${incidents.C}`, real.mpa.token)).assignment.note], ['Cek dari jalan kanal.']);
+  // A demo session, open to anyone, sees it as visitors do, in the detail and in the lists.
+  const toDemo = (await data(`/incidents/${incidents.C}`, demo.bpbd)).assignment;
+  assert.deepEqual([toDemo.id, toDemo.note, toDemo.assignedBy], [realTask.json().data.id, '', '']);
+  const listed = (await data('/incidents?hours=24&status=assigned', demo.bpbd) as any[]).find(row => row.id === incidents.C).assignment;
+  assert.deepEqual([listed.id, listed.note, listed.assignedBy], [realTask.json().data.id, '', '']);
   // A demo account sends demo squads only, and changes demo tasks only; a real account the same the other way round.
   assert.equal((await assign(demo.bpbd, 'G', real.mpa.id)).statusCode, 400);
   assert.equal((await assign(real.bpbd.token, 'G', demoMpaId)).statusCode, 400);
@@ -294,7 +299,28 @@ test('one open task per incident in each scope: a demo task never blocks a real 
   assert.deepEqual([publicView.latestStatus, publicView.verifications.length, publicView.assignment.id], ['api_aktif', 1, nextReal.json().data.id]);
 });
 
-test('the groundcheck export: real rows for a real account; a demo session also gets demo rows, without their notes, photos or positions', async () => {
+test('a demo session, open to anyone, reads real field checks as visitors do, and demo ones in full', async () => {
+  // F has a real check with a note (see above), A a demo one.
+  const team = await data(`/incidents/${incidents.F}`, real.bpbd.token);
+  const realCheck = team.verifications.find((v: any) => !v.demo);
+  assert.deepEqual([realCheck.note, realCheck.reporter], ['Asap tipis dari kanal', 'Akun nyata mpa']);
+  assert.ok(team.timeline.some((event: any) => event.kind === 'checked' && event.actor === 'Akun nyata mpa'));
+  const toDemo = await data(`/incidents/${incidents.F}`, demo.bpbd);
+  const shown = toDemo.verifications.find((v: any) => v.id === realCheck.id);
+  assert.deepEqual([shown.status, shown.distanceMeters, 'note' in shown, 'photoUrl' in shown, 'reporter' in shown], [realCheck.status, realCheck.distanceMeters, false, false, false]);
+  assert.ok(!toDemo.timeline.some((event: any) => event.kind === 'checked' && event.actor), 'nor who checked it');
+  const demoCheck = (await data(`/incidents/${incidents.A}`, demo.bpbd)).verifications[0];
+  assert.deepEqual([demoCheck.demo, demoCheck.note, demoCheck.reporter], [true, 'Asap tipis dari pengunjung', demoAccounts[0].name]);
+  // The dashboard feed the same way.
+  const feed = async (token: string) => (await data('/dashboard?range=24h', token)).recentVerifications as any[];
+  const realFeed = (await feed(real.bpbd.token)).find(v => v.id === realCheck.id);
+  assert.deepEqual([realFeed.note, realFeed.reporter], ['Asap tipis dari kanal', 'Akun nyata mpa']);
+  const demoFeed = await feed(demo.bpbd);
+  assert.deepEqual(demoFeed.filter(v => !v.demo).map(v => [v.note, v.photoThumbUrl, v.reporter]), [['', null, ''], ['', null, ''], ['', null, '']], 'the real checks of C, E and F');
+  assert.ok(demoFeed.some(v => v.demo && v.note === 'Asap tipis dari pengunjung'));
+});
+
+test('the groundcheck export: real rows for a real account; a demo session also gets demo rows, and nobody\'s note, photo or position', async () => {
   const [a, f] = [await codeOf('A'), await codeOf('F')];
   const realRows = await exported(real.bpbd.token);
   assert.deepEqual([realRows.get(a)!.status_verifikasi, realRows.get(a)!.akun_demo, realRows.get(a)!.keterangan], ['belum dicek', '', '']);
@@ -305,7 +331,10 @@ test('the groundcheck export: real rows for a real account; a demo session also 
   assert.deepEqual([row.status_verifikasi, row.akun_demo, row.keterangan, row.foto], [statusLabel.asap_bara, 'ya', '', '']);
   assert.deepEqual([Number(row.lintang_pemeriksa), Number(row.bujur_pemeriksa)], [centre.lat, centre.lon], 'the incident centre, not where the visitor stood');
   assert.ok(Number(row.jarak_pemeriksa_m) > 400);
-  assert.equal(demoRows.get(f)!.keterangan, 'Asap tipis dari kanal', 'real rows stay whole');
+  // A real row keeps its result and distance, not the volunteer's position, note or photo.
+  const realRow = demoRows.get(f)!;
+  assert.deepEqual([realRow.status_verifikasi, realRow.akun_demo, realRow.jarak_pemeriksa_m], [statusLabel.asap_bara, 'tidak', realRows.get(f)!.jarak_pemeriksa_m]);
+  assert.deepEqual([realRow.lintang_pemeriksa, realRow.bujur_pemeriksa, realRow.keterangan, realRow.foto], ['', '', '', '']);
 });
 
 test('the demo reset deletes the photos of demo checks and the push subscriptions of demo accounts, and keeps everything real', async () => {
