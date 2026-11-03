@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ArchiveDays, Incident, IngestSatellite, IngestStatus } from '../../api';
 import { defaultFilters } from '../../api';
-import { clockOffset, readFreshness, roughMinutes, STALLED_MINUTES } from './freshness';
+import { clockOffset, readFreshness, roughMinutes, SIPONGI_URL, STALLED_MINUTES } from './freshness';
 import { QUIET_INCIDENTS, quietSuggestion } from '../../map/archive';
 import { incidentState, matchesFilters, prepareRows, summarize } from '../../map/list';
 import { incidentFilter } from '../../map/style';
@@ -93,6 +93,14 @@ describe('freshness in the top bar', () => {
     ] } as unknown as IngestStatus;
     expect(readFreshness(old, now)).toMatchObject({ lastSuccessAt: at(-200), stalled: true, failed: true });
     expect(readFreshness({ ...old, runs: [] }, now)).toMatchObject({ lastSuccessAt: null, stalled: false });
+  });
+
+  it('sends visitors to SiPongi+ at its current address, not the retired menlhk.go.id one', () => {
+    // The ministry split moved SiPongi+ to the Ministry of Forestry; sipongi.menlhk.go.id answers NXDOMAIN since.
+    const url = new URL(SIPONGI_URL);
+    expect(url.protocol).toBe('https:');
+    expect(url.hostname).toBe('sipongi.gakkum.kehutanan.go.id');
+    expect(url.hostname).not.toMatch(/menlhk\.go\.id$/);
   });
 });
 

@@ -43,8 +43,11 @@ export interface Freshness {
  * 30-minute runs, so one slow FIRMS file does not alarm visitors. GET /health/data, for monitoring, turns stale at 90.
  */
 export const STALLED_MINUTES = 120;
-/** SiPongi+, the official forest and land fire monitoring system: where to look while the data here is not updating. */
-export const SIPONGI_URL = 'https://sipongi.menlhk.go.id';
+/**
+ * SiPongi+, the official forest and land fire monitoring system: where to look while the data here is not updating.
+ * It moved to the Ministry of Forestry with the ministry split; sipongi.menlhk.go.id no longer resolves.
+ */
+export const SIPONGI_URL = 'https://sipongi.gakkum.kehutanan.go.id/';
 
 const order = ['N21', 'N20', 'N', 'T', 'A'];
 const MINUTE = 60_000;
