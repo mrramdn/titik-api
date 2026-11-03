@@ -81,12 +81,18 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
       written.push(join(uploadsDir, `${name}.jpg`), join(uploadsDir, `${name}.thumb.jpg`));
       photoUrl = `/uploads/${name}.jpg`; thumbUrl = `/uploads/${name}.thumb.jpg`;
     }
-    const teaches = status === 'alarm_palsu';
+    // A false alarm from a real account teaches the triage. Demo accounts are open to every visitor: theirs never does.
+    const teaches = status === 'alarm_palsu' && !user.demo;
     try {
       const saved = await transaction(pool, async client => {
+        // A demo account is shared, and other visitors read its reports: the place stored is the incident's centre, never
+        // the visitor's position, though the distance to the hotspot is measured from that position as for anyone.
         const inserted = await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, note, latitude, longitude, accuracy_m,
             distance_m, observed_at, photo_url, photo_thumb_url, is_demo)
-          SELECT $1, $2, $3, $4, $5, $6, $7::float8, $8::float8, $9,
+          SELECT $1, $2, $3, $4, $5, $6,
+            CASE WHEN $7::float8 IS NULL THEN NULL WHEN $13::boolean THEN ST_Y(i.centroid) ELSE $7::float8 END,
+            CASE WHEN $8::float8 IS NULL THEN NULL WHEN $13::boolean THEN ST_X(i.centroid) ELSE $8::float8 END,
+            CASE WHEN $13::boolean THEN NULL ELSE $9::numeric END,
             CASE WHEN $7::float8 IS NULL THEN NULL ELSE round(ST_Distance(ST_SetSRID(ST_MakePoint($8::float8, $7::float8), 4326)::geography, i.centroid::geography))::integer END,
             $10, $11, $12, $13 FROM incidents i WHERE i.id = $1
           ON CONFLICT (client_uuid) DO NOTHING RETURNING id`,

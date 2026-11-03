@@ -83,7 +83,8 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
   });
 
   // Field reports in the shape of the SiPongi+ groundcheck form, so an agency can pass them on. The first field check
-  // of each incident in the viewer's scope: real accounts export real checks only.
+  // of each incident in the viewer's scope: real accounts export real checks only. A demo row was typed on an account
+  // every visitor shares, so its note and photo stay out and its place is the incident centre.
   app.get('/api/v1/export/groundcheck.csv', async (request, reply) => {
     authenticated(request, 'bpbd');
     const range = rangeOf(request.query);
@@ -104,13 +105,18 @@ export function installDashboard(app: FastifyInstance, pool: pg.Pool) {
       'foto', 'akun_demo'];
     const cell = (value: unknown) => { const s = value === null || value === undefined ? '' : String(value); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const sensor = (row: Record<string, any>) => [row.viirs_count > 0 ? 'VIIRS' : '', row.modis_count > 0 ? 'MODIS' : ''].filter(Boolean).join('+');
-    const lines = rows.map(row => [row.code, date.format(row.first_detected_at), formatWib(row.first_detected_at), row.province, row.regency, row.district, row.village,
-      row.lat.toFixed(5), row.lon.toFixed(5), row.satellites.map((s: string) => satelliteLabel[s] ?? s).join('/'), sensor(row), row.detection_count,
-      confidenceLabel[row.best_confidence] ?? '', row.modis_pct ?? '', row.max_frp ?? '', row.on_peat ? 'ya' : 'tidak', row.score, row.level,
-      row.status ? statusLabel[row.status] : 'belum dicek', row.status ? (row.status === 'alarm_palsu' ? 'ya' : 'tidak') : '',
-      row.false_alarm_kind ? falseAlarmLabel[row.false_alarm_kind] : '', row.observed_at ? `${date.format(row.observed_at)} ${formatWib(row.observed_at)}` : '',
-      row.observed_at ? Math.round((row.observed_at.getTime() - row.first_detected_at.getTime()) / 60000) : '', row.v_lat ?? '', row.v_lon ?? '', row.distance_m ?? '',
-      row.note ?? '', row.photo_url ? `${origin}${row.photo_url}` : '', row.status ? (row.is_demo ? 'ya' : 'tidak') : ''].map(cell).join(','));
+    const lines = rows.map(row => {
+      const demo = Boolean(row.status && row.is_demo);
+      const checker = (value: unknown, centre: number) => (value === null || value === undefined ? '' : demo ? centre : value);
+      return [row.code, date.format(row.first_detected_at), formatWib(row.first_detected_at), row.province, row.regency, row.district, row.village,
+        row.lat.toFixed(5), row.lon.toFixed(5), row.satellites.map((s: string) => satelliteLabel[s] ?? s).join('/'), sensor(row), row.detection_count,
+        confidenceLabel[row.best_confidence] ?? '', row.modis_pct ?? '', row.max_frp ?? '', row.on_peat ? 'ya' : 'tidak', row.score, row.level,
+        row.status ? statusLabel[row.status] : 'belum dicek', row.status ? (row.status === 'alarm_palsu' ? 'ya' : 'tidak') : '',
+        row.false_alarm_kind ? falseAlarmLabel[row.false_alarm_kind] : '', row.observed_at ? `${date.format(row.observed_at)} ${formatWib(row.observed_at)}` : '',
+        row.observed_at ? Math.round((row.observed_at.getTime() - row.first_detected_at.getTime()) / 60000) : '', checker(row.v_lat, row.lat), checker(row.v_lon, row.lon),
+        row.distance_m ?? '', demo ? '' : row.note ?? '', !demo && row.photo_url ? `${origin}${row.photo_url}` : '', row.status ? (row.is_demo ? 'ya' : 'tidak') : '',
+      ].map(cell).join(',');
+    });
     reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="titik-api-groundcheck-${date.format(new Date())}.csv"`);
     return '﻿' + [header.join(','), ...lines].join('\r\n') + '\r\n';
   });
