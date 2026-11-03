@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { Incident, IngestSatellite, IngestStatus } from '../../api';
+import type { ArchiveDays, Incident, IngestSatellite, IngestStatus } from '../../api';
 import { defaultFilters } from '../../api';
 import { clockOffset, readFreshness, roughMinutes, STALLED_MINUTES } from './freshness';
+import { QUIET_INCIDENTS, quietSuggestion } from '../../map/archive';
 import { incidentState, matchesFilters, prepareRows, summarize } from '../../map/list';
 import { incidentFilter } from '../../map/style';
 import { dailyLayer } from '../../map/imagery';
@@ -92,6 +93,30 @@ describe('freshness in the top bar', () => {
     ] } as unknown as IngestStatus;
     expect(readFreshness(old, now)).toMatchObject({ lastSuccessAt: at(-200), stalled: true, failed: true });
     expect(readFreshness({ ...old, runs: [] }, now)).toMatchObject({ lastSuccessAt: null, stalled: false });
+  });
+});
+
+describe('quiet live map', () => {
+  const archive: ArchiveDays = { first: '2026-10-08', last: '2026-11-02', days: [
+    { date: '2026-10-22', detections: 23316, incidents: 3237 },
+    { date: '2026-10-23', detections: 25614, incidents: 3001 },
+    { date: '2026-10-28', detections: 311, incidents: 47 },
+  ] };
+
+  it('points to the busiest archive day while fewer than 100 incidents show in 24 hours', () => {
+    expect(QUIET_INCIDENTS).toBe(100);
+    expect(quietSuggestion(47, archive, '')).toBe('2026-10-23');
+    expect(quietSuggestion(0, archive, '')).toBe('2026-10-23');
+    expect(quietSuggestion(99, archive, '')).toBe('2026-10-23');
+    expect(quietSuggestion(100, archive, '')).toBe('');
+  });
+
+  it('stays away in the archive, without an archive, before the count is known and when no day was busy', () => {
+    expect(quietSuggestion(12, archive, '2026-10-23')).toBe('');
+    expect(quietSuggestion(12, null, '')).toBe('');
+    expect(quietSuggestion(undefined, archive, '')).toBe('');
+    expect(quietSuggestion(null, archive, '')).toBe('');
+    expect(quietSuggestion(12, { ...archive, days: [archive.days[2]!] }, '')).toBe('');
   });
 });
 

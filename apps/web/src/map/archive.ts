@@ -31,6 +31,24 @@ export function busiestDay(days: ArchiveDay[]): string {
   return best?.date ?? '';
 }
 
+/**
+ * Under this many incidents in the last 24 hours over both provinces the live map counts as quiet. From 8 to 24 October
+ * 2026 there were 900 to 3,200 incidents a day, from 25 October to 3 November 50 to 500. Under 100, the map of both
+ * provinces shows a few scattered points, and a first visit would not see what the app does on a busy day.
+ */
+export const QUIET_INCIDENTS = 100;
+
+/**
+ * The archive day to point to while the live map is quiet: the busiest one, when it had at least QUIET_INCIDENTS
+ * incidents. '' in the archive, without an archive, before the count is known, or when the live map is not quiet.
+ */
+export function quietSuggestion(incidents24h: number | null | undefined, archive: ArchiveDays | null, tanggal: string): string {
+  if (tanggal || !archive || typeof incidents24h !== 'number' || incidents24h >= QUIET_INCIDENTS) return '';
+  const date = busiestDay(archive.days);
+  const day = archive.days.find(item => item.date === date);
+  return day && day.incidents >= QUIET_INCIDENTS ? date : '';
+}
+
 /** Bar heights for the archive chart as a share of the busiest day; a day with any detection keeps a visible sliver. */
 export function barHeights(days: ArchiveDay[]): number[] {
   const top = Math.max(1, ...days.map(day => day.detections));

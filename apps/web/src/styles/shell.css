@@ -184,6 +184,10 @@
 .side-msg { display: grid; justify-items: start; gap: 10px; padding: 20px 16px; font-size: 13px; line-height: 18px; color: var(--chrome-text-2); }
 .side-msg .muted { color: var(--chrome-text-3); }
 .side-more { padding: 12px 16px 16px; }
+/* A quiet live map points to the archive's busiest day. */
+.quiet-hint { margin: 12px 16px 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--chrome-900); border: 1px solid var(--chrome-line); font-size: 12px; line-height: 17px; color: var(--chrome-text-2); }
+.quiet-hint a { color: var(--chrome-text); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
+.quiet-hint a:hover { text-decoration-color: currentColor; }
 /* The demo line closes the sidebar on wide screens; on a phone it comes first, right under the map. */
 .side-foot-link { color: var(--chrome-text-2); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
 .side-foot-link:hover { color: var(--chrome-text); text-decoration-color: currentColor; }

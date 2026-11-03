@@ -7,7 +7,7 @@ import { PriorityMark, StatusLine, useApi, useDataVersion } from '../components/
 import { useLoad } from '../components/bpbd/data';
 import { signOutFlag, useRoleSwitch } from '../components/shell/roles';
 import { MapView, type Selected } from '../map/MapView';
-import { inArchive, tanggalFromSearch, windowStart, withTanggal } from '../map/archive';
+import { inArchive, quietSuggestion, tanggalFromSearch, windowStart, withTanggal } from '../map/archive';
 import { ArchiveBanner, ArchivePicker, ArchiveSwitch } from '../map/ArchiveControls';
 import { clearedFilters, narrowed, prepareRows, summarize } from '../map/list';
 import { riskLinkDay } from '../map/risk';
@@ -32,6 +32,7 @@ const text = dict({
     widen: 'Lihat 7 hari terakhir', widenArchive: 'Lihat 7 hari sampai tanggal ini', checkedEvery: 'Data satelit diperiksa tiap 30 menit.', retry: 'Muat ulang',
     more: 'Tampilkan {n} kejadian lagi',
     demo: 'Demo portofolio dengan data satelit asli, bukan sistem peringatan resmi. Darurat 112.', demoMore: 'Selengkapnya',
+    quiet: 'Sedikit titik panas dalam 24 jam terakhir.', quietLink: 'Lihat hari tersibuk di arsip, {date}',
   },
   en: {
     intro: 'This map shows satellite hotspots, grouped into incidents per village and ranked by priority.',
@@ -48,6 +49,7 @@ const text = dict({
     widen: 'Show the last 7 days', widenArchive: 'Show the 7 days up to this date', checkedEvery: 'Satellite data is checked every 30 minutes.', retry: 'Reload',
     more: 'Show {n} more incidents',
     demo: 'Portfolio demo with real satellite data, not an official warning system. Emergency 112.', demoMore: 'Read more',
+    quiet: 'Few hotspots in the last 24 hours.', quietLink: 'See the busiest day in the archive, {date}',
   },
 });
 type Key = keyof typeof text.id;
@@ -247,7 +249,13 @@ export function IncidentList() {
   const asked = legacy && filters.levels.length > 1 ? { ...filters, levels: [] } : filters;
   const list = useApi<Incident[]>(`/incidents${incidentQuery(asked, query)}&limit=${LIMIT}`, version);
   // /summary knows the time window, the archive date and the region only, so other filters do not refetch it.
-  const server = useApi<Summary>(`/summary?hours=${filters.hours}${filters.regency ? `&regency=${encodeURIComponent(filters.regency)}` : ''}${query}${tanggalParam(filters.tanggal)}`, version);
+  const summaryPath = `/summary?hours=${filters.hours}${filters.regency ? `&regency=${encodeURIComponent(filters.regency)}` : ''}${query}${tanggalParam(filters.tanggal)}`;
+  const server = useApi<Summary>(summaryPath, version);
+  // The last 24 hours over both provinces decide whether the live map is quiet. Asked for only when the list's own
+  // summary is not already that, and not in the archive or when the server has no archive to point to.
+  const quietPath = '/summary?hours=24';
+  const live = useApi<Summary>(archive && !filters.tanggal && summaryPath !== quietPath ? quietPath : null, version);
+  const quietDay = quietSuggestion((summaryPath === quietPath ? server.data : live.data)?.incidents, archive, filters.tanggal);
   const hits = useApi<VillageHit[]>(q.trim().length >= 2 ? `/villages?q=${encodeURIComponent(q.trim())}${query}` : null);
   const rows = useMemo(() => (Array.isArray(list.data) ? prepareRows(list.data, filters) : null), [list.data, key]);
   // Counts follow the same filters as the rows: from the rows when the list is complete; from /summary when only
@@ -282,6 +290,16 @@ export function IncidentList() {
           <div className="hot"><b>{counts ? number(counts.highOpen, counts.atLeast) : '–'}</b><span>{t('highOpen')}</span></div>
           <div><b>{counts ? number(counts.detections, counts.atLeast) : '–'}</b><span>{t('hotspots')}</span></div>
         </div>
+        {quietDay && (
+          <p className="quiet-hint">{t('quiet')}{' '}
+            <a href={`/?tanggal=${quietDay}`} onClick={event => {
+              // A plain click switches the map in place; a modified one opens the archive day in a new tab.
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              setFilters({ ...filters, tanggal: quietDay });
+            }}>{t('quietLink', { date: f.calendar(quietDay) })}</a>
+          </p>
+        )}
         <div className="list-head">
           <span className="label">{t('sort')}</span>
           <div className="sortseg" role="group" aria-label={t('sort')}>
