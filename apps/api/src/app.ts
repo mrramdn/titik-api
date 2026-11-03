@@ -18,6 +18,7 @@ import { installAssignments } from './assignments.js';
 import { installRecap } from './recap.js';
 import { installStatus } from './status.js';
 import { installShare } from './share.js';
+import { installRisk } from './weather.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
 
@@ -72,6 +73,7 @@ export async function createApp(options: Options = {}) {
   installAssignments(app, pool, options.pushSender);
   installRecap(app, pool);
   installStatus(app, pool);
+  installRisk(app, pool);
   installShare(app, pool, webDir);
 
   app.get('/api/v1/health', async () => {

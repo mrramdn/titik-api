@@ -3,40 +3,11 @@ import { after, before, test } from 'node:test';
 import { fwiDay, startMoisture } from '../src/fwi.js';
 import { addDays, wibDay } from '../src/geo.js';
 import { computeDays, ensureCells, parseLocations, startWeatherScheduler, updateWeather } from '../src/weather.js';
-import { emptyDatabase, testPool } from './fixtures.js';
+import { emptyDatabase, fakeOpenMeteo, testPool } from './fixtures.js';
 
 const pool = testPool();
 const hourKey = (day: string, hour: number) => `${day}T${String(hour).padStart(2, '0')}:00`;
 const near = (actual: number, expected: number, label: string) => assert.ok(Math.abs(actual - expected) < 1e-9, `${label}: ${actual} vs ${expected}`);
-
-/**
- * A stand-in for Open-Meteo: hourly values for every location of a request, over the days the request asks for
- * (start_date/end_date for the archive, past_days/forecast_days for the forecast). The archive has nothing after
- * `archiveUntil`, like ERA5 a few days behind. Every URL is recorded.
- */
-function fakeOpenMeteo(today: string, archiveUntil: string, value: (source: 'archive' | 'forecast', lat: number, time: string) => number[], urls: string[]) {
-  return (async (input: string | URL | Request) => {
-    const url = new URL(String(input));
-    urls.push(url.toString());
-    const archive = url.hostname === 'archive-api.open-meteo.com';
-    const lats = url.searchParams.get('latitude')!.split(',').map(Number), lons = url.searchParams.get('longitude')!.split(',').map(Number);
-    const first = archive ? url.searchParams.get('start_date')! : addDays(today, -Number(url.searchParams.get('past_days')));
-    const last = archive ? url.searchParams.get('end_date')! : addDays(today, Number(url.searchParams.get('forecast_days')) - 1);
-    const names = ['temperature_2m', 'relative_humidity_2m', 'wind_speed_10m', 'wind_direction_10m', 'precipitation'];
-    const body = lats.map((lat, index) => {
-      const hourly: Record<string, unknown[]> = { time: [], ...Object.fromEntries(names.map(name => [name, []])) };
-      for (let day = first; day <= last; day = addDays(day, 1)) {
-        for (let hour = 0; hour < 24; hour++) {
-          hourly.time!.push(hourKey(day, hour));
-          const values = archive && day > archiveUntil ? names.map(() => null) : value(archive ? 'archive' : 'forecast', lat, hourKey(day, hour));
-          names.forEach((name, k) => hourly[name]!.push(values[k]));
-        }
-      }
-      return { latitude: lat, longitude: lons[index], hourly };
-    });
-    return new Response(JSON.stringify(body.length === 1 ? body[0] : body), { headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
-}
 
 before(async () => { await emptyDatabase(pool); });
 after(async () => { await pool.end(); });

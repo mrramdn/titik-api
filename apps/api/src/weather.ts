@@ -11,11 +11,13 @@
 // recompute from the stored codes of the day before, so model analysis replaces yesterday's forecast. Requests stay
 // well inside Open-Meteo's free tier (10,000 calls a day; more than two weeks of data for one location counts as
 // several calls). A request that fails keeps the last values of its cells and is reported in one log line.
-import type { FastifyBaseLogger } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { createPool } from './db.js';
-import { fwiDay, startMoisture, type FwiCodes, type Moisture } from './fwi.js';
+import { object } from './errors.js';
+import { fwiClass, fwiDay, startMoisture, type FwiCodes, type Moisture } from './fwi.js';
 import { addDays, wibDay } from './geo.js';
+import { archiveDate } from './incidents.js';
 import { migrate } from './migrate.js';
 import { loadReference } from './reference.js';
 
@@ -249,6 +251,7 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
         await client.query('BEGIN');
         try { await save(client, rows, now); await client.query('COMMIT'); }
         catch (error) { await client.query('ROLLBACK'); throw error; }
+        clearRiskCache();
       }
       result.rows = rows.length;
       if (failures.length) {
@@ -261,6 +264,71 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
   } finally {
     client.release();
   }
+}
+
+const risk = new Map<string, { at: number; body: unknown }>();
+/** Forgets the fire danger answers, so the next request shows the weather just saved. */
+export const clearRiskCache = () => risk.clear();
+const round1 = (value: number) => Math.round(value * 10) / 10;
+
+/** A cell's day as the API returns it. The class follows the FWI as returned (one decimal), so the two always agree. */
+function riskDay(row: Record<string, any>) {
+  const codes = { ffmc: round1(row.ffmc), dmc: round1(row.dmc), dc: round1(row.dc), isi: round1(row.isi), bui: round1(row.bui), fwi: round1(row.fwi) };
+  return { date: row.day as string, forecast: row.forecast as boolean, fwiClass: fwiClass(codes.fwi), codes,
+    noon: { tempC: round1(row.temp_c), rhPct: Math.round(row.rh_pct), windKmh: round1(row.wind_kmh), windFromDeg: Math.round(row.wind_from_deg) % 360,
+      rain24hMm: round1(row.rain24h_mm) },
+    dryDays: row.dry_days as number };
+}
+
+/**
+ * Fire danger per cell and per regency: live, today and the two days after (WIB); with `tanggal`, that archive day
+ * only. A regency takes, day by day, the cell with the highest FWI among those it overlaps. `peatShare` is the share
+ * of the regency's village area on peat. Answers are kept 10 minutes per day and dropped after every weather run.
+ */
+export function installRisk(app: FastifyInstance, pool: pg.Pool) {
+  app.get('/api/v1/risk', async request => {
+    const tanggal = await archiveDate(pool, object(request.query ?? {}).tanggal);
+    const asOf = tanggal ?? wibDay();
+    const key = `${asOf}/${tanggal ? 'archive' : 'live'}`;
+    const cached = risk.get(key);
+    if (cached && Date.now() - cached.at < 600_000) return cached.body;
+    const days = tanggal ? [tanggal] : [asOf, addDays(asOf, 1), addDays(asOf, 2)];
+    const rows = (await pool.query(`SELECT c.id, c.lon, c.lat, to_char(w.day, 'YYYY-MM-DD') AS day, w.temp_c, w.rh_pct, w.wind_kmh, w.wind_from_deg, w.rain24h_mm,
+        w.dry_days, w.ffmc, w.dmc, w.dc, w.isi, w.bui, w.fwi, w.forecast, w.fetched_at
+      FROM weather_daily w JOIN weather_cells c ON c.id = w.cell_id WHERE w.day = ANY($1::date[]) ORDER BY c.lat DESC, c.lon, w.day`, [days])).rows;
+    type CellDays = { lon: number; lat: number; days: ReturnType<typeof riskDay>[]; rows: Record<string, any>[] };
+    const cells = new Map<number, CellDays>();
+    let fetchedAt: Date | null = null;
+    for (const row of rows) {
+      const cell: CellDays = cells.get(row.id) ?? { lon: row.lon, lat: row.lat, days: [], rows: [] };
+      cell.days.push(riskDay(row));
+      cell.rows.push(row);
+      cells.set(row.id, cell);
+      if (!fetchedAt || row.fetched_at > fetchedAt) fetchedAt = row.fetched_at;
+    }
+    const regencies = rows.length ? (await pool.query(`SELECT r.name, r.province, ST_X(r.center) AS lon, ST_Y(r.center) AS lat, COALESCE(p.share, 0) AS peat,
+        COALESCE(m.cells, '{}') AS cells
+      FROM regencies r
+      LEFT JOIN (SELECT regency, sum(peat_share * area_ha) / NULLIF(sum(area_ha), 0) AS share FROM villages GROUP BY regency) p ON p.regency = r.name
+      LEFT JOIN (SELECT regency, array_agg(cell_id ORDER BY cell_id) AS cells FROM weather_cell_regencies GROUP BY regency) m ON m.regency = r.name
+      ORDER BY r.province, r.name`)).rows.map(regency => ({
+      name: regency.name as string, province: regency.province as string, center: [regency.lon, regency.lat] as [number, number],
+      peatShare: Math.round(Number(regency.peat) * 1000) / 1000,
+      days: days.flatMap(day => {
+        let best: { row: Record<string, any>; cell: { lon: number; lat: number } } | null = null;
+        for (const id of regency.cells as number[]) {
+          const cell = cells.get(id);
+          const row = cell?.rows.find(item => item.day === day);
+          if (cell && row && (!best || row.fwi > best.row.fwi)) best = { row, cell };
+        }
+        return best ? [{ ...riskDay(best.row), cell: [best.cell.lon, best.cell.lat] as [number, number] }] : [];
+      }),
+    })) : [];
+    const body = { data: { asOf, archive: Boolean(tanggal), fetchedAt: (fetchedAt as Date | null)?.toISOString() ?? null, cellSize: CELL_SIZE,
+      cells: [...cells.values()].map(cell => ({ lon: cell.lon, lat: cell.lat, days: cell.days })), regencies } };
+    risk.set(key, { at: Date.now(), body });
+    return body;
+  });
 }
 
 /**
