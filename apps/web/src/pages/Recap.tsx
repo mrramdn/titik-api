@@ -2,7 +2,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ChevronLeft, Printer, Share2 } from 'lucide-react';
-import type { Recap, Risk, RiskDay } from '../api';
+import type { Recap, RegencyRiskDay, Risk } from '../api';
 import { Shell } from '../components/Shell';
 import { Banner, shareText, useDataVersion } from '../components/ui';
 import { dict, useLang, useT } from '../i18n';
@@ -13,7 +13,7 @@ import { useSession } from '../session';
 import { canUseBpbd, RoleGate } from '../components/bpbd/RoleGate';
 import { isDate, shiftDate, todayWib, useLoad } from '../components/bpbd/data';
 import { assignmentOrder, checkedShare, longDate, recapText, statusOrder } from '../components/bpbd/recapText';
-import { fwiLabel, highDanger, regencyDays, riskPath } from '../map/risk';
+import { fwiLabel, highDanger, partialText, regencyDays, riskPath } from '../map/risk';
 import { RiskSwatch } from '../map/RiskParts';
 
 const text = dict({
@@ -32,7 +32,7 @@ const text = dict({
     note: 'Waktu tanggap adalah median dari deteksi satelit sampai cek lapangan pertama. Tanggal mengikuti WIB.',
     printed: 'Dicetak dari Titik Api, {time} WIB.',
     danger: 'Bahaya kebakaran',
-    dangerNote: 'Bahaya kebakaran: FWI dari data model Open-Meteo dengan kelas BMKG, nilai tertinggi di wilayah tiap kabupaten. Bukan produk resmi BMKG.',
+    dangerNote: 'Bahaya kebakaran: FWI dari data model Open-Meteo dengan kelas BMKG. Tiap kabupaten diberi kelas yang mencakup bagian terluas wilayahnya; baris kecil menyebut bagian wilayah dengan kelas lebih tinggi bila mencapai 10% atau lebih. Bukan produk resmi BMKG.',
   },
   en: {
     back: 'Dashboard', title: 'Daily recap', both: 'Sumatera Selatan and Kalimantan Tengah',
@@ -49,7 +49,7 @@ const text = dict({
     note: 'Response time is the median from the satellite detection to the first field check. Dates follow WIB.',
     printed: 'Printed from Titik Api, {time} WIB.',
     danger: 'Fire danger',
-    dangerNote: 'Fire danger: FWI from Open-Meteo model data with BMKG classes, the highest value over each regency. Not an official BMKG product.',
+    dangerNote: 'Fire danger: FWI from Open-Meteo model data with BMKG classes. Each regency gets the class that covers the largest part of its area; the small line gives the part at a higher class when it reaches 10% or more. Not an official BMKG product.',
   },
 });
 
@@ -86,7 +86,7 @@ function RecapView() {
   const dangerShown = danger.size > 0 && (data?.regencies ?? []).some(row => danger.has(`${row.province}/${row.name}`));
   const share = () => {
     if (!data) return;
-    const high = risk.data?.fetchedAt ? highDanger(risk.data, 0, province).map(regency => regency.name) : [];
+    const high = risk.data?.fetchedAt ? highDanger(risk.data, 0, province) : [];
     void shareText(recapText({ ...data, date }, lang, place, `${location.origin}/rekap?date=${date}`, high));
   };
 
@@ -198,11 +198,14 @@ function RecapView() {
   );
 }
 
-/** A regency's fire danger class on the recap date, as on the map. */
-function DangerTag({ day }: { day: RiskDay | undefined }) {
+/** A regency's fire danger class on the recap date, as on the map, and a higher class over part of it. */
+function DangerTag({ day }: { day: RegencyRiskDay | undefined }) {
   const { lang } = useLang();
   if (!day) return <>–</>;
-  return <span className="fwi-tag"><RiskSwatch fwiClass={day.fwiClass} />{fwiLabel[lang][day.fwiClass]}</span>;
+  return (<>
+    <span className="fwi-tag"><RiskSwatch fwiClass={day.fwiClass} />{fwiLabel[lang][day.fwiClass]}</span>
+    {day.partial && <small className="fwi-partial">{partialText(day.partial, lang)}</small>}
+  </>);
 }
 
 const sum = (counts?: Partial<Record<string, number>> | null) => Object.values(counts ?? {}).reduce<number>((total, value) => total + (value ?? 0), 0);

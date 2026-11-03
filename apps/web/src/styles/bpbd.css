@@ -205,6 +205,7 @@
 .recap-bar em { display: block; height: 100%; border-radius: 3px; background: var(--text-2); }
 .recap-bar b { font-weight: 600; text-align: right; }
 .fwi-tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fwi-partial { display: block; margin-top: 1px; color: var(--text-3); font-size: 12px; line-height: 16px; white-space: nowrap; }
 .recap-none { padding: 14px; border: 1px dashed var(--surface-line); border-radius: var(--radius-lg); font-size: 13px; color: var(--text-3); }
 .recap-empty { display: grid; justify-items: center; gap: 6px; padding: 36px 20px; border: 1px dashed var(--surface-line); border-radius: var(--radius-lg); text-align: center; }
 .recap-empty b { font-size: 16px; line-height: 22px; font-weight: 600; }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Incident, Recap } from '../../api';
+import type { HighDanger } from '../../map/risk';
 import { LANE_LIMIT, isDate, laneCount, laneOf, minutesBetween, regionOpenHigh, shiftDate, splitLanes, todayWib } from './data';
+import { dangerSummary } from './DangerCard';
 import { longDate, recapText } from './recapText';
 import { villagesFor } from './VillageTable';
 
@@ -109,9 +111,40 @@ describe('recap helpers', () => {
     expect(id.join('\n')).not.toMatch(/luas|\bha\b/);
     expect(en.join('\n')).not.toMatch(/area|\bha\b/i);
     expect(id.join('\n')).not.toContain('FWI');
-    const danger = recapText(recap, 'id', 'Sumatera Selatan', 'u', ['Ogan Komering Ilir', 'Banyuasin']).split('\n');
-    expect(danger).toContain('Bahaya kebakaran tinggi atau sangat tinggi (FWI): Ogan Komering Ilir, Banyuasin');
+  });
+
+  it('lists the regencies with high or above on at least 10% of the area in the WhatsApp summary, with their share', () => {
+    const recap: Recap = {
+      date: '2026-11-04', province: null,
+      totals: { incidents: 3, high: 1, checked: 0, checkedShare: 0, medianMinutes: null, falseAlarms: 0, detections: 9 },
+      regencies: [], villages: [], checks: {}, assignments: { ditugaskan: 0, menuju: 0, selesai: 0, dibatalkan: 0 },
+    };
+    const danger = recapText(recap, 'id', 'Kalimantan Tengah', 'u', [pulang, kapuas]).split('\n');
+    expect(danger).toContain('Bahaya kebakaran tinggi atau lebih (FWI): Pulang Pisau (sangat tinggi, 80% wilayah), Kapuas (30% wilayah)');
     expect(danger.at(-1)).toBe('Rincian: u');
-    expect(recapText(recap, 'en', 'Sumatera Selatan', 'u', ['Ogan Komering Ilir']).split('\n')).toContain('High or very high fire danger (FWI): Ogan Komering Ilir');
+    expect(recapText(recap, 'en', 'Kalimantan Tengah', 'u', [pulang, kapuas]).split('\n'))
+      .toContain('Fire danger high or above (FWI): Pulang Pisau (very high, 80% of the area), Kapuas (30% of the area)');
+    expect(recapText(recap, 'id', 'Kalimantan Tengah', 'u', [])).not.toContain('FWI');
+  });
+});
+
+const danger = (name: string, fwiClass: HighDanger['fwiClass'], share: number, meanFwi: number): HighDanger => ({ name, province: 'Kalimantan Tengah', fwiClass, share, meanFwi });
+const pulang = danger('Pulang Pisau', 'sangat_tinggi', 0.8, 14.2), kapuas = danger('Kapuas', 'rendah', 0.3, 3.2);
+
+describe('tomorrow\'s fire danger card', () => {
+  it('names up to three regencies with their share at high or above, and their class when that is high or very high', () => {
+    const four = [pulang, danger('Katingan', 'tinggi', 0.6, 9.4), kapuas, danger('Seruyan', 'sedang', 0.12, 4.8)];
+    expect(dangerSummary(four, 'id')).toBe('Tinggi atau lebih di sebagian wilayah 4 kabupaten: Pulang Pisau (sangat tinggi, 80% wilayah), '
+      + 'Katingan (tinggi, 60% wilayah), Kapuas (30% wilayah) dan 1 lainnya.');
+    expect(dangerSummary(four, 'en')).toBe('High or above in part of 4 regencies: Pulang Pisau (very high, 80% of the area), '
+      + 'Katingan (high, 60% of the area), Kapuas (30% of the area) and 1 more.');
+    expect(dangerSummary([pulang, kapuas], 'id')).toBe('Tinggi atau lebih di sebagian wilayah 2 kabupaten: Pulang Pisau (sangat tinggi, 80% wilayah), Kapuas (30% wilayah).');
+    expect(dangerSummary([kapuas], 'id')).toBe('Tinggi atau lebih di sebagian wilayah 1 kabupaten: Kapuas (30% wilayah).');
+    expect(dangerSummary([kapuas], 'en')).toBe('High or above in part of 1 regency: Kapuas (30% of the area).');
+  });
+
+  it('says so when high or above covers less than 10% of every regency', () => {
+    expect(dangerSummary([], 'id')).toBe('Tidak ada kabupaten dengan bahaya tinggi atau lebih di sedikitnya 10% wilayahnya.');
+    expect(dangerSummary([], 'en')).toBe('No regency has high or above danger in at least 10% of its area.');
   });
 });

@@ -3,6 +3,7 @@ import type { AssignmentStatus, Recap, Status } from '../../api';
 import { dict, fill, type Lang } from '../../i18n';
 import { formatter } from '../../format';
 import { assignmentLabel, statusLabel } from '../../i18n/common';
+import { highDangerName, type HighDanger } from '../../map/risk';
 
 const words = dict({
   id: {
@@ -10,7 +11,7 @@ const words = dict({
     incidents: 'Kejadian: {n}, prioritas tinggi {high}', checked: 'Sudah dicek: {n} dari {total} ({share})',
     response: 'Waktu tanggap (median): {time}', falseAlarms: 'Alarm palsu: {n}', detections: 'Titik panas: {n}',
     regencies: 'Kabupaten dengan kejadian terbanyak:', regency: '{name}: {n} kejadian, {high} prioritas tinggi, {checked} dicek',
-    danger: 'Bahaya kebakaran tinggi atau sangat tinggi (FWI): {list}',
+    danger: 'Bahaya kebakaran tinggi atau lebih (FWI): {list}',
     checks: 'Hasil cek lapangan: {list}', assignments: 'Penugasan: {list}', link: 'Rincian: {url}',
   },
   en: {
@@ -18,7 +19,7 @@ const words = dict({
     incidents: 'Incidents: {n}, high priority {high}', checked: 'Checked: {n} of {total} ({share})',
     response: 'Response time (median): {time}', falseAlarms: 'False alarms: {n}', detections: 'Hotspots: {n}',
     regencies: 'Regencies with the most incidents:', regency: '{name}: {n} incidents, {high} high priority, {checked} checked',
-    danger: 'High or very high fire danger (FWI): {list}',
+    danger: 'Fire danger high or above (FWI): {list}',
     checks: 'Field check results: {list}', assignments: 'Assignments: {list}', link: 'Details: {url}',
   },
 });
@@ -36,8 +37,8 @@ export function longDate(date: string, lang: Lang) {
 /** Share of checked incidents, from the server when it sends one. */
 export const checkedShare = (totals: Recap['totals']) => totals.checkedShare ?? (totals.incidents ? totals.checked / totals.incidents : null);
 
-/** `danger` names the regencies at tinggi or sangat tinggi fire danger on that date, when it is known. */
-export function recapText(recap: Recap, lang: Lang, place: string, url: string, danger: string[] = []) {
+/** `danger`: the regencies where tinggi or above covers at least 10% of the area on that date (highDanger), when it is known. */
+export function recapText(recap: Recap, lang: Lang, place: string, url: string, danger: HighDanger[] = []) {
   const f = formatter(lang), w = words[lang];
   const totals = recap.totals;
   const lines = [
@@ -55,7 +56,7 @@ export function recapText(recap: Recap, lang: Lang, place: string, url: string, 
     lines.push('', w.regencies);
     for (const row of regencies) lines.push(fill(w.regency, { name: row.name, n: f.num(row.incidents), high: f.num(row.high), checked: f.num(row.checked) }));
   }
-  if (danger.length) lines.push('', fill(w.danger, { list: danger.join(', ') }));
+  if (danger.length) lines.push('', fill(w.danger, { list: danger.map(regency => highDangerName(regency, lang)).join(', ') }));
   const checks = statusOrder.filter(status => (recap.checks?.[status] ?? 0) > 0)
     .map(status => `${f.num(recap.checks[status] ?? 0)} ${statusLabel[lang][status].toLowerCase()}`);
   const tasks = assignmentOrder.filter(status => (recap.assignments?.[status] ?? 0) > 0)

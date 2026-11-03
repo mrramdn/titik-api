@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { defaultFilters, incidentQuery, type ArchiveDays, type FwiClass, type Risk, type RiskDay } from '../api';
+import { defaultFilters, incidentQuery, type ArchiveDays, type FwiClass, type RegencyRiskDay, type Risk, type RiskDay } from '../api';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
 import { dotZoomRange, ESRI_ATTRIBUTION, ESRI_TILES, esriSource, footprintLayers, FOOTPRINT_ZOOM, imageryZoom, tileUrls } from './layers';
 import { clearedFilters } from './list';
-import { fwiColors, fwiLabel, highDanger, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskOpacity, riskPath, riskText } from './risk';
+import { fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskOpacity, riskPath, riskText } from './risk';
 
 const archive: ArchiveDays = {
   first: '2026-10-08', last: '2026-11-02',
@@ -106,6 +106,11 @@ const riskDay = (date: string, fwiClass: FwiClass, fwi: number, extra: Partial<R
   noon: { tempC: 33.4, rhPct: 52.2, windKmh: 12.4, windFromDeg: 92, rain24hMm: 0.38 }, dryDays: 14, ...extra,
 });
 const days3 = (classes: FwiClass[], fwis: number[]) => classes.map((name, index) => riskDay(`2026-11-0${index + 3}`, name, fwis[index]!));
+/** A regency's day: the class, the shares of rendah, sedang, tinggi and sangat tinggi, the mean FWI and the partial class. */
+const area = (index: number, fwiClass: FwiClass, [rendah, sedang, tinggi, sangat_tinggi]: number[], meanFwi: number, partial: RegencyRiskDay['partial'] = null): RegencyRiskDay => ({
+  date: `2026-11-0${index + 3}`, forecast: true, fwiClass, shares: { rendah: rendah!, sedang: sedang!, tinggi: tinggi!, sangat_tinggi: sangat_tinggi! }, partial, meanFwi,
+});
+const regency = (name: string, province: string, days: RegencyRiskDay[]) => ({ name, province, center: [105, -3] as [number, number], peatShare: 0.4, days });
 const risk: Risk = {
   asOf: '2026-11-03', archive: false, fetchedAt: '2026-11-03T04:10:00Z', cellSize: 0.5,
   cells: [
@@ -113,9 +118,15 @@ const risk: Risk = {
     { lon: 105.5, lat: -3, days: days3(['rendah', 'sedang', 'rendah'], [0.6, 3, 1]) },
   ],
   regencies: [
-    { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', center: [105.6, -3.4], peatShare: 0.41, days: days3(['tinggi', 'tinggi', 'sedang'], [9, 11.5, 4]).map(day => ({ ...day, cell: [105, -3] as [number, number] })) },
-    { name: 'Pulang Pisau', province: 'Kalimantan Tengah', center: [114, -2.7], peatShare: 0.6, days: days3(['sedang', 'sangat_tinggi', 'tinggi'], [5, 16.1, 8]).map(day => ({ ...day, cell: [114, -2.5] as [number, number] })) },
-    { name: 'Banyuasin', province: 'Sumatera Selatan', center: [104.7, -2.5], peatShare: 0.3, days: days3(['rendah', 'sedang', 'rendah'], [1, 4, 1]).map(day => ({ ...day, cell: [104.5, -2.5] as [number, number] })) },
+    regency('Ogan Komering Ilir', 'Sumatera Selatan', [area(0, 'tinggi', [0.2, 0.2, 0.6, 0], 9), area(1, 'sedang', [0.1, 0.6, 0.3, 0], 6.1, { fwiClass: 'tinggi', share: 0.3 }),
+      area(2, 'sedang', [0, 1, 0, 0], 4)]),
+    regency('Pulang Pisau', 'Kalimantan Tengah', [area(0, 'sedang', [0.3, 0.7, 0, 0], 5), area(1, 'sangat_tinggi', [0, 0.2, 0.25, 0.55], 14.2),
+      area(2, 'tinggi', [0, 0.4, 0.6, 0], 8)]),
+    regency('Banyuasin', 'Sumatera Selatan', [area(0, 'rendah', [0.9, 0.1, 0, 0], 1), area(1, 'rendah', [0.7, 0.2, 0.1, 0], 2.3, { fwiClass: 'tinggi', share: 0.1 }),
+      area(2, 'rendah', [1, 0, 0, 0], 0.4)]),
+    regency('Kapuas', 'Kalimantan Tengah', [area(0, 'rendah', [1, 0, 0, 0], 0.5), area(1, 'rendah', [0.65, 0.05, 0.3, 0], 3.2, { fwiClass: 'tinggi', share: 0.3 })]),
+    // High on 9.9% only: left out.
+    regency('Katingan', 'Kalimantan Tengah', [area(0, 'rendah', [1, 0, 0, 0], 0.5), area(1, 'rendah', [0.8, 0.101, 0.099, 0], 2, { fwiClass: 'sedang', share: 0.2 })]),
   ],
 };
 
@@ -162,13 +173,38 @@ describe('fire danger (FWI)', () => {
     expect(en.rows.find(row => row.key === 'rain')!.value).toBe('0.4 mm');
   });
 
-  it('lists the regencies at high danger, highest first, in one province or both', () => {
-    expect(highDanger(risk, 1).map(r => [r.name, r.fwiClass])).toEqual([['Pulang Pisau', 'sangat_tinggi'], ['Ogan Komering Ilir', 'tinggi']]);
-    expect(highDanger(risk, 1, 'Sumatera Selatan').map(r => r.name)).toEqual(['Ogan Komering Ilir']);
-    expect(highDanger(risk, 0).map(r => r.name)).toEqual(['Ogan Komering Ilir']);
+  it('lists the regencies where high or above covers at least 10% of the area, the largest share first, then the mean FWI', () => {
+    expect(highDanger(risk, 1)).toEqual([
+      { name: 'Pulang Pisau', province: 'Kalimantan Tengah', fwiClass: 'sangat_tinggi', share: 0.8, meanFwi: 14.2 },
+      { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', fwiClass: 'sedang', share: 0.3, meanFwi: 6.1 },
+      { name: 'Kapuas', province: 'Kalimantan Tengah', fwiClass: 'rendah', share: 0.3, meanFwi: 3.2 },
+      { name: 'Banyuasin', province: 'Sumatera Selatan', fwiClass: 'rendah', share: 0.1, meanFwi: 2.3 },
+    ]);
+    expect(highDanger(risk, 1, 'Sumatera Selatan').map(r => r.name)).toEqual(['Ogan Komering Ilir', 'Banyuasin']);
+    expect(highDanger(risk, 0).map(r => [r.name, r.share])).toEqual([['Ogan Komering Ilir', 0.6]]);
+    expect(highDanger(risk, 2).map(r => r.name)).toEqual(['Pulang Pisau']);
     expect(highDanger(risk, 7)).toEqual([]);
     expect(regencyDays(risk).get('Kalimantan Tengah/Pulang Pisau')!.fwiClass).toBe('sedang');
+    expect(regencyDays(risk, 1).get('Sumatera Selatan/Banyuasin')!.partial).toEqual({ fwiClass: 'tinggi', share: 0.1 });
     expect(regencyDays({ ...risk, fetchedAt: null }).size).toBe(0);
     expect(regencyDays(null).size).toBe(0);
+  });
+
+  it('names a regency with its share at high or above, and its class when that is high or very high', () => {
+    const [pulang, oki] = highDanger(risk, 1);
+    expect(highDangerName(pulang!, 'id')).toBe('Pulang Pisau (sangat tinggi, 80% wilayah)');
+    expect(highDangerName(pulang!, 'en')).toBe('Pulang Pisau (very high, 80% of the area)');
+    expect(highDangerName(oki!, 'id')).toBe('Ogan Komering Ilir (30% wilayah)');
+    expect(highDangerName(oki!, 'en')).toBe('Ogan Komering Ilir (30% of the area)');
+    expect(highDangerName(highDanger(risk, 0)[0]!, 'id')).toBe('Ogan Komering Ilir (tinggi, 60% wilayah)');
+  });
+
+  it('writes the recap\'s line for a higher class over part of a regency', () => {
+    expect(partialText({ fwiClass: 'tinggi', share: 0.3 }, 'id')).toBe('tinggi atau lebih di 30% wilayah');
+    expect(partialText({ fwiClass: 'tinggi', share: 0.3 }, 'en')).toBe('high or above in 30% of the area');
+    expect(partialText({ fwiClass: 'sangat_tinggi', share: 0.12 }, 'id')).toBe('sangat tinggi di 12% wilayah');
+    expect(partialText({ fwiClass: 'sangat_tinggi', share: 0.12 }, 'en')).toBe('very high in 12% of the area');
+    expect(partialText({ fwiClass: 'sedang', share: 0.2 }, 'id')).toBe('sedang atau lebih di 20% wilayah');
+    expect(partialText({ fwiClass: 'sedang', share: 0.2 }, 'en')).toBe('moderate or above in 20% of the area');
   });
 });

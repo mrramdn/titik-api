@@ -167,12 +167,30 @@ export interface RiskDay {
 /** One grid cell, by its centre; the cell spans ±cellSize/2 in longitude and latitude. */
 export interface RiskCell { lon: number; lat: number; days: RiskDay[] }
 /**
- * Per regency, each day takes the cell with the highest FWI among the cells that overlap it (`cell` = its centre).
- * `peatShare` is the share of the regency's village area on peat, 0–1.
+ * A regency's fire danger on one day, by area: each grid cell counts with the share of the regency's area it covers
+ * (geodesic areas), so a cell that only touches the regency's edge cannot decide it. Each cell's class follows its FWI
+ * as on the grid.
  */
+export interface RegencyRiskDay {
+  date: string;
+  /** True when any of its cells' values for the day is a forecast. */
+  forecast: boolean;
+  /** The class with the largest share; on a tie the higher class. */
+  fwiClass: FwiClass;
+  /** Share of the regency's area in each class, 0–1 in steps of 0.001; the four add up to 1. */
+  shares: Record<FwiClass, number>;
+  /**
+   * The highest class above `fwiClass` that covers at least 10% of the regency together with the classes above it;
+   * `share` is the share at that class or above. Null when there is none.
+   */
+  partial: { fwiClass: FwiClass; share: number } | null;
+  /** Area-weighted mean FWI, one decimal. */
+  meanFwi: number;
+}
+/** `peatShare` is the share of the regency's village area on peat, 0–1. */
 export interface RegencyRisk {
   name: string; province: string; center: [number, number]; peatShare: number;
-  days: (RiskDay & { cell: [number, number] })[];
+  days: RegencyRiskDay[];
 }
 export interface Risk {
   /** The first day shown: today (WIB) live, else the archive date. */

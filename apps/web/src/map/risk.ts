@@ -1,8 +1,9 @@
-// Fire danger from GET /risk: the FWI grid on the map, the details of one cell, and the regencies at high danger.
+// Fire danger from GET /risk: the FWI grid on the map, the details of one cell, and the regencies where high danger
+// covers part of the area.
 // Titik Api computes the Fire Weather Index from Open-Meteo model weather and uses BMKG's four classes; it is not an
 // official BMKG product, and every place that shows it says so.
 import type { ExpressionSpecification } from 'maplibre-gl';
-import type { FwiClass, Risk, RiskDay } from '../api';
+import type { FwiClass, RegencyRiskDay, Risk, RiskDay } from '../api';
 import { dict, fill, type Lang } from '../i18n';
 import { formatter } from '../format';
 import { windName } from '../geo';
@@ -30,11 +31,13 @@ export const riskText = dict({
     forecast: 'prakiraan', dc: 'Kode kekeringan (DC)', temp: 'Suhu pukul 12.00', rh: 'Kelembapan pukul 12.00', wind: 'Angin pukul 12.00',
     windValue: 'dari {dir}, {speed} km/jam', rain: 'Hujan 24 jam sampai 12.00', dry: 'Hari tanpa hujan', dryDays: '{n} hari',
     dcNote: 'DC di atas 400: kabut asap dari gambut jauh lebih sering (de Groot dkk. 2007)',
+    area: '{p} wilayah', classArea: '{class}, {p} wilayah', partial: '{class} atau lebih di {p} wilayah', partialTop: '{class} di {p} wilayah',
   },
   en: {
     forecast: 'forecast', dc: 'Drought Code (DC)', temp: 'Temperature at 12:00', rh: 'Humidity at 12:00', wind: 'Wind at 12:00',
     windValue: 'from the {dir}, {speed} km/h', rain: 'Rain, 24 h to 12:00', dry: 'Days without rain', dryDays: '{n} days',
     dcNote: 'DC above 400: haze from peat is far more frequent (de Groot et al. 2007)',
+    area: '{p} of the area', classArea: '{class}, {p} of the area', partial: '{class} or above in {p} of the area', partialTop: '{class} in {p} of the area',
   },
 });
 
@@ -87,21 +90,42 @@ export function riskDetail(day: RiskDay, lang: Lang) {
 }
 
 const high = (name: FwiClass) => name === 'tinggi' || name === 'sangat_tinggi';
+/** Tinggi or above is named from 10% of a regency's area, in thousandths (the steps of the shares). */
+const HIGH_MIN = 100;
 
-/** Regencies at tinggi or sangat tinggi on a day (1 = tomorrow live), highest FWI first; `province` narrows to one province. */
-export function highDanger(risk: Risk, dayIndex: number, province = '') {
+/** A regency where tinggi or sangat tinggi covers at least 10% of the area: its class, that share and its mean FWI. */
+export interface HighDanger { name: string; province: string; fwiClass: FwiClass; share: number; meanFwi: number }
+
+/**
+ * Regencies where tinggi or sangat tinggi covers at least 10% of the area on a day (1 = tomorrow live), the largest
+ * share first, then the highest mean FWI; `province` narrows to one province.
+ */
+export function highDanger(risk: Risk, dayIndex: number, province = ''): HighDanger[] {
   return risk.regencies
     .filter(regency => !province || regency.province === province)
     .flatMap(regency => {
       const day = regency.days[dayIndex];
-      return day && high(day.fwiClass) ? [{ name: regency.name, province: regency.province, fwiClass: day.fwiClass, fwi: day.codes.fwi }] : [];
+      const units = day ? Math.round((day.shares.tinggi + day.shares.sangat_tinggi) * 1000) : 0;
+      return day && units >= HIGH_MIN ? [{ name: regency.name, province: regency.province, fwiClass: day.fwiClass, share: units / 1000, meanFwi: day.meanFwi }] : [];
     })
-    .sort((a, b) => b.fwi - a.fwi || a.name.localeCompare(b.name));
+    .sort((a, b) => b.share - a.share || b.meanFwi - a.meanFwi || a.name.localeCompare(b.name));
+}
+
+/** "Pulang Pisau (60% wilayah)", with the class when the regency as a whole is tinggi or above: "Pulang Pisau (sangat tinggi, 80% wilayah)". */
+export function highDangerName(regency: HighDanger, lang: Lang) {
+  const w = riskText[lang], p = formatter(lang).percent(regency.share);
+  return `${regency.name} (${high(regency.fwiClass) ? fill(w.classArea, { class: fwiLabel[lang][regency.fwiClass].toLowerCase(), p }) : fill(w.area, { p })})`;
+}
+
+/** A higher class over part of a regency, under its class: "tinggi atau lebih di 30% wilayah", "sangat tinggi di 12% wilayah". */
+export function partialText(partial: NonNullable<RegencyRiskDay['partial']>, lang: Lang) {
+  const w = riskText[lang];
+  return fill(partial.fwiClass === 'sangat_tinggi' ? w.partialTop : w.partial, { class: fwiLabel[lang][partial.fwiClass].toLowerCase(), p: formatter(lang).percent(partial.share) });
 }
 
 /** Each regency's day (0 = the first day) by "province/name", for tables. Empty when nothing was computed. */
 export function regencyDays(risk: Risk | null | undefined, dayIndex = 0) {
-  const days = new Map<string, RiskDay>();
+  const days = new Map<string, RegencyRiskDay>();
   if (!risk?.fetchedAt) return days;
   for (const regency of risk.regencies) {
     const day = regency.days[dayIndex];
