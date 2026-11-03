@@ -66,7 +66,9 @@ export async function createApp(options: Options = {}) {
 
   app.addHook('onSend', async (_request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Referrer-Policy', 'same-origin');
+    // Map imagery keys (Esri) are restricted to the site's address, which they read from the referrer: other sites
+    // get the origin only, never a path.
+    reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Permissions-Policy', 'geolocation=(self), camera=(self)');
   });
@@ -86,6 +88,8 @@ export async function createApp(options: Options = {}) {
     await pool.query('SELECT 1');
     return { data: { status: 'ok' } };
   });
+  // Public settings for the web app. The ArcGIS key for HD imagery is a browser key, restricted by referrer.
+  app.get('/api/v1/config', async () => ({ data: { esriKey: process.env.ARCGIS_API_KEY || null } }));
   app.setNotFoundHandler((request, reply) => {
     if (request.method === 'GET' && !request.url.startsWith('/api') && !request.url.startsWith('/uploads') && existsSync(`${webDir}/index.html`)) {
       return reply.header('Cache-Control', 'no-cache').type('text/html').sendFile('index.html', webDir);

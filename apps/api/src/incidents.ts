@@ -256,7 +256,9 @@ function passes(detections: { satellite: string; acq_at: Date }[]) {
 }
 
 export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
-  app.get('/api/v1/tiles/:layer/:z/:x/:y', async (request, reply) => {
+  // Panning through the archive asks for many tiles: tiles have their own limit per address instead of the general
+  // one (a route with its own limit is counted only there), so a busy map never locks the lists and forms.
+  app.get('/api/v1/tiles/:layer/:z/:x/:y', { config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } }, async (request, reply) => {
     const params = object(request.params);
     const query = object(request.query ?? {});
     const layer = choice(params.layer, ['desa', 'kabupaten', 'kejadian', 'deteksi'] as const, 'Lapisan');
