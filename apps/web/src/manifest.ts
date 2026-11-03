@@ -1,5 +1,6 @@
 // The web app manifest (vite-plugin-pwa writes it as manifest.webmanifest), apart from vite.config.ts so a test can read
-// it. An installed app says it is a demo, as the page title and the link previews do.
+// it. An installed app says it is a demo, as the page title and the link previews do, and opens on the map (/peta): the
+// landing page at / is for first visits from a browser.
 import type { ManifestOptions } from 'vite-plugin-pwa';
 
 export const manifest: Partial<ManifestOptions> = {
@@ -7,7 +8,7 @@ export const manifest: Partial<ManifestOptions> = {
   short_name: 'Titik Api',
   description: 'Demo portofolio peringatan titik panas tingkat desa di Sumatera Selatan dan Kalimantan Tengah, dengan data satelit asli NASA FIRMS. Bukan sistem peringatan resmi.',
   lang: 'id',
-  start_url: '/',
+  start_url: '/peta',
   scope: '/',
   display: 'standalone',
   background_color: '#161312',

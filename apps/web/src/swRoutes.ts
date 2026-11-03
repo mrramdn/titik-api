@@ -20,5 +20,12 @@ export const PHOTO_MAX_AGE_SECONDS = 24 * 3600;
 /** Base map, daily imagery, Sentinel-2 and the forest layers from their own hosts. */
 export const isMapHost = (url: URL) => /(openfreemap\.org|tiles\.maps\.eox\.at|tiles\.globalforestwatch\.org|gibs\.earthdata\.nasa\.gov)$/.test(url.hostname);
 
+/**
+ * Paths the app shell (index.html) must not answer when the browser navigates there: the API and report photos. Every
+ * other path is a screen of the app (/, /peta, /kejadian/…, /k/…) and opens from the precached shell, also offline.
+ */
+export const NAVIGATION_DENYLIST = [/^\/api\//, /^\/uploads\//];
+export const isAppNavigation = (url: URL) => !NAVIGATION_DENYLIST.some(pattern => pattern.test(url.pathname));
+
 /** True when one of the caching routes would take this request. */
 export const cached = (url: URL) => isTile(url) || isApiRead(url) || isPhoto(url) || isMapHost(url);

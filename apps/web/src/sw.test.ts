@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cached, isApiRead, isImagery, isMapHost, isPhoto, isTile, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
+import { manifest } from './manifest';
+import { cached, isApiRead, isAppNavigation, isImagery, isMapHost, isPhoto, isTile, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
 
 const at = (path: string) => new URL(path, 'https://titikapi.test');
 
@@ -22,9 +23,24 @@ describe('service worker caches', () => {
     expect(cached(at('/peta'))).toBe(false);
   });
 
+  it('open every screen from the app shell, also offline, but never the API or a photo', () => {
+    for (const path of ['/', '/peta', '/peta?tanggal=2026-10-23', '/kejadian/5b0c', '/kejadian/5b0c/cek', '/k/ab12cd', '/tugas', '/dasbor?lihat=bpbd', '/tentang']) {
+      expect(isAppNavigation(at(path)), path).toBe(true);
+    }
+    expect(isAppNavigation(at('/api/v1/auth/me'))).toBe(false);
+    expect(isAppNavigation(at('/uploads/foto.jpg'))).toBe(false);
+  });
+
   it('keep a report photo no longer than the API lets a browser keep it, a day', () => {
     // GET /uploads/ answers Cache-Control: private, max-age=86400; the nightly demo reset deletes demo photos.
     expect(PHOTO_MAX_AGE_SECONDS).toBeGreaterThan(0);
     expect(PHOTO_MAX_AGE_SECONDS).toBeLessThanOrEqual(86_400);
+  });
+});
+
+describe('the installed app', () => {
+  it('opens on the map, within the whole site: the landing page at / is for a first visit in the browser', () => {
+    expect(manifest.start_url).toBe('/peta');
+    expect(manifest.scope).toBe('/');
   });
 });
