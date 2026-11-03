@@ -56,7 +56,7 @@ const api = async (role, path) => {
 };
 
 await record('peta', desktop, null, async (page, context, mark) => {
-  await page.goto(`${base}/`); await page.waitForTimeout(5000);
+  await page.goto(`${base}/peta`); await page.waitForTimeout(5000);
   mark('regency'); await page.selectOption('select.fselect[aria-label="Kabupaten"]', pilot); await page.waitForTimeout(2600);
   mark('layers'); await page.getByRole('button', { name: 'Lapisan', exact: true }).click(); await page.waitForTimeout(700);
   await page.locator('label.maplayer', { hasText: 'Lahan gambut' }).click(); await page.waitForTimeout(1800);

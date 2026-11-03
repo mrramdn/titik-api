@@ -10,7 +10,7 @@ async function shot(name, width, height, path, after) {
   await page.waitForTimeout(6500); if (after) await after(page);
   await page.screenshot({ path: `${out}/${name}.png` }); await page.close();
 }
-await shot('map-overview', 1060, 852, '/');
+await shot('map-overview', 1060, 852, '/peta');
 const top = (await (await fetch(`${base}/api/v1/incidents?hours=24&level=tinggi`)).json()).data[0];
 await shot('map-incident', 1060, 852, `/kejadian/${top.id}`, async page => {
   await page.addStyleTag({ content: '.page>*:not(.incident-grid){display:none!important}.incident-grid{grid-template-columns:1fr!important;margin:0!important}.incident-grid>.stack{display:none!important}.map-mid{height:100vh!important;border:0!important;border-radius:0!important}.page{padding:0!important;max-width:none!important}' });
