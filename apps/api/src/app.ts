@@ -19,10 +19,15 @@ import { installRecap } from './recap.js';
 import { installStatus } from './status.js';
 import { installShare } from './share.js';
 import { installRisk } from './weather.js';
+import { installWind } from './wind.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
 
-interface Options { pool?: pg.Pool; uploadsDir?: string; webDir?: string; origins?: string[]; production?: boolean; logger?: boolean; trustProxy?: string | false; pushSender?: Sender; demoLogin?: boolean }
+interface Options {
+  pool?: pg.Pool; uploadsDir?: string; webDir?: string; origins?: string[]; production?: boolean; logger?: boolean; trustProxy?: string | false; pushSender?: Sender; demoLogin?: boolean;
+  /** Open-Meteo for the wind at an incident; the tests answer it themselves. */
+  weatherFetch?: typeof fetch;
+}
 
 // Addresses or ranges of the reverse proxies in front of the API. Only they may report a client address;
 // trusting every hop would let a client choose its own. "true" means a proxy on a private network.
@@ -74,6 +79,7 @@ export async function createApp(options: Options = {}) {
   installRecap(app, pool);
   installStatus(app, pool);
   installRisk(app, pool);
+  installWind(app, pool, options.weatherFetch);
   installShare(app, pool, webDir);
 
   app.get('/api/v1/health', async () => {
