@@ -299,4 +299,6 @@
 .login-form form { display: grid; gap: 10px; max-width: 380px; }
 .login-form .btn { justify-self: start; }
 .about-contest { margin-top: 16px; }
+/* An address the app does not know (pages/NotFound.tsx). */
+.notfound-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .doc q { font-style: italic; }

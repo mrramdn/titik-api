@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AppRoutes } from './AppRoutes';
+import { notFoundText } from './pages/NotFound';
+import { RegionProvider } from './region';
 import { signOutFlag } from './components/shell/roles';
 import { riskLinkDay } from './map/risk';
 import { HOME_PATH, isMapPath, legacyMapTarget, mapPath, MAP_PATH, MAP_STATE, navActive } from './routes';
-import { homeFor } from './session';
+import { homeFor, SessionProvider } from './session';
 
 const sources = import.meta.glob<string>(['./**/*.{ts,tsx}', '!./**/*.test.ts'], { query: '?raw', import: 'default', eager: true });
 
@@ -69,5 +75,25 @@ describe('old map links on /', () => {
     expect(legacyMapTarget('?lihat=bpbd')).toBeNull();
     expect(legacyMapTarget('', null)).toBeNull();
     expect(legacyMapTarget('', { from: 'somewhere' })).toBeNull();
+  });
+});
+
+describe('an address the app does not know', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('shows the not-found page at that address, with the map and the landing page one click away', () => {
+    // An empty browser storage for the session and the region (Node's own localStorage needs a file).
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} });
+    // Never rewritten: a copy of the app kept by an older service worker would otherwise turn a link to a screen added
+    // later into / before the update reloads the page, and the link would be lost.
+    const render = (path: string) => renderToStaticMarkup(createElement(SessionProvider, null, createElement(RegionProvider, null, createElement(MemoryRouter, { initialEntries: [path] }, createElement(AppRoutes)))));
+    for (const path of ['/tidak-ada', '/peta/lama', '/layar-baru?tanggal=2026-10-23']) {
+      const html = render(path);
+      expect(html, path).toContain(`<h1 class="title-24">${notFoundText.id.title}</h1>`);
+      expect(html, path).toContain('href="/peta"');
+      expect(html, path).toContain('href="/"');
+    }
+    // A known address does not show it.
+    expect(render('/tentang')).not.toContain(notFoundText.id.title);
   });
 });
