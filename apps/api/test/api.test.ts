@@ -79,7 +79,7 @@ before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'titikapi-api-'));
   const web = join(directory, 'web');
   await mkdir(web);
-  await writeFile(join(web, 'index.html'), '<html><head><title>Titik Api</title><meta property="og:title" content="Titik Api" /><meta name="description" content="x" /></head></html>');
+  await writeFile(join(web, 'index.html'), '<html><head><title>Titik Api</title><meta property="og:title" content="Titik Api" /><meta name="description" content="x" /><meta property="og:description" content="x" /></head></html>');
   await migrate(pool);
   await loadReference(pool);
   await pool.query('TRUNCATE ingest_runs, detections, incidents, alerts, verifications, subscriptions, push_subscriptions, sessions, assignments RESTART IDENTITY CASCADE');
@@ -699,6 +699,10 @@ test('a shared link shows the alert text in the preview', async () => {
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /<meta property="og:title" content="\d+ titik panas · Desa [^"]+ · prioritas (tinggi|sedang|rendah)"/);
   assert.match(response.body, /Titik panas perlu dicek di lapangan\./);
+  // A preview is often all a recipient reads: it says first that this is a demo, not an official alert.
+  for (const meta of ['name="description"', 'property="og:description"']) {
+    assert.match(response.body, new RegExp(`<meta ${meta} content="Demo portofolio dengan data satelit asli, bukan sistem peringatan resmi\\. \\d+ titik panas · `), meta);
+  }
 });
 
 test('a shared link names the day of its hotspots and asks search engines to leave it out', async () => {
