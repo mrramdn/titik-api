@@ -16,25 +16,16 @@ const get = (url: string, remoteAddress = '127.0.0.1') => app.inject({ method: '
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'titikapi-config-'));
   await migrate(pool);
-  app = (await createApp({ pool, uploadsDir: join(directory, 'uploads'), webDir: join(directory, 'web'), logger: false })).app;
+  // No ArcGIS key, whatever the environment holds: these tests never reach Esri (imagery.test.ts covers it).
+  app = (await createApp({ pool, uploadsDir: join(directory, 'uploads'), webDir: join(directory, 'web'), logger: false, imagery: { key: undefined } })).app;
 });
 after(async () => { if (app) await app.close(); await pool.end(); if (directory) await rm(directory, { recursive: true, force: true }); });
 
-test('the public config gives the ArcGIS browser key when one is set, else null', async () => {
-  const saved = process.env.ARCGIS_API_KEY;
-  try {
-    delete process.env.ARCGIS_API_KEY;
-    assert.deepEqual((await get('/api/v1/config')).json(), { data: { esriKey: null } });
-    process.env.ARCGIS_API_KEY = '';
-    assert.deepEqual((await get('/api/v1/config')).json(), { data: { esriKey: null } });
-    process.env.ARCGIS_API_KEY = 'browser-key-for-tests';
-    assert.deepEqual((await get('/api/v1/config')).json(), { data: { esriKey: 'browser-key-for-tests' } });
-  } finally {
-    if (saved === undefined) delete process.env.ARCGIS_API_KEY; else process.env.ARCGIS_API_KEY = saved;
-  }
+test('the public config says whether HD imagery is on and never holds the ArcGIS key', async () => {
+  assert.deepEqual((await get('/api/v1/config')).json(), { data: { hdImagery: false, imageryAttribution: null } });
 });
 
-test('responses send the origin, never the path, to other sites (Esri checks the referrer of its key)', async () => {
+test('responses send the origin, never the path, to other sites', async () => {
   for (const url of ['/api/v1/health', '/api/v1/config', '/api/v1/tiles/desa/3/6/4.mvt', '/tidak-ada']) {
     assert.equal((await get(url)).headers['referrer-policy'], 'strict-origin-when-cross-origin', url);
   }

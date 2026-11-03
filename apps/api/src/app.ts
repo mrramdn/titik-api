@@ -20,6 +20,7 @@ import { installStatus } from './status.js';
 import { installShare } from './share.js';
 import { installRisk } from './weather.js';
 import { installWind } from './wind.js';
+import { installImagery, type ImageryOptions } from './imagery.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
 import { uploadsDirectory } from './uploads.js';
@@ -28,6 +29,10 @@ interface Options {
   pool?: pg.Pool; uploadsDir?: string; webDir?: string; origins?: string[]; production?: boolean; logger?: boolean; trustProxy?: string | false; pushSender?: Sender; demoLogin?: boolean;
   /** Open-Meteo for the wind at an incident; the tests answer it themselves. */
   weatherFetch?: typeof fetch;
+  /** Esri World Imagery: key, caps and clock come from the environment; the tests set their own and answer Esri. */
+  imagery?: Partial<ImageryOptions>;
+  /** Where the log goes instead of stdout (the tests read it). */
+  logStream?: { write(line: string): void };
 }
 
 // Addresses or ranges of the reverse proxies in front of the API. Only they may report a client address;
@@ -45,10 +50,12 @@ export async function createApp(options: Options = {}) {
   const production = options.production ?? process.env.NODE_ENV === 'production';
   const origins = new Set(options.origins ?? (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173').split(',').map(item => item.trim()));
   const app = Fastify({
-    logger: options.logger ?? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'] },
+    logger: options.logger ?? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'], ...(options.logStream && { stream: options.logStream }) },
     bodyLimit: 64 * 1024,
     trustProxy: options.trustProxy ?? trustedProxies(),
   });
+  // onClose hooks run last added first: the pool, added first, closes after the others (the imagery count is written).
+  if (ownsPool) app.addHook('onClose', () => pool.end());
   await mkdir(uploadsDir, { recursive: true });
   await app.register(cookie);
   await app.register(cors, { origin: [...origins], credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] });
@@ -67,8 +74,7 @@ export async function createApp(options: Options = {}) {
 
   app.addHook('onSend', async (_request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
-    // Map imagery keys (Esri) are restricted to the site's address, which they read from the referrer: other sites
-    // get the origin only, never a path.
+    // Other sites get the origin only, never a path.
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Permissions-Policy', 'geolocation=(self), camera=(self)');
@@ -84,13 +90,14 @@ export async function createApp(options: Options = {}) {
   installRisk(app, pool);
   installWind(app, pool, options.weatherFetch);
   installShare(app, pool, webDir);
+  const imagery = installImagery(app, pool, origins, options.imagery);
 
   app.get('/api/v1/health', async () => {
     await pool.query('SELECT 1');
     return { data: { status: 'ok' } };
   });
-  // Public settings for the web app. The ArcGIS key for HD imagery is a browser key, restricted by referrer.
-  app.get('/api/v1/config', async () => ({ data: { esriKey: process.env.ARCGIS_API_KEY || null } }));
+  // Public settings for the web app. HD imagery comes through GET /imagery; the ArcGIS key stays on the server.
+  app.get('/api/v1/config', async () => ({ data: await imagery.config() }));
   app.setNotFoundHandler((request, reply) => {
     if (request.method === 'GET' && !request.url.startsWith('/api') && !request.url.startsWith('/uploads') && existsSync(`${webDir}/index.html`)) {
       return reply.header('Cache-Control', 'no-cache').type('text/html').sendFile('index.html', webDir);
@@ -105,6 +112,5 @@ export async function createApp(options: Options = {}) {
     request.log.error({ err: error }, 'Request failed');
     return reply.code(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Terjadi kesalahan di server. Ulangi beberapa menit lagi.' } });
   });
-  if (ownsPool) app.addHook('onClose', () => pool.end());
   return { app, pool };
 }
