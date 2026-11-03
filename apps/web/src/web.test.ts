@@ -4,6 +4,9 @@ import { bearing, distanceMeters, windName } from './geo';
 import { duration, formatter, km, wib } from './format';
 import * as common from './i18n/common';
 import { enqueue, flush, queued } from './outbox';
+import { fwiLabel, riskText } from './map/risk';
+import { windText } from './components/incident/wind';
+import { areaText } from './components/incident/area';
 
 describe('field helpers', () => {
   it('gives distance and direction to the hotspot without a network', () => {
@@ -58,7 +61,8 @@ describe('outbox', () => {
 
 describe('two languages', () => {
   it('has every shared label in Indonesian and English', () => {
-    for (const [name, value] of Object.entries(common)) {
+    const shared = { ...common, riskText, fwiLabel, windText, areaText };
+    for (const [name, value] of Object.entries(shared)) {
       if (value && typeof value === 'object' && 'id' in value && 'en' in value) {
         const pair = value as { id: object; en: object };
         const id = Object.keys(pair.id).sort(), en = Object.keys(pair.en).sort();
