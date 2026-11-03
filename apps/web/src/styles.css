@@ -190,6 +190,10 @@ h1, h2, h3, p { margin: 0; }
 
 .map-pane { position: relative; min-width: 0; min-height: 0; height: 100%; }
 .map { width: 100%; height: 100%; min-height: 240px; background: #e8e6e1; }
+/* The map's place while MapLibre downloads (map/LazyMapView.tsx). */
+.map-loading { display: grid; place-items: center; color: var(--text-3); font-size: 12px; line-height: 16px; }
+/* A part that downloads when needed and did not arrive (components/LoadBoundary.tsx). */
+.load-failed { display: grid; justify-items: center; gap: 10px; max-width: 24rem; margin: 0 auto; padding: 16px; text-align: center; color: var(--text-2); font-size: 13px; line-height: 18px; }
 .map-controls { position: absolute; top: 16px; right: 16px; display: grid; gap: 8px; z-index: 5; }
 .map-control { width: 64px; height: 52px; display: grid; place-items: center; align-content: center; gap: 3px; border-radius: var(--radius-md); background: var(--chrome-950); color: var(--chrome-text); border: 0; box-shadow: var(--shadow-float); cursor: pointer; }
 .map-control span { font-size: 11px; line-height: 12px; font-weight: 500; color: var(--chrome-text-2); }

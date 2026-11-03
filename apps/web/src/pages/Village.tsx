@@ -9,7 +9,7 @@ import { Bars7 } from '../components/volunteer/Bars7';
 import { incidentLimit, villageSummaryText } from '../components/volunteer/villageSummary';
 import { useFormat } from '../format';
 import { dict, useLang, useT } from '../i18n';
-import { MapView } from '../map/MapView';
+import { MapView } from '../map/LazyMapView';
 import { useSession } from '../session';
 
 const text = dict({
