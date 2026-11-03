@@ -1,6 +1,6 @@
 // The daily recap for BPBD/Daops. Incidents, regencies and villages count the incidents first detected on one WIB day
 // (how many were checked so far and how fast); field check results and tasks count what was done on that day,
-// whenever the incident was first seen.
+// whenever the incident was first seen. Indicated hot areas stay per incident: added up they read as burned area.
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { authenticated } from './auth.js';
@@ -15,14 +15,11 @@ const stats = `count(*)::integer AS incidents,
   count(*) FILTER (WHERE i.level = 'tinggi' AND i.first_verified_at IS NULL)::integer AS open_high,
   count(*) FILTER (WHERE i.latest_status = 'alarm_palsu')::integer AS false_alarms,
   COALESCE(sum(i.detection_count), 0)::integer AS detections,
-  sum(i.indicated_area_ha) AS indicated_area,
   percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM i.first_verified_at - i.first_detected_at) / 60)
     FILTER (WHERE i.first_verified_at IS NOT NULL) AS median`;
 /** SQL: the column falls on the WIB day in $1. */
 const within = (column: string) => `${column} >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta') AND ${column} < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')`;
 const median = (value: unknown) => (value === null || value === undefined ? null : Math.round(Number(value)));
-/** The indicated hot areas added up (see incidents.indicated_area_ha); null when no incident has one. Not burned area. */
-const area = (value: unknown) => (value === null || value === undefined ? null : Math.round(Number(value) * 10) / 10);
 
 export function installRecap(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/recap', async request => {
@@ -52,9 +49,9 @@ export function installRecap(app: FastifyInstance, pool: pg.Pool) {
     return { data: {
       date, province,
       totals: { incidents: t.incidents, high: t.high, checked: t.checked, checkedShare: t.incidents ? t.checked / t.incidents : null,
-        medianMinutes: median(t.median), falseAlarms: t.false_alarms, detections: t.detections, indicatedAreaHa: area(t.indicated_area) },
+        medianMinutes: median(t.median), falseAlarms: t.false_alarms, detections: t.detections },
       regencies: regencies.rows.map(row => ({ name: row.name, province: row.province, incidents: row.incidents, high: row.high, checked: row.checked,
-        openHigh: row.open_high, medianMinutes: median(row.median), indicatedAreaHa: area(row.indicated_area) })),
+        openHigh: row.open_high, medianMinutes: median(row.median) })),
       villages: villages.rows.map(row => ({ id: row.id, name: row.name, district: row.district, regency: row.regency, incidents: row.incidents, high: row.high,
         checked: row.checked, detections: row.detections })),
       checks: Object.fromEntries(checks.rows.map(row => [row.status, row.count])),

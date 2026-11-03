@@ -85,22 +85,15 @@ test('the indicated area is the largest single pass: overlapping pixels count on
   assert.equal(typeof list.find(item => item.id === incidents.C).indicatedAreaHa, 'number');
 });
 
-test('the daily recap adds up the indicated areas of the day, null when none has one, and the CSV export leaves them out', async () => {
-  const recap = async (date: string) => {
-    const response = await app.inject({ method: 'GET', url: `/api/v1/recap?date=${date}`, headers: { authorization: `Bearer ${bpbd}` } });
-    assert.equal(response.statusCode, 200, response.body);
-    return response.json().data;
-  };
-  const values = await Promise.all(['A', 'B', 'C', 'D', 'E', 'F'].map(name => area(incidents[name]!)));
-  const sum = Math.round(values.reduce((a, b) => a! + b!, 0)! * 10) / 10;
-  const today = await recap(day);
-  assert.equal(today.totals.indicatedAreaHa, sum);
-  assert.deepEqual(today.regencies.map((r: any) => [r.name, r.indicatedAreaHa]), [[village.regency, sum]]);
-  const before = await recap(addDays(day, -1));
-  assert.equal(before.totals.incidents, 1);
-  assert.equal(before.totals.indicatedAreaHa, null, 'H has no area');
-  assert.equal(before.regencies[0].indicatedAreaHa, null);
-  assert.equal((await recap(addDays(day, -5))).totals.indicatedAreaHa, null, 'no incidents');
+test('the daily recap and the CSV export leave the indicated areas out: added up they would read as burned area', async () => {
+  const response = await app.inject({ method: 'GET', url: `/api/v1/recap?date=${day}`, headers: { authorization: `Bearer ${bpbd}` } });
+  assert.equal(response.statusCode, 200, response.body);
+  const recap = response.json().data;
+  assert.equal(recap.totals.incidents, 7, 'A to G');
+  assert.deepEqual(recap.regencies.map((r: any) => [r.name, r.incidents]), [[village.regency, 7]]);
+  assert.ok(!('indicatedAreaHa' in recap.totals));
+  assert.ok(recap.regencies.every((r: any) => !('indicatedAreaHa' in r)));
+  assert.doesNotMatch(response.body, /indicatedArea/);
   const csv = await app.inject({ method: 'GET', url: '/api/v1/export/groundcheck.csv?range=7d', headers: { authorization: `Bearer ${bpbd}` } });
   assert.equal(csv.statusCode, 200);
   const header = csv.body.replace('﻿', '').split('\r\n')[0]!;
