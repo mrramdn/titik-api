@@ -25,6 +25,14 @@ const text = dict({
     howCheck: 'Relawan memilih satu dari lima status, lalu menambah foto, lokasi GPS, dan catatan. Tanpa sinyal, laporan disimpan di ponsel dan terkirim sendiri saat sinyal kembali, dengan waktu cek yang sebenarnya.',
     howDashTitle: 'Dasbor dan rekap.',
     howDash: 'BPBD/Daops melihat kejadian yang perlu tindakan, tugas yang berjalan, dan hasil cek. Rekap harian merangkum kejadian per kabupaten, bagian yang sudah dicek, dan waktu tanggap, yaitu median waktu dari titik panas pertama sampai cek pertama. Laporan alarm palsu menandai lokasinya selama 30 hari.',
+    accuracyTitle: 'Sumber dan akurasi data',
+    accuracy1: 'Titik panas berasal dari data near-real-time NASA FIRMS: VIIRS 375 m di satelit NOAA-21 dan NOAA-20 (S-NPP sampai 2 November 2026) dan MODIS 1 km di satelit Terra dan Aqua. Data terbit sekitar 3 jam setelah satelit melintas.',
+    accuracy2: 'Satu titik panas adalah satu piksel satelit, bukan letak api yang tepat. Dari dekat, peta menggambarnya sebagai kotak seukuran piksel itu.',
+    accuracy3: 'Alarm palsu dikurangi dengan menandai titik di dekat sumber panas tetap dan menurunkan prioritasnya, dengan tingkat keyakinan satelit dalam skor prioritas, dan akhirnya ditutup lewat cek lapangan.',
+    accuracy4: 'Api bisa terlewat di bawah awan, asap tebal, atau kanopi, dan di antara dua lintasan satelit.',
+    accuracy5: 'Arsip menyimpan setiap hari sejak 8 Oktober 2026.',
+    accuracy6: 'Bahaya kebakaran adalah Fire Weather Index (FWI) yang dihitung Titik Api dari data model cuaca Open-Meteo dengan kelas BMKG. Ini bukan produk resmi BMKG.',
+    accuracy7: 'Citra satelit berasal dari NASA GIBS (harian), Sentinel-2 cloudless dari EOX, dan Esri World Imagery.',
     limitsTitle: 'Batasan',
     limit1: 'Titik panas adalah anomali suhu permukaan yang terlihat dari satelit. Setiap titik panas perlu dicek di lapangan.',
     limit2: 'Api di bawah awan, asap tebal, atau kanopi, dan gambut yang membara di bawah permukaan bisa tidak terdeteksi. Tanpa titik panas, sebuah wilayah belum tentu aman.',
@@ -42,6 +50,8 @@ const text = dict({
     source3: 'Lahan gambut dan peringatan gangguan hutan dari Global Nature Watch (dahulu Global Forest Watch), CC BY 4.0.',
     source4: 'Permukiman dan kawasan industri dari © kontributor OpenStreetMap, ODbL.',
     source5: 'Peta dasar OpenFreeMap, © OpenMapTiles. Citra satelit harian dari NASA EOSDIS GIBS. Citra detail Sentinel-2 cloudless 2023 oleh EOX, CC BY-NC-SA 4.0.',
+    source6: 'Citra HD dari Esri World Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community.',
+    source7: 'Data cuaca untuk bahaya kebakaran dari Open-Meteo.com, CC BY 4.0.',
     contest: 'Hackathon JOINTS UGM 2026, tema Sustainability, subtema 4. Tim Close AI, Universitas Bina Nusantara.',
   },
   en: {
@@ -67,6 +77,14 @@ const text = dict({
     howCheck: 'A volunteer picks one of five statuses and adds a photo, a GPS location and a note. Without signal, the report is stored on the phone and sent once the signal returns, with the actual check time.',
     howDashTitle: 'Dashboard and recap.',
     howDash: 'BPBD/Daops sees the incidents that need action, the tasks in progress and the check results. The daily recap sums up incidents per regency, the share checked and the response time, the median time from the first hotspot to the first check. A false alarm report marks its location for 30 days.',
+    accuracyTitle: 'Data sources and accuracy',
+    accuracy1: 'Hotspots come from NASA FIRMS near-real-time data: VIIRS 375 m on NOAA-21 and NOAA-20 (S-NPP until 2 November 2026) and MODIS 1 km on Terra and Aqua. Data is published about 3 hours after a satellite pass.',
+    accuracy2: 'A hotspot is one satellite pixel, not the exact place of a fire. From close zoom the map draws it as a box the size of that pixel.',
+    accuracy3: 'False alarms are reduced by flagging hotspots near fixed heat sources and lowering their priority, by satellite confidence in the priority score, and finally closed by field checks.',
+    accuracy4: 'Fires can be missed under cloud, thick smoke or canopy, and between two satellite passes.',
+    accuracy5: 'The archive keeps every day since 8 October 2026.',
+    accuracy6: 'Fire danger is the Fire Weather Index (FWI), computed by Titik Api from Open-Meteo weather model data with BMKG\'s classes. It is not an official BMKG product.',
+    accuracy7: 'Satellite imagery comes from NASA GIBS (daily), Sentinel-2 cloudless by EOX, and Esri World Imagery.',
     limitsTitle: 'Limitations',
     limit1: 'A hotspot is a surface temperature anomaly seen from a satellite. Every hotspot needs a field check.',
     limit2: 'Fires under clouds, thick smoke or canopy, and peat smouldering below the surface can go undetected. An area without hotspots is not necessarily safe.',
@@ -84,6 +102,8 @@ const text = dict({
     source3: 'Peatland and forest disturbance alerts from Global Nature Watch (formerly Global Forest Watch), CC BY 4.0.',
     source4: 'Settlements and industrial areas from © OpenStreetMap contributors, ODbL.',
     source5: 'Base map OpenFreeMap, © OpenMapTiles. Daily satellite imagery from NASA EOSDIS GIBS. Detailed imagery Sentinel-2 cloudless 2023 by EOX, CC BY-NC-SA 4.0.',
+    source6: 'HD imagery from Esri World Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community.',
+    source7: 'Weather data for fire danger from Open-Meteo.com, CC BY 4.0.',
     contest: 'Hackathon JOINTS UGM 2026, theme Sustainability, subtheme 4. Team Close AI, Universitas Bina Nusantara.',
   },
 });
@@ -91,6 +111,7 @@ type Key = keyof typeof text.id;
 
 const steps: [Key, Key][] = [['howSatTitle', 'howSat'], ['howModisTitle', 'howModis'], ['howTriageTitle', 'howTriage'], ['howAlertTitle', 'howAlert'],
   ['howAssignTitle', 'howAssign'], ['howCheckTitle', 'howCheck'], ['howDashTitle', 'howDash']];
+const accuracy: Key[] = ['accuracy1', 'accuracy2', 'accuracy3', 'accuracy4', 'accuracy5', 'accuracy6', 'accuracy7'];
 const limits: Key[] = ['limit1', 'limit2', 'limit3', 'limit4', 'limit5'];
 const privacy: Key[] = ['privacy1', 'privacy2', 'privacy3'];
 
@@ -108,6 +129,8 @@ export function AboutPage() {
           <p>{t('coverage')}</p>
           <h2>{t('howTitle')}</h2>
           <ol>{steps.map(([title, body]) => <li key={title}><b>{t(title)}</b> {t(body)}</li>)}</ol>
+          <h2 id="akurasi">{t('accuracyTitle')}</h2>
+          <ul>{accuracy.map(key => <li key={key}>{t(key)}</li>)}</ul>
           <h2 id="batasan">{t('limitsTitle')}</h2>
           <ul>{limits.map(key => <li key={key}>{t(key)}</li>)}</ul>
           <h2>{t('privacyTitle')}</h2>
@@ -119,6 +142,8 @@ export function AboutPage() {
             <li>{t('source3')}</li>
             <li>{t('source4')}</li>
             <li>{t('source5')}</li>
+            <li>{t('source6')}</li>
+            <li>{t('source7')}</li>
           </ul>
           <p className="note about-contest">{t('contest')}</p>
         </article>
