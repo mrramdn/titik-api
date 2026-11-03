@@ -49,6 +49,18 @@ export function quietSuggestion(incidents24h: number | null | undefined, archive
   return day && day.incidents >= QUIET_INCIDENTS ? date : '';
 }
 
+/** The day "Putar ulang hari tersibuk" opens: the busiest archive day, or '' without an archive or a day with hotspots. */
+export function replayDay(archive: ArchiveDays | null | undefined): string {
+  const days = archive && Array.isArray(archive.days) ? archive.days : [];
+  const date = busiestDay(days);
+  return days.some(day => day.date === date && day.detections > 0) ? date : '';
+}
+
+/** Hotspots in the archive, every day added up; null without an archive. */
+export function archiveTotal(archive: ArchiveDays | null | undefined): number | null {
+  return archive && Array.isArray(archive.days) ? archive.days.reduce((sum, day) => sum + (day.detections || 0), 0) : null;
+}
+
 /** Bar heights for the archive chart as a share of the busiest day; a day with any detection keeps a visible sliver. */
 export function barHeights(days: ArchiveDay[]): number[] {
   const top = Math.max(1, ...days.map(day => day.detections));

@@ -3,6 +3,11 @@
 
 /* ---------- top bar ---------- */
 .app > main:not(.mapscreen) { flex: 1 0 auto; }
+/* "Langsung ke isi": out of sight until a keyboard reaches it, then over the top bar. */
+.skip-link { position: absolute; top: 8px; left: 8px; z-index: 60; padding: 8px 12px; border-radius: var(--radius-md); background: var(--surface-card); color: var(--text); font-weight: 500; box-shadow: var(--shadow-float); transform: translateY(-200%); }
+.skip-link:focus { transform: none; outline: 2px solid var(--text); outline-offset: 2px; }
+/* Read by screen readers, not shown. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .topbar { gap: 14px; }
 .brand { flex: none; }
 .region-chip { position: relative; flex: none; }

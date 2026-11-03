@@ -1,12 +1,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import '@fontsource-variable/inter';
 import '@fontsource/ibm-plex-mono/latin-500.css';
 import './styles.css';
 import './styles/shell.css';
 import './styles/volunteer.css';
 import './styles/bpbd.css';
+import './styles/landing.css';
 import { SessionProvider } from './session';
 import { LangProvider } from './i18n';
 import { RegionProvider } from './region';
@@ -22,19 +23,14 @@ import { DashboardPage } from './pages/Dashboard';
 import { RecapPage } from './pages/Recap';
 import { VillagePage } from './pages/Village';
 import { AboutPage } from './pages/About';
+import { LandingPage } from './pages/Landing';
 import { DemoLink } from './components/shell/DemoLink';
-import { HOME_PATH, legacyMapTarget, MAP_PATH } from './routes';
+import { HOME_PATH, MAP_PATH } from './routes';
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   void import('virtual:pwa-register').then(({ registerSW }) => registerSW({ immediate: true }));
 }
 startOutboxSync();
-
-/** / opens the map at /peta for now; an old map link (/?tanggal=…) keeps its query, without a new history entry. */
-function Home() {
-  const location = useLocation();
-  return <Navigate to={legacyMapTarget(location.search, location.state) ?? MAP_PATH} replace state={location.state} />;
-}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -45,7 +41,8 @@ createRoot(document.getElementById('root')!).render(
             <BrowserRouter>
               <DemoLink>
                 <Routes>
-                  <Route index element={<Home />} />
+                  {/* The landing page; an old map link on / (/?tanggal=…) goes on to /peta. */}
+                  <Route index element={<LandingPage />} />
                   <Route element={<MapScreen />}>
                     <Route path={MAP_PATH} element={<IncidentList />} />
                     <Route path="/kejadian/:id" element={<IncidentPanel />} />

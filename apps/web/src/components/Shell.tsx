@@ -19,14 +19,14 @@ const text = dict({
   id: {
     home: 'Titik Api, beranda', region: 'Wilayah', allRegions: 'Sumsel + Kalteng', villages: '{n} desa',
     map: 'Peta', tasks: 'Tugas', myVillage: 'Desa saya', dashboard: 'Dasbor', recap: 'Rekap', about: 'Tentang', nav: 'Navigasi',
-    account: 'Akun', role: 'Peran', language: 'Bahasa', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup',
+    account: 'Akun', role: 'Peran', language: 'Bahasa', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup', skip: 'Langsung ke isi',
     offline: 'Tanpa sinyal. Laporan disimpan di ponsel.', waitingOne: '{n} laporan menunggu sinyal sejak {time}.', waitingMany: '{n} laporan menunggu sinyal sejak {time}.',
     rejectedOne: '{n} laporan ditolak: {error}', rejectedMany: '{n} laporan ditolak: {error}', sendNow: 'Kirim sekarang',
   },
   en: {
     home: 'Titik Api, home', region: 'Region', allRegions: 'Sumsel + Kalteng', villages: '{n} villages',
     map: 'Map', tasks: 'Tasks', myVillage: 'My village', dashboard: 'Dashboard', recap: 'Recap', about: 'About', nav: 'Navigation',
-    account: 'Account', role: 'Role', language: 'Language', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close',
+    account: 'Account', role: 'Role', language: 'Language', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close', skip: 'Skip to content',
     offline: 'No signal. Reports are saved on this phone.', waitingOne: '{n} report waiting for signal since {time}.', waitingMany: '{n} reports waiting for signal since {time}.',
     rejectedOne: '{n} report rejected: {error}', rejectedMany: '{n} reports rejected: {error}', sendNow: 'Send now',
   },
@@ -139,8 +139,17 @@ function AccountSheet({ onClose }: { onClose(): void }) {
   );
 }
 
-/** `freshness` false hides the satellite data status in the top bar (the map in archive mode shows a past day). */
-export function Shell({ children, freshness = true }: { children: ReactNode; freshness?: boolean }) {
+interface ShellProps {
+  children: ReactNode;
+  /** False hides the satellite data status in the top bar (the map in archive mode shows a past day). */
+  freshness?: boolean;
+  /** False hides the region choice, which narrows the map and the lists (the landing page has neither). */
+  region?: boolean;
+  /** The id of the main content: a "skip to content" link comes first, for keyboards. */
+  skipTo?: string;
+}
+
+export function Shell({ children, freshness = true, region = true, skipTo }: ShellProps) {
   const t = useT(text);
   const { user } = useSession();
   const { pathname } = useLocation();
@@ -150,9 +159,10 @@ export function Shell({ children, freshness = true }: { children: ReactNode; fre
   useEffect(() => setSheet(false), [pathname]);
   return (
     <div className="app">
+      {skipTo && <a className="skip-link" href={`#${skipTo}`}>{t('skip')}</a>}
       <header className="topbar">
         <Link to={HOME_PATH} className="brand" aria-label={t('home')}><LogoMark /><span className="brand-name">Titik Api</span></Link>
-        <RegionSelect />
+        {region && <RegionSelect />}
         {freshness && <Freshness />}
         <nav className="topnav" aria-label={t('nav')}>
           {links.map(({ to, key, icon: Icon }) => <Link key={to} to={to} className={active(to) ? 'active' : ''} aria-current={active(to) ? 'page' : undefined}><Icon size={16} aria-hidden="true" />{t(key)}</Link>)}
