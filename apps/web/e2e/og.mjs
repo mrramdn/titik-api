@@ -20,8 +20,8 @@ p{font-size:26px;line-height:1.4;color:#57514B;max-width:620px;margin-top:20px}
 .art svg{width:250px;height:250px}
 </style><body>
 <div class="copy"><div class="brand">${mark}Titik Api</div>
-<div><h1>Peringatan titik panas tingkat desa</h1><p>Untuk pengendalian kebakaran hutan dan lahan di Sumatera Selatan dan Kalimantan Tengah.</p></div>
-<div class="foot">4.837 desa/kelurahan · NASA FIRMS VIIRS dan MODIS</div></div>
+<div><h1>Demo peringatan titik panas tingkat desa</h1><p>Data satelit asli dari NASA FIRMS.<br>Bukan sistem peringatan resmi.</p></div>
+<div class="foot">Sumatera Selatan dan Kalimantan Tengah · 4.837 desa/kelurahan</div></div>
 <div class="art">${mark}</div>
 </body>`;
 const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', args: ['--no-sandbox'] });

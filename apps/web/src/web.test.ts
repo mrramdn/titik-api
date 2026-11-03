@@ -9,6 +9,8 @@ import { fwiLabel, riskText } from './map/risk';
 import { windText } from './components/incident/wind';
 import { areaText } from './components/incident/area';
 import { openMeteoText } from './components/OpenMeteo';
+import { manifest } from './manifest';
+import indexHtml from '../index.html?raw';
 
 describe('field helpers', () => {
   it('gives distance and direction to the hotspot without a network', () => {
@@ -98,5 +100,21 @@ describe('two languages', () => {
         expect(en, name).toEqual(id);
       }
     }
+  });
+});
+
+describe('what the site says about itself', () => {
+  const meta = (attribute: string) => new RegExp(`<meta ${attribute} content="([^"]*)"`).exec(indexHtml)?.[1] ?? '';
+
+  it('says demo in the title, every link preview and the installed app, and not an official warning system', () => {
+    const title = /<title>([^<]*)<\/title>/.exec(indexHtml)?.[1] ?? '';
+    for (const [name, value] of Object.entries({ title, ogTitle: meta('property="og:title"'), siteName: meta('property="og:site_name"'), manifest: manifest.name ?? '' })) {
+      expect(value, name).toMatch(/\bdemo\b/i);
+    }
+    for (const [name, value] of Object.entries({ description: meta('name="description"'), ogDescription: meta('property="og:description"'), manifest: manifest.description ?? '' })) {
+      expect(value, name).toMatch(/^Demo portofolio /);
+      expect(value, name).toMatch(/Bukan sistem peringatan resmi\.$/);
+    }
+    expect(meta('property="og:image"')).toBe('https://titik-api.mrramdn.com/og.png');
   });
 });
