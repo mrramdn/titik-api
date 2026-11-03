@@ -12,7 +12,7 @@ import { migrate } from '../src/migrate.js';
 import { loadReference } from '../src/reference.js';
 import { ingest, recluster, type NewAlert } from '../src/ingest.js';
 import { demoAccounts, demoPassword, demoSquads, resetDemo } from '../src/demo.js';
-import { parseFirmsCsv } from '../src/firms.js';
+import { feedActive, feeds, parseFirmsCsv } from '../src/firms.js';
 import { cardText, formatDistance, formatWib, scoreIncident, sizePoints, uncertaintyText, windName, type CardIncident } from '../src/geo.js';
 import { lonLatToPixel, type PeatMask } from '../src/peat.js';
 import { pushAlerts } from '../src/push.js';
@@ -52,6 +52,8 @@ function modisCsv(rows: { point: { lon: number; lat: number }; hoursAgo: number;
   return [modisHeader, ...rows.map(row => `${row.point.lat.toFixed(5)},${row.point.lon.toFixed(5)},325.4,${row.scan ?? 1},${row.track ?? 1},${stamp(row.hoursAgo)},${row.satellite},${row.confidence},6.1NRT,298.7,18.2,D`)].join('\n');
 }
 const empty = { N21: '', N20: '', N: '', MODIS: '' };
+/** The satellites whose feeds are read today. */
+const activeSatellites = () => feeds.filter(feed => feedActive(feed)).flatMap(feed => feed.satellites);
 async function call(method: string, url: string, token?: string, payload?: object) {
   return app.inject({ method: method as InjectOptions['method'], url: `/api/v1${url}`, ...(payload === undefined ? {} : { payload }),
     headers: token ? { authorization: `Bearer ${token}` } : {} });
@@ -199,7 +201,8 @@ test('ingest links detections to villages, groups them into incidents and is ide
   const first = await ingest(pool, { source: 'fixture', texts, peat });
   assert.equal(first.inserted, 5);
   assert.equal(first.incidents.length, 2);
-  assert.deepEqual(first.feeds.map(feed => feed.satellite), ['N21', 'N20', 'N', 'T', 'A']);
+  // S-NPP's feed switches itself off after its last day (2 Nov 2026), so the satellites follow the calendar.
+  assert.deepEqual(first.feeds.map(feed => feed.satellite), activeSatellites());
   const outside = await pool.query('SELECT village_id, incident_id FROM detections WHERE abs(longitude - 106.10) < 0.001');
   assert.equal(outside.rows[0].village_id, null, 'Pangkalpinang (Bangka Belitung) lies outside the covered provinces');
   assert.equal(outside.rows[0].incident_id, null);
@@ -623,11 +626,12 @@ test('the ingest status tells each satellite, its last pass and the next window'
   assert.ok(n21.last24h >= 5);
   assert.equal(typeof n21.medianLatencyMin, 'number');
   for (const satellite of status.satellites) {
-    assert.equal(satellite.active, true);
+    assert.equal(satellite.active, activeSatellites().includes(satellite.satellite));
+    if (!satellite.active) { assert.equal(satellite.nextWindow, null); continue; }
     assert.equal(Date.parse(satellite.nextWindow.expectedBy) - Date.parse(satellite.nextWindow.end), 180 * 60_000);
     assert.ok(Date.parse(satellite.nextWindow.end) > Date.parse(satellite.nextWindow.start));
   }
-  assert.equal(status.runs[0].feeds.length, 5);
+  assert.equal(status.runs[0].feeds.length, activeSatellites().length);
 });
 
 test('S-NPP switches off after its last day and a broken MODIS row does not stop the ingest', async () => {
