@@ -22,6 +22,7 @@ import { installRisk } from './weather.js';
 import { installWind } from './wind.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
+import { uploadsDirectory } from './uploads.js';
 
 interface Options {
   pool?: pg.Pool; uploadsDir?: string; webDir?: string; origins?: string[]; production?: boolean; logger?: boolean; trustProxy?: string | false; pushSender?: Sender; demoLogin?: boolean;
@@ -39,7 +40,7 @@ export function trustedProxies(value = process.env.TRUST_PROXY): string | false 
 export async function createApp(options: Options = {}) {
   const ownsPool = !options.pool;
   const pool = options.pool ?? createPool();
-  const uploadsDir = options.uploadsDir ?? resolve(process.env.UPLOAD_DIR ?? 'storage/uploads');
+  const uploadsDir = options.uploadsDir ?? uploadsDirectory();
   const webDir = options.webDir ?? resolve(process.env.WEB_DIR ?? '../web/dist');
   const production = options.production ?? process.env.NODE_ENV === 'production';
   const origins = new Set(options.origins ?? (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173').split(',').map(item => item.trim()));
