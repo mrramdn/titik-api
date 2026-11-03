@@ -43,4 +43,10 @@ describe('the installed app', () => {
     expect(manifest.start_url).toBe('/peta');
     expect(manifest.scope).toBe('/');
   });
+
+  it('keeps the identity of the installs made while the map was at /, so they take the new start_url', () => {
+    // A browser falls back to start_url for the id; the start_url was / before the map moved to /peta.
+    expect(manifest.id).toBe('/');
+    expect(new URL(manifest.id!, 'https://titikapi.test').href).toBe(new URL('/', 'https://titikapi.test').href);
+  });
 });

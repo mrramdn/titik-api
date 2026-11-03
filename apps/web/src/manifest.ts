@@ -4,6 +4,10 @@
 import type { ManifestOptions } from 'vite-plugin-pwa';
 
 export const manifest: Partial<ManifestOptions> = {
+  // The app's identity. Without an id a browser takes the start_url, which was / until the map moved to /peta: the
+  // installs from before would then count as another app, keep opening / (now the landing page) and be offered a
+  // second install. With id '/' they stay the same app and take the new start_url.
+  id: '/',
   name: 'Titik Api · demo dengan data satelit asli',
   short_name: 'Titik Api',
   description: 'Demo portofolio peringatan titik panas tingkat desa di Sumatera Selatan dan Kalimantan Tengah, dengan data satelit asli NASA FIRMS. Bukan sistem peringatan resmi.',
