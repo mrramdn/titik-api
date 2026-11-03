@@ -589,7 +589,10 @@ test('the daily recap counts one WIB day and adds up', async () => {
     WHERE i.village_id IS NOT NULL AND to_char(r.observed_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') = $1`, [wibDay])).rows[0].n;
   assert.equal(Object.values(recap.checks as Record<string, number>).reduce((a, b) => a + b, 0), checksThatDay);
   assert.deepEqual(Object.keys(recap.assignments).sort(), ['dibatalkan', 'ditugaskan', 'menuju', 'selesai']);
-  assert.ok(recap.assignments.selesai >= 1 && recap.assignments.dibatalkan >= 1);
+  // The tests finished and cancelled tasks just now; shortly after WIB midnight the fixtures still sit on the day before.
+  const taskDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
+  const tasksDone = taskDay === wibDay ? recap : (await call('GET', `/recap?date=${taskDay}`, bpbd)).json().data;
+  assert.ok(tasksDone.assignments.selesai >= 1 && tasksDone.assignments.dibatalkan >= 1);
   const elsewhere = (await call('GET', `/recap?date=${wibDay}&province=${encodeURIComponent('Sumatera Selatan')}`, bpbd)).json().data;
   assert.equal(elsewhere.totals.incidents, village.province === 'Sumatera Selatan' ? expected.n : 0);
   assert.equal((await call('GET', '/recap?date=2026-02-31', bpbd)).statusCode, 400);
