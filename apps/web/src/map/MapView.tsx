@@ -10,6 +10,7 @@ import { useApi } from '../components/ui';
 import { useConfig } from '../config';
 import { useFormat } from '../format';
 import { ALL_BOUNDS, useRegion } from '../region';
+import { useSession } from '../session';
 import { ageClock } from './archive';
 import { checkBadge } from './badge';
 import { dailyLayer, dailyLayerFor } from './imagery';
@@ -81,7 +82,7 @@ const layerInfo: { key: LayerKey; label: Key; source: Key; icon: LucideIcon }[] 
   { key: 'citra', label: 'citra', source: 'citraSource', icon: Image },
 ];
 
-const tiles = (layer: 'kejadian' | 'deteksi', hours: number, version: number, tanggal: string) => tileUrls(layer, hours, version, tanggal, location.origin);
+const tiles = (layer: 'kejadian' | 'deteksi', hours: number, version: number, tanggal: string, demo: boolean) => tileUrls(layer, hours, version, tanggal, location.origin, demo);
 const wide = () => typeof matchMedia === 'function' && matchMedia('(min-width: 1280px)').matches;
 // The legend opens by itself on wide screens until the visitor closes it once.
 const legendKey = 'titikapi.legend';
@@ -111,6 +112,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const [zoomedOut, setZoomedOut] = useState(true);
   const [closeUp, setCloseUp] = useState(false);
   const { query, findRegency } = useRegion();
+  // A demo session sees its own field checks and tasks on the incident dots too; everyone else sees real ones only.
+  const demo = Boolean(useSession().user?.demo);
   // HD imagery needs the ArcGIS key from GET /config; without one the satellite view stays EOX Sentinel-2 close up.
   // A server older than GET /config sends no pixel footprints: its hotspots stay dots at every zoom.
   const config = useConfig();
@@ -131,8 +134,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const onRiskCell = (index: number) => { setRiskCell(index); setPanel('risk'); };
   const handlers = useRef({ onSelect, onVillage, findRegency, onRiskCell });
   handlers.current = { onSelect, onVillage, findRegency, onRiskCell };
-  const state = useRef({ hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay });
-  state.current = { hours, version, tanggal, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay };
+  const state = useRef({ hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay });
+  state.current = { hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, esriKey, footprints, risk: riskData, riskDay: shownDay };
 
   useEffect(() => {
     const b = bounds ?? ALL_BOUNDS;
@@ -156,7 +159,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     instance.on('load', collapseAttribution);
     // Own layers go in as soon as the style is ready, so incidents load alongside the base map tiles.
     instance.once('style.load', () => {
-      const { hours: h, version: v, tanggal: day } = state.current;
+      const { hours: h, version: v, tanggal: day, demo: d } = state.current;
       const today = ageClock(day);
       const firstSymbol = instance.getStyle().layers?.find(layer => layer.type === 'symbol')?.id;
       instance.addSource('citra', { type: 'raster', tileSize: 256, maxzoom: 15, tiles: ['https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg'], attribution: 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)' });
@@ -181,11 +184,11 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.addLayer({ id: 'desa-label', type: 'symbol', source: 'desa', 'source-layer': 'desa', minzoom: 11, layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Noto Sans Regular'] }, paint: { 'text-color': colors.line, 'text-halo-color': '#ffffff', 'text-halo-width': 1.4 } });
       instance.addSource('fokus', { type: 'geojson', data: empty });
       instance.addLayer({ id: 'fokus-line', type: 'line', source: 'fokus', paint: { 'line-color': colors.ink, 'line-width': 2, 'line-dasharray': [2, 1.2] } });
-      instance.addSource('deteksi', { type: 'vector', tiles: tiles('deteksi', h, v, day), minzoom: 7, maxzoom: 14 });
+      instance.addSource('deteksi', { type: 'vector', tiles: tiles('deteksi', h, v, day, d), minzoom: 7, maxzoom: 14 });
       instance.addLayer({ id: 'deteksi-modis', type: 'circle', source: 'deteksi', 'source-layer': 'deteksi', filter: modisDetection, paint: { 'circle-radius': kilometreRadius, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-width': 1, 'circle-stroke-color': colors.newest, 'circle-stroke-opacity': 0.35 } });
       instance.addLayer({ id: 'deteksi', type: 'circle', source: 'deteksi', 'source-layer': 'deteksi', paint: { 'circle-radius': detectionRadius, 'circle-color': detectionColor(today), 'circle-opacity': detectionOpacity(today) } });
       for (const layer of footprintLayers(today)) instance.addLayer(layer);
-      instance.addSource('kejadian', { type: 'vector', tiles: tiles('kejadian', h, v, day), maxzoom: 14 });
+      instance.addSource('kejadian', { type: 'vector', tiles: tiles('kejadian', h, v, day, d), maxzoom: 14 });
       instance.addLayer({ id: 'kejadian', type: 'circle', source: 'kejadian', 'source-layer': 'kejadian', layout: { 'circle-sort-key': incidentSortKey }, paint: {
         'circle-radius': incidentRadius, 'circle-color': levelColor, 'circle-opacity': incidentOpacity, 'circle-stroke-color': incidentStroke, 'circle-stroke-width': incidentStrokeWidth } });
       const badge = checkBadge(2);
@@ -282,9 +285,9 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   }
   function syncTiles() {
     const m = map.current; if (!m || !ready.current) return;
-    const { hours: h, version: v, tanggal: day } = state.current;
-    (m.getSource('kejadian') as maplibregl.VectorTileSource).setTiles(tiles('kejadian', h, v, day));
-    (m.getSource('deteksi') as maplibregl.VectorTileSource).setTiles(tiles('deteksi', h, v, day));
+    const { hours: h, version: v, tanggal: day, demo: d } = state.current;
+    (m.getSource('kejadian') as maplibregl.VectorTileSource).setTiles(tiles('kejadian', h, v, day, d));
+    (m.getSource('deteksi') as maplibregl.VectorTileSource).setTiles(tiles('deteksi', h, v, day, d));
     const today = ageClock(day);
     m.setPaintProperty('deteksi', 'circle-color', detectionColor(today));
     m.setPaintProperty('deteksi', 'circle-opacity', detectionOpacity(today));
@@ -336,7 +339,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   // The cell card goes with the layer.
   useEffect(() => { if (!riskData && panel === 'risk') setPanel(null); }, [riskData]);
   useEffect(syncFilters, [filterKey]);
-  useEffect(syncTiles, [hours, version, tanggal]);
+  useEffect(syncTiles, [hours, version, tanggal, demo]);
   useEffect(syncDaily, [daily.tiles]);
   useEffect(syncOverview, [regions.data, overview, footprints]);
   useEffect(() => syncSelected(), [selected?.id, selected?.detections?.length]);

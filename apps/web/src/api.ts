@@ -45,6 +45,11 @@ export interface AssignmentSummary {
 export interface LatestCheck { status: Status; observedAt: string; demo: boolean }
 export interface IncidentVillage { id: string; name: string; district: string; regency: string; province: string; center: [number, number] }
 
+/**
+ * Field checks and tasks follow the session everywhere (incidents, history, counts, dashboard, recap, export): visitors
+ * and real accounts get real ones only; a demo session gets real and demo ones together. The shared demo accounts
+ * never change what anyone else sees. The kejadian tiles do the same with &lihat=demo (see map/layers.ts tileUrls).
+ */
 export interface Incident {
   id: string; code: string; village: IncidentVillage | null;
   firstDetectedAt: string; lastDetectedAt: string;

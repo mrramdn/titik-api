@@ -11,9 +11,13 @@ export const FOOTPRINT_ZOOM = 11;
 /** From this zoom the satellite view shows Esri World Imagery instead of Sentinel-2, when there is a key. */
 export const ESRI_ZOOM = 11;
 
-/** Vector tiles for the incident or hotspot layer. `version` changes with every ingest run; `tanggal` asks for an archive day. */
-export const tileUrls = (layer: 'kejadian' | 'deteksi', hours: number, version: number, tanggal: string, origin: string) =>
-  [`${origin}/api/v1/tiles/${layer}/{z}/{x}/{y}.mvt?hours=${hours}&v=${version}${tanggalParam(tanggal)}`];
+/**
+ * Vector tiles for the incident or hotspot layer. `version` changes with every ingest run; `tanggal` asks for an archive
+ * day. `demo` (the visitor is signed in to a demo account) asks for incident tiles that also show demo field checks and
+ * tasks (&lihat=demo; the server honours it only for a demo session). Hotspot tiles carry no field check or task state.
+ */
+export const tileUrls = (layer: 'kejadian' | 'deteksi', hours: number, version: number, tanggal: string, origin: string, demo = false) =>
+  [`${origin}/api/v1/tiles/${layer}/{z}/{x}/{y}.mvt?hours=${hours}&v=${version}${tanggalParam(tanggal)}${demo && layer === 'kejadian' ? '&lihat=demo' : ''}`];
 
 /**
  * Zoom range of the hotspot dots (and the MODIS 1 km ring): from the overview zoom, or 7 without the overview, up to

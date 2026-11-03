@@ -25,6 +25,13 @@ describe('archive mode', () => {
     expect(tileUrls('kejadian', 72, 0, '', 'https://titikapi.test')).toEqual(['https://titikapi.test/api/v1/tiles/kejadian/{z}/{x}/{y}.mvt?hours=72&v=0']);
   });
 
+  it('asks for demo field checks and tasks on the incident tiles only while a demo account is signed in', () => {
+    expect(tileUrls('kejadian', 24, 2, '', 'https://titikapi.test', true)).toEqual(['https://titikapi.test/api/v1/tiles/kejadian/{z}/{x}/{y}.mvt?hours=24&v=2&lihat=demo']);
+    expect(tileUrls('kejadian', 24, 2, '2026-10-23', 'https://titikapi.test', true)[0]).toMatch(/&tanggal=2026-10-23&lihat=demo$/);
+    expect(tileUrls('deteksi', 24, 2, '', 'https://titikapi.test', true)).toEqual(['https://titikapi.test/api/v1/tiles/deteksi/{z}/{x}/{y}.mvt?hours=24&v=2']);
+    expect(tileUrls('kejadian', 24, 2, '', 'https://titikapi.test', false)[0]).not.toMatch(/lihat/);
+  });
+
   it('keeps the archive date, the time window and the sort order when the filters are cleared', () => {
     const narrowed = { ...defaultFilters, hours: 72, sort: 'recent' as const, tanggal: '2026-10-23', levels: ['tinggi' as const], status: 'open' as const, peat: true, regency: 'Ogan Komering Ilir' };
     expect(clearedFilters(narrowed)).toEqual({ ...defaultFilters, hours: 72, sort: 'recent', tanggal: '2026-10-23' });

@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Flame, Navigation } from 'lucide-react';
 import type { Incident, IngestStatus, Level, ScorePart, Status } from '../api';
 import { api, ApiError, type ErrorCode } from '../api';
 import { dict, useLang, useT } from '../i18n';
 import { errorText } from '../i18n/common';
 import { formatter, useFormat, wib, wibDay } from '../format';
+import { useSession } from '../session';
 
 const text = dict({
   id: {
@@ -133,12 +134,22 @@ export function useErrorText() {
 }
 
 // One poll of /ingest/status for the whole app. `version` changes when a new ingest run lands, so lists and map
-// tiles can reload; the top bar shows the status itself.
+// tiles can reload; the top bar shows the status itself. It also changes when the visitor signs in or out: a demo
+// session sees demo field checks and tasks that nobody else sees, so what is on screen loads again for the new account.
 interface DataVersion { status: IngestStatus | null; version: number }
 const DataVersionContext = createContext<DataVersion>({ status: null, version: 0 });
 export function DataVersionProvider({ children, intervalMs = 5 * 60_000 }: { children: ReactNode; intervalMs?: number }) {
   const [state, setState] = useState<DataVersion>({ status: null, version: 0 });
   const last = useRef<number | null>(null);
+  const account = useSession().user?.id ?? null;
+  const shownAccount = useRef(account);
+  const [switches, setSwitches] = useState(0);
+  useEffect(() => {
+    if (shownAccount.current === account) return;
+    shownAccount.current = account;
+    setSwitches(count => count + 1);
+  }, [account]);
+  const value = useMemo(() => ({ status: state.status, version: state.version + switches }), [state, switches]);
   useEffect(() => {
     let alive = true;
     const load = () => api<{ data: IngestStatus }>('/ingest/status').then(body => {
@@ -153,7 +164,7 @@ export function DataVersionProvider({ children, intervalMs = 5 * 60_000 }: { chi
     document.addEventListener('visibilitychange', visible);
     return () => { alive = false; clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
   }, [intervalMs]);
-  return <DataVersionContext.Provider value={state}>{children}</DataVersionContext.Provider>;
+  return <DataVersionContext.Provider value={value}>{children}</DataVersionContext.Provider>;
 }
 export const useDataVersion = () => useContext(DataVersionContext);
 
