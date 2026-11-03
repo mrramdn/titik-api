@@ -65,6 +65,12 @@ test('the first run spins up from the archive and the forecast; the next run sta
   assert.ok(cells > 100 && cells < 140, `${cells} cells of 0.5°`);
   const regencies = (await pool.query('SELECT count(DISTINCT regency)::int AS n FROM weather_cell_regencies')).rows[0].n;
   assert.equal(regencies, (await pool.query('SELECT count(*)::int AS n FROM regencies')).rows[0].n, 'every regency has a cell');
+  const shares = (await pool.query(`SELECT regency, sum(share) AS total, min(share) AS least, count(*) FILTER (WHERE share IS NULL)::int AS missing
+    FROM weather_cell_regencies GROUP BY regency`)).rows;
+  for (const row of shares) {
+    assert.equal(row.missing, 0, `${row.regency}: every cell has its share`);
+    assert.ok(Math.abs(row.total - 1) < 1e-4 && row.least >= 0, `${row.regency}: the shares of its area add up to 1 (${row.total})`);
+  }
   const spinUpStart = addDays(today, -20), archiveUntil = addDays(today, -5);
   const urls: string[] = [];
   const waits: number[] = [];
@@ -161,6 +167,17 @@ test('Open-Meteo errors are retried on 429 and 5xx only; a failed run keeps the 
   assert.equal(recovered.failed, 0);
   assert.ok(recovered.rows > 0);
   assert.ok(waits.includes(5000), 'waited before retrying');
+});
+
+test('cells mapped before shares were stored get their share on the next run', async () => {
+  const mappings = async () => (await pool.query('SELECT cell_id, regency, share FROM weather_cell_regencies ORDER BY cell_id, regency')).rows;
+  const before = await mappings();
+  await pool.query('UPDATE weather_cell_regencies SET share = NULL WHERE cell_id IN (SELECT id FROM weather_cells ORDER BY id LIMIT 10)');
+  assert.ok((await pool.query('SELECT count(*)::int AS n FROM weather_cell_regencies WHERE share IS NULL')).rows[0].n >= 10);
+  await ensureCells(pool);
+  const after = await mappings();
+  assert.equal(after.length, before.length);
+  after.forEach((row, index) => near(row.share, before[index].share, `${row.regency} in cell ${row.cell_id}`));
 });
 
 test('the weather scheduler is off with an interval of 0', () => {

@@ -15,7 +15,7 @@ import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { createPool } from './db.js';
 import { object } from './errors.js';
-import { fwiClass, fwiDay, startMoisture, type FwiCodes, type Moisture } from './fwi.js';
+import { fwiClass, fwiClasses, fwiDay, startMoisture, type FwiClass, type FwiCodes, type Moisture } from './fwi.js';
 import { addDays, wibDay } from './geo.js';
 import { archiveDate } from './incidents.js';
 import { migrate } from './migrate.js';
@@ -69,20 +69,27 @@ export interface WeatherRow extends FwiCodes {
   cellId: number; day: string; temp: number; rh: number; wind: number; from: number; rain24h: number; rainDay: number; dryDays: number; forecast: boolean;
 }
 
+/** SQL: the share of regency `r`'s area that cell `c` covers, from geodesic areas (0 when the two only touch). */
+const COVER_SHARE = 'COALESCE(ST_Area(ST_CollectionExtract(ST_Intersection(c.geom, r.geom), 3)::geography) / NULLIF(ST_Area(r.geom::geography), 0), 0)';
+
 /**
- * The grid: every 0.5° cell (edges on whole and half degrees) that overlaps a regency, and which regencies it
- * overlaps. Built once from the regencies; an empty table is built again.
+ * The grid: every 0.5° cell (edges on whole and half degrees) that overlaps a regency, which regencies it overlaps,
+ * and the share of each regency's area it covers (a regency's shares add up to 1). Built once from the regencies; an
+ * empty table is built again. Mappings without a share (made before shares were stored) get one.
  */
 export async function ensureCells(db: pg.Pool | pg.PoolClient) {
-  const existing = (await db.query('SELECT count(*)::integer AS n FROM weather_cells')).rows[0].n as number;
-  if (existing) return existing;
-  await db.query(`INSERT INTO weather_cells (lon, lat, geom)
-      SELECT DISTINCT ON (g.i, g.j) (g.i + 0.5) * $1, (g.j + 0.5) * $1, g.geom FROM regencies r, ST_SquareGrid($1, r.geom) g WHERE ST_Intersects(g.geom, r.geom)
-    ON CONFLICT (lon, lat) DO NOTHING`, [CELL_SIZE]);
-  await db.query(`INSERT INTO weather_cell_regencies (cell_id, regency)
-      SELECT c.id, r.name FROM weather_cells c JOIN regencies r ON ST_Intersects(c.geom, r.geom)
-    ON CONFLICT DO NOTHING`);
-  return (await db.query('SELECT count(*)::integer AS n FROM weather_cells')).rows[0].n as number;
+  const count = async () => (await db.query('SELECT count(*)::integer AS n FROM weather_cells')).rows[0].n as number;
+  if (!(await count())) {
+    await db.query(`INSERT INTO weather_cells (lon, lat, geom)
+        SELECT DISTINCT ON (g.i, g.j) (g.i + 0.5) * $1, (g.j + 0.5) * $1, g.geom FROM regencies r, ST_SquareGrid($1, r.geom) g WHERE ST_Intersects(g.geom, r.geom)
+      ON CONFLICT (lon, lat) DO NOTHING`, [CELL_SIZE]);
+    await db.query(`INSERT INTO weather_cell_regencies (cell_id, regency, share)
+        SELECT c.id, r.name, ${COVER_SHARE} FROM weather_cells c JOIN regencies r ON ST_Intersects(c.geom, r.geom)
+      ON CONFLICT DO NOTHING`);
+  }
+  await db.query(`UPDATE weather_cell_regencies m SET share = ${COVER_SHARE} FROM weather_cells c, regencies r
+    WHERE m.share IS NULL AND c.id = m.cell_id AND r.name = m.regency`);
+  return count();
 }
 
 const hourKey = (day: string, hour: number) => `${day}T${String(hour).padStart(2, '0')}:00`;
@@ -289,10 +296,53 @@ function riskDay(row: Record<string, any>) {
     dryDays: row.dry_days as number };
 }
 
+/** One cell under a regency on one day: the share of the regency's area it covers, its FWI, and whether that is a forecast. */
+export interface CoverCell { weight: number; fwi: number; forecast: boolean }
+export interface RegencyRiskDay {
+  date: string; forecast: boolean; fwiClass: FwiClass; shares: Record<FwiClass, number>;
+  partial: { fwiClass: FwiClass; share: number } | null; meanFwi: number;
+}
+/** A higher class is named in `partial` from 10% of the regency, in thousandths. */
+const PARTIAL_MIN = 100;
+
+/**
+ * A regency's fire danger on one day, by area. `shares`: the share of its area in each class, over the cells that
+ * have the day (normalised to add up to 1), in thousandths by largest remainder so they add up exactly. Each cell's
+ * class follows its FWI to one decimal, as on the grid. `fwiClass`: the class with the largest share, the higher one
+ * on a tie. `partial`: the highest class above it that covers at least 10% of the regency together with the classes
+ * above it, with the share at that class or above; null when there is none. `meanFwi`: the area-weighted mean FWI,
+ * one decimal. `forecast` when any of the cells' values is a forecast. Null when no cell covering it has the day.
+ */
+export function regencyDay(date: string, cells: CoverCell[]): RegencyRiskDay | null {
+  const covered = cells.filter(cell => cell.weight > 0 && Number.isFinite(cell.fwi));
+  const total = sum(covered.map(cell => cell.weight));
+  if (!(total > 0)) return null;
+  const weights = fwiClasses.map(() => 0);
+  for (const cell of covered) weights[fwiClasses.indexOf(fwiClass(round1(cell.fwi)))]! += cell.weight;
+  const exact = weights.map(weight => (1000 * weight) / total);
+  const units = exact.map(value => Math.floor(value));
+  // The thousandths left over go to the largest remainders, the higher class first on a tie.
+  const order = fwiClasses.map((_, index) => index).sort((a, b) => (exact[b]! - units[b]!) - (exact[a]! - units[a]!) || b - a);
+  for (let k = 0, left = 1000 - sum(units); k < left; k++) units[order[k % order.length]!]! += 1;
+  let top = 0;
+  units.forEach((value, index) => { if (value >= units[top]!) top = index; });
+  let partial: RegencyRiskDay['partial'] = null;
+  for (let index = fwiClasses.length - 1; index > top && !partial; index--) {
+    const above = sum(units.slice(index));
+    if (above >= PARTIAL_MIN) partial = { fwiClass: fwiClasses[index]!, share: above / 1000 };
+  }
+  return {
+    date, forecast: covered.some(cell => cell.forecast), fwiClass: fwiClasses[top]!,
+    shares: Object.fromEntries(fwiClasses.map((name, index) => [name, units[index]! / 1000])) as Record<FwiClass, number>,
+    partial, meanFwi: round1(sum(covered.map(cell => cell.weight * cell.fwi)) / total),
+  };
+}
+
 /**
  * Fire danger per cell and per regency: live, today and the two days after (WIB); with `tanggal`, that archive day
- * only. A regency takes, day by day, the cell with the highest FWI among those it overlaps. `peatShare` is the share
- * of the regency's village area on peat. Answers are kept 10 minutes per day and dropped after every weather run.
+ * only. A regency's day is told by area (regencyDay), from the share of its area each overlapping cell covers.
+ * `peatShare` is the share of the regency's village area on peat. Answers are kept 10 minutes per day and dropped
+ * after every weather run.
  */
 export function installRisk(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/risk', async request => {
@@ -305,32 +355,34 @@ export function installRisk(app: FastifyInstance, pool: pg.Pool) {
     const rows = (await pool.query(`SELECT c.id, c.lon, c.lat, to_char(w.day, 'YYYY-MM-DD') AS day, w.temp_c, w.rh_pct, w.wind_kmh, w.wind_from_deg, w.rain24h_mm,
         w.dry_days, w.ffmc, w.dmc, w.dc, w.isi, w.bui, w.fwi, w.forecast, w.fetched_at
       FROM weather_daily w JOIN weather_cells c ON c.id = w.cell_id WHERE w.day = ANY($1::date[]) ORDER BY c.lat DESC, c.lon, w.day`, [days])).rows;
-    type CellDays = { lon: number; lat: number; days: ReturnType<typeof riskDay>[]; rows: Record<string, any>[] };
+    type CellDays = { lon: number; lat: number; days: ReturnType<typeof riskDay>[] };
     const cells = new Map<number, CellDays>();
+    // Each cell's row of a day, keyed "cell id/day".
+    const cellDays = new Map<string, Record<string, any>>();
     let fetchedAt: Date | null = null;
     for (const row of rows) {
-      const cell: CellDays = cells.get(row.id) ?? { lon: row.lon, lat: row.lat, days: [], rows: [] };
+      const cell: CellDays = cells.get(row.id) ?? { lon: row.lon, lat: row.lat, days: [] };
       cell.days.push(riskDay(row));
-      cell.rows.push(row);
       cells.set(row.id, cell);
+      cellDays.set(`${row.id}/${row.day}`, row);
       if (!fetchedAt || row.fetched_at > fetchedAt) fetchedAt = row.fetched_at;
     }
     const regencies = rows.length ? (await pool.query(`SELECT r.name, r.province, ST_X(r.center) AS lon, ST_Y(r.center) AS lat, COALESCE(p.share, 0) AS peat,
-        COALESCE(m.cells, '{}') AS cells
+        COALESCE(m.cells, '{}') AS cells, COALESCE(m.shares, '{}') AS shares
       FROM regencies r
       LEFT JOIN (SELECT regency, sum(peat_share * area_ha) / NULLIF(sum(area_ha), 0) AS share FROM villages GROUP BY regency) p ON p.regency = r.name
-      LEFT JOIN (SELECT regency, array_agg(cell_id ORDER BY cell_id) AS cells FROM weather_cell_regencies GROUP BY regency) m ON m.regency = r.name
+      LEFT JOIN (SELECT regency, array_agg(cell_id ORDER BY cell_id) AS cells, array_agg(share ORDER BY cell_id) AS shares
+        FROM weather_cell_regencies WHERE share > 0 GROUP BY regency) m ON m.regency = r.name
       ORDER BY r.province, r.name`)).rows.map(regency => ({
       name: regency.name as string, province: regency.province as string, center: [regency.lon, regency.lat] as [number, number],
       peatShare: Math.round(Number(regency.peat) * 1000) / 1000,
       days: days.flatMap(day => {
-        let best: { row: Record<string, any>; cell: { lon: number; lat: number } } | null = null;
-        for (const id of regency.cells as number[]) {
-          const cell = cells.get(id);
-          const row = cell?.rows.find(item => item.day === day);
-          if (cell && row && (!best || row.fwi > best.row.fwi)) best = { row, cell };
-        }
-        return best ? [{ ...riskDay(best.row), cell: [best.cell.lon, best.cell.lat] as [number, number] }] : [];
+        const cover = (regency.cells as number[]).flatMap((id, index): CoverCell[] => {
+          const row = cellDays.get(`${id}/${day}`);
+          return row ? [{ weight: Number(regency.shares[index]), fwi: row.fwi as number, forecast: row.forecast as boolean }] : [];
+        });
+        const result = regencyDay(day, cover);
+        return result ? [result] : [];
       }),
     })) : [];
     const body = { data: { asOf, archive: Boolean(tanggal), fetchedAt: (fetchedAt as Date | null)?.toISOString() ?? null, cellSize: CELL_SIZE,
