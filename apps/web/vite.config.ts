@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
-import { manifest } from './src/manifest';
+import { manifest } from './src/manifest.ts';
 
 const api = process.env.API_URL ?? 'http://localhost:3000';
 
