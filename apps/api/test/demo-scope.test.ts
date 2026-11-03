@@ -95,6 +95,12 @@ async function exported(token: string) {
   const names = split(head!);
   return new Map(lines.map(line => { const row = Object.fromEntries(split(line).map((value, k) => [names[k]!, value])); return [row.id_kejadian!, row]; }));
 }
+/** What the triage made of an incident: score, level, its near_static flag and those of its detections in id order. */
+async function triage(name: string) {
+  const row = (await pool.query(`SELECT i.score, i.level, i.near_static, array_agg(d.near_static ORDER BY d.id) AS flags
+    FROM incidents i JOIN detections d ON d.incident_id = i.id WHERE i.id = $1 GROUP BY i.id`, [incidents[name]])).rows[0];
+  return { score: row.score as number, level: row.level as string, nearStatic: row.near_static as boolean, flags: row.flags as boolean[] };
+}
 const codeOf = async (name: string) => (await pool.query('SELECT code FROM incidents WHERE id = $1', [incidents[name]])).rows[0].code as string;
 const centroidOf = async (name: string) => (await pool.query('SELECT ST_X(centroid) AS lon, ST_Y(centroid) AS lat FROM incidents WHERE id = $1', [incidents[name]])).rows[0] as { lon: number; lat: number };
 
@@ -327,4 +333,52 @@ test('the demo reset deletes the photos of demo checks and the push subscription
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM static_sources WHERE kind = 'alarm_palsu'")).rows[0].n, 1, 'the real false alarm stays');
   const g = (await pool.query('SELECT first_verified_any_at, latest_status_any FROM incidents WHERE id = $1', [incidents.G])).rows[0];
   assert.deepEqual([g.first_verified_any_at, g.latest_status_any], [null, null], 'the demo summary is taken back too');
+});
+
+test('the reset takes back what old demo false alarms taught the triage, and never what a real false alarm taught', async () => {
+  // A row 2 km south of the others. H and L have two detections 900 m apart, each 450 m from the centre: the 375 m fixed
+  // heat source of a false alarm covers neither, so only the false alarm itself flags them.
+  const centre = tileCentre(tile.z, tile.x, tile.y), lat = centre.lat - 0.02, first = new Date(Date.now() - 1800_000);
+  const place = async (name: string, lon: number, offsets: number[]) => {
+    incidents[name] = await insertIncident(pool, { villageId: village.id, first, last: first, lon, lat, level: 'tinggi', score: 70 });
+    for (const dx of offsets) await insertDetection(pool, { lon: lon + dx, lat, acqAt: first, confidence: 'high', villageId: village.id, incidentId: incidents[name] });
+  };
+  await place('H', centre.lon - 0.016, [-0.00405, 0.00405]);
+  await place('L', centre.lon - 0.006, [-0.00405, 0.00405]);
+  await place('J', centre.lon + 0.006, [0, 0.0012]);
+  await place('K', centre.lon + 0.009, [0]);
+  await refreshIncidents(pool, ['H', 'L', 'J', 'K'].map(name => incidents[name]!));
+  const untaught = { J: await triage('J'), K: await triage('K') };
+  assert.deepEqual([untaught.J.flags, untaught.K.flags], [[false, false], [false]]);
+
+  // Before demo checks stopped teaching the triage, a demo false alarm left a fixed heat source and flagged every
+  // detection of its incident. J had one, and K's detection, 270 m from J's centre, came in after it and was flagged too.
+  const oldDemoFalseAlarm = async (name: string) => {
+    const id = (await pool.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, observed_at, is_demo)
+      VALUES ($1, $2, $3, 'alarm_palsu', 'industri', now(), true) RETURNING id`, [incidents[name], demoMpaId, randomUUID()])).rows[0].id;
+    await pool.query(`INSERT INTO static_sources (kind, label, geom, radius_m, verification_id, expires_at)
+      SELECT 'alarm_palsu', 'Alarm palsu dari akun demo', centroid, 375, $2, now() + interval '30 days' FROM incidents WHERE id = $1`, [incidents[name], id]);
+    await pool.query('UPDATE detections SET near_static = true WHERE incident_id = $1', [incidents[name]]);
+  };
+  await oldDemoFalseAlarm('J');
+  await pool.query('UPDATE detections SET near_static = true WHERE incident_id = $1', [incidents.K]);
+  // L had one too, and a real volunteer then found L a false alarm as well.
+  await oldDemoFalseAlarm('L');
+  await refreshIncidents(pool, ['J', 'K', 'L'].map(name => incidents[name]!));
+  assert.ok((await triage('J')).score < untaught.J.score && (await triage('K')).score < untaught.K.score);
+  await check(real.mpa.token, 'L', 'alarm_palsu', { falseAlarmKind: 'industri' });
+  // H: a real false alarm, then a demo field check of the same incident.
+  await check(real.mpa.token, 'H', 'alarm_palsu', { falseAlarmKind: 'pembakaran_sampah' });
+  await check(demo.mpa, 'H', 'api_aktif');
+  const taught = { H: await triage('H'), L: await triage('L') };
+  assert.deepEqual([taught.H.flags, taught.L.flags, taught.H.nearStatic, taught.L.nearStatic], [[true, true], [true, true], true, true]);
+
+  await resetDemo(pool, uploads);
+  assert.deepEqual(await triage('H'), taught.H, 'a demo field check does not take back a real false alarm');
+  assert.deepEqual(await triage('L'), taught.L, 'the old demo source goes, the real false alarm stays');
+  assert.deepEqual(await triage('J'), untaught.J, 'what the old demo false alarm taught is taken back');
+  assert.deepEqual(await triage('K'), untaught.K, 'on the later detection within its radius too');
+  const publicH = await data(`/incidents/${incidents.H}`);
+  assert.deepEqual([publicH.score, publicH.level, publicH.nearStatic, publicH.latestStatus], [taught.H.score, taught.H.level, true, 'alarm_palsu']);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM static_sources WHERE kind = 'alarm_palsu'")).rows[0].n, 3, 'the real ones of E, H and L');
 });

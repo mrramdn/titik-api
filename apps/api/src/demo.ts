@@ -57,7 +57,7 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
   const lockedHash = await argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id });
   const accounts = [...demoAccounts.map(account => ({ ...account, hash: passwordHash })), ...demoSquads.map(account => ({ ...account, hash: lockedHash }))];
   const ids = accounts.map(account => account.id);
-  const { affected, photos } = await transaction(pool, async client => {
+  const { rescore, photos } = await transaction(pool, async client => {
     for (const account of accounts) {
       await client.query('DELETE FROM users WHERE email = $1 AND id <> $2', [account.email, account.id]);
       await client.query(`INSERT INTO users (id, name, email, password_hash, role, organization) VALUES ($1, $2, $3, $4, $5, $6)
@@ -68,14 +68,28 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
     const demoChecks = 'is_demo OR user_id = ANY($1::uuid[])';
     const checks = (await client.query(`SELECT incident_id, photo_url, photo_thumb_url FROM verifications WHERE ${demoChecks}`, [ids])).rows;
     const touched = [...new Set(checks.map(row => row.incident_id as string))];
+    // Demo false alarms filed before demo checks stopped teaching the triage left a fixed heat source. The detections it
+    // may have flagged (every detection of its incident, and later ones within its radius) are found before it goes.
+    // Nothing else is worked out again: a real false alarm flags every detection of its incident however far, so
+    // measuring distances afresh on the incidents of demo checks would take back real triage.
+    const flagged = (await client.query(`WITH s AS (SELECT s.geom, s.radius_m, c.incident_id FROM static_sources s JOIN verifications c ON c.id = s.verification_id
+        WHERE c.is_demo OR c.user_id = ANY($1::uuid[]))
+      SELECT d.id FROM s JOIN detections d ON d.incident_id = s.incident_id WHERE d.near_static
+      UNION SELECT d.id FROM s JOIN detections d ON ST_DWithin(s.geom, d.geom, s.radius_m / 90000.0::float8) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)
+        WHERE d.near_static`, [ids])).rows.map(row => String(row.id));
     await client.query(`DELETE FROM static_sources WHERE verification_id IN (SELECT id FROM verifications WHERE ${demoChecks})`, [ids]);
     await client.query(`DELETE FROM verifications WHERE ${demoChecks}`, [ids]);
     await client.query('DELETE FROM assignments WHERE is_demo OR assignee_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM alerts WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM subscriptions WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM push_subscriptions WHERE user_id = ANY($1::uuid[]) OR user_id IN (SELECT id FROM users WHERE email LIKE $2)', [ids, `%${demoDomain}`]);
-    await client.query(`UPDATE detections d SET near_static = EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at)
-      AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)) WHERE d.incident_id = ANY($1::uuid[])`, [touched]);
+    // Those detections lose the flag, unless a source that is left still covers them or a real false alarm flagged their
+    // incident. Only incidents whose detections changed are scored again.
+    const unflagged = (await client.query(`UPDATE detections d SET near_static = false WHERE d.id = ANY($1::bigint[])
+        AND NOT EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))
+        AND NOT EXISTS (SELECT 1 FROM verifications v WHERE v.incident_id = d.incident_id AND v.status = 'alarm_palsu' AND NOT v.is_demo)
+      RETURNING d.incident_id`, [flagged])).rows;
+    const rescore = [...new Set(unflagged.map(row => row.incident_id as string | null).filter((id): id is string => Boolean(id)))];
     await refreshVerificationSummary(client, touched);
 
     // The demo squads and village head work in the pilot regency, Ogan Komering Ilir.
@@ -134,10 +148,10 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
     // Alerts for the demo accounts only; nobody else's inbox changes.
     const recent = (await client.query("SELECT id FROM incidents WHERE last_detected_at > now() - interval '24 hours'")).rows.map(row => row.id as string);
     await alertSubscribers(client, recent, { userIds: ids });
-    return { affected: touched, photos: checks.flatMap(row => [row.photo_url as string | null, row.photo_thumb_url as string | null]) };
+    return { rescore, photos: checks.flatMap(row => [row.photo_url as string | null, row.photo_thumb_url as string | null]) };
   });
   const photosDeleted = await deleteUploads(uploadsDir, photos);
-  if (affected.length) await refreshIncidents(pool, affected);
+  if (rescore.length) await refreshIncidents(pool, rescore);
   clearTileCache();
   return { photosDeleted };
 }
