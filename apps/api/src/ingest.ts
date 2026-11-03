@@ -107,7 +107,10 @@ async function createIncidents(client: pg.PoolClient, firstDetections: string[])
   return ids;
 }
 
-/** Folds incidents into the one that keeps its id: reports, alerts and tasks move with them; one open task stays open. */
+/**
+ * Folds incidents into the one that keeps its id: reports, alerts and tasks move with them; the oldest open task of each
+ * scope stays open (a demo task never cancels a real one).
+ */
 async function mergeInto(client: pg.PoolClient, keep: string, merged: string[]) {
   await client.query('UPDATE verifications SET incident_id = $1 WHERE incident_id = ANY($2::uuid[])', [keep, merged]);
   await client.query(`INSERT INTO alerts (user_id, incident_id, village_id, created_at, updated_at, read_at, shared_at)
@@ -115,7 +118,7 @@ async function mergeInto(client: pg.PoolClient, keep: string, merged: string[]) 
       WHERE incident_id = ANY($2::uuid[]) ORDER BY user_id, created_at
     ON CONFLICT (user_id, incident_id) DO NOTHING`, [keep, merged]);
   await client.query(`UPDATE assignments a SET status = 'dibatalkan', closed_at = now(), updated_at = now()
-    FROM (SELECT id, row_number() OVER (ORDER BY created_at, id) AS n FROM assignments
+    FROM (SELECT id, row_number() OVER (PARTITION BY is_demo ORDER BY created_at, id) AS n FROM assignments
       WHERE incident_id = ANY($1::uuid[]) AND status IN ('ditugaskan', 'menuju')) o
     WHERE a.id = o.id AND o.n > 1`, [[keep, ...merged]]);
   await client.query('UPDATE assignments SET incident_id = $1 WHERE incident_id = ANY($2::uuid[])', [keep, merged]);

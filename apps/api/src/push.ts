@@ -40,8 +40,9 @@ export async function pushToUser(pool: pg.Pool, userId: string, notification: No
  */
 export async function pushAlerts(pool: pg.Pool, alertIds: string[], send: Sender = defaultSender) {
   if (!alertIds.length || (!pushEnabled() && send === defaultSender)) return 0;
+  // The text tells the detections only, never field checks or tasks, so one scope serves every recipient.
   const rows = (await pool.query(`SELECT a.id AS alert_id, a.user_id, inc.*
-    FROM alerts a JOIN (${incidentSelect}) inc ON inc.id = a.incident_id WHERE a.id = ANY($1::uuid[])
+    FROM alerts a JOIN (${incidentSelect('real')}) inc ON inc.id = a.incident_id WHERE a.id = ANY($1::uuid[])
     ORDER BY a.user_id, inc.score DESC, inc.last_detected_at DESC`, [alertIds])).rows;
   const byUser = new Map<string, Record<string, any>[]>();
   for (const row of rows) byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row]);

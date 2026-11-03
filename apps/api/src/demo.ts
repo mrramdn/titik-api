@@ -5,10 +5,11 @@ import { createPool, transaction } from './db.js';
 import { alertSubscribers, refreshIncidents } from './ingest.js';
 import { clearTileCache, refreshVerificationSummary } from './incidents.js';
 
-// The shared demo accounts at titik-api.mrramdn.com. They are not official accounts of any agency. A reset
-// keeps every real satellite detection and only takes back what the demo accounts did, then subscribes the
-// squads to the villages where the satellites saw the most in the last three days, so there is always
-// something real to check, and adds a few example checks and tasks marked as demo.
+// The shared demo accounts at titik-api.mrramdn.com. They are not official accounts of any agency. What they do stays
+// in the demo scope: only demo sessions see their field checks and tasks (see Scope in incidents.ts). A reset keeps
+// every real satellite detection and only takes back what the demo accounts did, then subscribes the squads to the
+// villages where the satellites saw the most in the last three days, so there is always something real to check, and
+// adds a few example checks and tasks marked as demo.
 
 export const demoPassword = 'TitikApiDemo!26';
 const user = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -35,10 +36,10 @@ const examples = [
   { status: 'asap_bara', minutes: 212, note: 'Contoh dari akun demo. Sisa bara setelah pemadaman awal.' },
 ] as const;
 
-/** An open incident (no check, no open task) from the last 24 hours, high priority first, preferring the given villages. */
+/** An open incident (no check, no open task of any scope) from the last 24 hours, high priority first, preferring the given villages. */
 async function openIncident(client: pg.PoolClient, villages: string[], exclude: string[]) {
   return (await client.query(`SELECT i.id FROM incidents i JOIN villages v ON v.id = i.village_id
-    WHERE i.first_verified_at IS NULL AND i.last_detected_at > now() - interval '24 hours' AND NOT (i.id = ANY($2::uuid[]))
+    WHERE i.first_verified_any_at IS NULL AND i.last_detected_at > now() - interval '24 hours' AND NOT (i.id = ANY($2::uuid[]))
       AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.incident_id = i.id AND a.status IN ('ditugaskan', 'menuju'))
     ORDER BY (i.village_id = ANY($1::text[])) DESC, (i.level = 'tinggi') DESC, (v.regency = 'Ogan Komering Ilir') DESC, i.score DESC, i.id
     LIMIT 1`, [villages, exclude])).rows[0]?.id as string | undefined;
@@ -56,10 +57,12 @@ export async function resetDemo(pool: pg.Pool) {
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role,
           organization = EXCLUDED.organization`, [account.id, account.name, account.email, account.hash, account.role, account.organization]);
     }
-    const touched = (await client.query('SELECT DISTINCT incident_id FROM verifications WHERE user_id = ANY($1::uuid[])', [ids])).rows.map(row => row.incident_id as string);
-    await client.query('DELETE FROM static_sources WHERE verification_id IN (SELECT id FROM verifications WHERE user_id = ANY($1::uuid[]))', [ids]);
-    await client.query('DELETE FROM verifications WHERE user_id = ANY($1::uuid[])', [ids]);
-    await client.query('DELETE FROM assignments WHERE assignee_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])', [ids]);
+    // Demo field checks and tasks: those of these accounts and any other row marked as demo.
+    const demoChecks = 'is_demo OR user_id = ANY($1::uuid[])';
+    const touched = (await client.query(`SELECT DISTINCT incident_id FROM verifications WHERE ${demoChecks}`, [ids])).rows.map(row => row.incident_id as string);
+    await client.query(`DELETE FROM static_sources WHERE verification_id IN (SELECT id FROM verifications WHERE ${demoChecks})`, [ids]);
+    await client.query(`DELETE FROM verifications WHERE ${demoChecks}`, [ids]);
+    await client.query('DELETE FROM assignments WHERE is_demo OR assignee_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM alerts WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM subscriptions WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query(`UPDATE detections d SET near_static = EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at)
@@ -91,7 +94,7 @@ export async function resetDemo(pool: pg.Pool) {
     const candidates = (await client.query(`SELECT DISTINCT ON (i.village_id) i.id, i.first_detected_at, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat,
         (i.village_id = ANY($1::text[]))::integer * 2 + (v.regency = 'Ogan Komering Ilir')::integer AS rank
       FROM incidents i JOIN villages v ON v.id = i.village_id
-      WHERE i.first_verified_at IS NULL AND i.first_detected_at BETWEEN now() - interval '30 hours' AND now() - interval '4 hours'
+      WHERE i.first_verified_any_at IS NULL AND i.first_detected_at BETWEEN now() - interval '30 hours' AND now() - interval '4 hours'
       ORDER BY i.village_id, i.score DESC`, [villages])).rows
       .sort((a, b) => b.rank - a.rank || b.first_detected_at - a.first_detected_at).slice(0, examples.length);
     for (const [index, incident] of candidates.entries()) {
@@ -107,15 +110,15 @@ export async function resetDemo(pool: pg.Pool) {
     // Two example tasks from the demo BPBD account: one waiting for the demo volunteer, one squad already on the way.
     const forVolunteer = await openIncident(client, mine, []);
     if (forVolunteer) {
-      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, note, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, now() - interval '35 minutes', now() - interval '35 minutes')`,
+      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, note, created_at, updated_at, is_demo)
+        VALUES ($1, $2, $3, $4, now() - interval '35 minutes', now() - interval '35 minutes', true)`,
       [forVolunteer, mpa.id, bpbd.id, 'Contoh dari akun demo. Cek titik panas terdekat dari jalan desa dan kirim foto.']);
     }
     const squad = demoSquads[0];
     const forSquad = await openIncident(client, squadVillages.get(squad.id) ?? [], forVolunteer ? [forVolunteer] : []);
     if (forSquad) {
-      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, status, note, created_at, enroute_at, updated_at)
-        VALUES ($1, $2, $3, 'menuju', $4, now() - interval '80 minutes', now() - interval '50 minutes', now() - interval '50 minutes')`,
+      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, status, note, created_at, enroute_at, updated_at, is_demo)
+        VALUES ($1, $2, $3, 'menuju', $4, now() - interval '80 minutes', now() - interval '50 minutes', now() - interval '50 minutes', true)`,
       [forSquad, squad.id, bpbd.id, 'Contoh dari akun demo. Cek titik panas di tepi kanal dan laporkan kondisinya.']);
     }
     // Alerts for the demo accounts only; nobody else's inbox changes.

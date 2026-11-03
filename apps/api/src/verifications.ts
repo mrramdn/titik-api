@@ -9,7 +9,7 @@ import { transaction } from './db.js';
 import { ApiError, choice, object, requireCondition, text, uuid } from './errors.js';
 import { closeOpenAssignment } from './assignments.js';
 import { falseAlarmLabel } from './geo.js';
-import { clearTileCache, getIncident, refreshVerificationSummary } from './incidents.js';
+import { clearTileCache, getIncident, refreshVerificationSummary, scopeOf } from './incidents.js';
 
 export const statuses = ['api_aktif', 'asap_bara', 'bakar_terkendali', 'alarm_palsu', 'tidak_terjangkau'] as const;
 const falseAlarmKinds = ['industri', 'pembakaran_sampah', 'lainnya'] as const;
@@ -45,7 +45,7 @@ const optionalNumber = (value: unknown, name: string, min: number, max: number) 
 export function installVerifications(app: FastifyInstance, pool: pg.Pool, uploadsDir: string) {
   app.post('/api/v1/incidents/:id/verifications', async (request, reply) => {
     const user = authenticated(request, 'mpa');
-    const incident = await getIncident(pool, String(object(request.params).id));
+    const incident = await getIncident(pool, String(object(request.params).id), scopeOf(request));
     const { fields, photo } = await readReport(request);
     const clientUuid = uuid(fields.clientUuid);
     // The same report sent again after a lost connection is answered with the first copy.
@@ -81,6 +81,7 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
       written.push(join(uploadsDir, `${name}.jpg`), join(uploadsDir, `${name}.thumb.jpg`));
       photoUrl = `/uploads/${name}.jpg`; thumbUrl = `/uploads/${name}.thumb.jpg`;
     }
+    const teaches = status === 'alarm_palsu';
     try {
       const saved = await transaction(pool, async client => {
         const inserted = await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, note, latitude, longitude, accuracy_m,
@@ -92,10 +93,11 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
         [incident.id, user.id, clientUuid, status, falseAlarmKind, note, latitude, longitude, accuracy, observedAt, photoUrl, thumbUrl, user.demo]);
         requireCondition(inserted.rows[0], 409, 'CONFLICT', 'Laporan ini sudah diterima.');
         await refreshVerificationSummary(client, [incident.id]);
-        // Any field check finishes the open task of the incident, whoever filed it.
-        const closedAssignment = await closeOpenAssignment(client, incident.id, observedAt);
+        // A field check finishes the incident's open task of its own scope, whoever filed it: a demo check never closes a
+        // real task, nor a real check a demo one.
+        const closedAssignment = await closeOpenAssignment(client, incident.id, observedAt, user.demo);
         // A verified false alarm teaches the triage: later detections at the same spot are flagged for 30 days.
-        if (status === 'alarm_palsu') {
+        if (teaches) {
           await client.query(`INSERT INTO static_sources (kind, label, geom, radius_m, verification_id, expires_at)
             SELECT 'alarm_palsu', $2, centroid, 375, $3, now() + interval '30 days' FROM incidents WHERE id = $1`,
           [incident.id, `Alarm palsu dari cek lapangan (${falseAlarmLabel[falseAlarmKind!]})`, inserted.rows[0].id]);
@@ -103,12 +105,12 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
         }
         return { id: inserted.rows[0].id as string, closedAssignment };
       });
-      if (status === 'alarm_palsu') {
+      if (teaches) {
         const { refreshIncidents } = await import('./ingest.js');
         await pool.query(`UPDATE detections d SET near_static = true WHERE d.incident_id = $1`, [incident.id]);
         await refreshIncidents(pool, [incident.id]);
       }
-      clearTileCache();
+      clearTileCache(user.demo ? 'demo' : undefined);
       reply.code(201);
       return { data: { id: saved.id, duplicate: false, closedAssignment: saved.closedAssignment } };
     } catch (error) {

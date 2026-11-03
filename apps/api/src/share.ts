@@ -15,7 +15,8 @@ export function installShare(app: FastifyInstance, pool: pg.Pool, webDir: string
     if (!existsSync(index)) return reply.code(404).send({ error: { code: 'NOT_FOUND', message: 'Halaman tidak ditemukan. Buka peta Titik Api.' } });
     let html = await readFile(index, 'utf8');
     if (/^[0-9a-z]{4,12}$/.test(code)) {
-      const row = (await pool.query(`${incidentSelect} WHERE i.code = $1`, [code])).rows[0];
+      // A link preview is public: the real scope.
+      const row = (await pool.query(`${incidentSelect('real')} WHERE i.code = $1`, [code])).rows[0];
       if (row?.village_name) {
         const title = `${formatCount(row.detection_count)} titik panas · Desa ${row.village_name} · prioritas ${row.level}`;
         const description = cardText(cardIncident(row));

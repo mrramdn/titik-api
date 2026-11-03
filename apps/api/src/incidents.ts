@@ -1,10 +1,32 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { requireCondition, choice, object } from './errors.js';
 import { addDays, cardText, isCalendarDate, wibDay, type CardIncident, type Level } from './geo.js';
 import type { Database } from './models.js';
 
 const OPEN = `('ditugaskan', 'menuju')`;
+
+/**
+ * What a request sees of field checks and tasks. The demo accounts are shared by every visitor, so what they do stays in
+ * a demo scope: visitors and real accounts see real field checks and tasks only ('real'), a demo session sees the real
+ * ones and the demo ones together ('demo'). The scope follows the session; the kejadian tile asks for the demo scope with
+ * &lihat=demo, which counts only for a demo session.
+ */
+export type Scope = 'real' | 'demo';
+export const scopeOf = (request: FastifyRequest): Scope => (request.user?.demo ? 'demo' : 'real');
+
+/** SQL for a scope: the incident's field check summary as the scope sees it, and the condition on rows that carry is_demo. */
+export function scopeSql(scope: Scope) {
+  const demo = scope === 'demo';
+  return {
+    /** When the incident `alias` was first checked in the field. */
+    firstVerified: (alias = 'i') => `${alias}.${demo ? 'first_verified_any_at' : 'first_verified_at'}`,
+    /** The status of its latest field check. */
+    latestStatus: (alias = 'i') => `${alias}.${demo ? 'latest_status_any' : 'latest_status'}`,
+    /** For verifications and assignments: ` AND NOT alias.is_demo` in the real scope, nothing for a demo session. */
+    rows: (alias: string) => (demo ? '' : ` AND NOT ${alias}.is_demo`),
+  };
+}
 
 /**
  * A detection's pixel footprint as SQL: an axis-aligned box around its Web Mercator point, `scan` × `track` km
@@ -85,15 +107,25 @@ export class TileCache {
       this.bytes -= this.size(entry.body);
     }
   }
+  /** Drops the entries whose key matches. */
+  drop(match: (key: string) => boolean) {
+    for (const [key, entry] of this.entries) {
+      if (!match(key)) continue;
+      this.entries.delete(key);
+      this.bytes -= this.size(entry.body);
+    }
+  }
   clear() { this.entries.clear(); this.bytes = 0; }
   get totalBytes() { return this.bytes; }
 }
 
 /**
- * Incident columns plus its village, coordinates, latest field check and task (the open one, else the latest),
- * ready for incidentModel.
+ * Incident columns plus its village, coordinates, latest field check and task (the open one, else the latest), as the
+ * scope sees them, ready for incidentModel. scope_verified_at and scope_status are the field check summary of the scope.
  */
-export const incidentSelect = `SELECT i.*, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat,
+export function incidentSelect(scope: Scope) {
+  const s = scopeSql(scope);
+  return `SELECT i.*, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat, ${s.firstVerified()} AS scope_verified_at, ${s.latestStatus()} AS scope_status,
   v.name AS village_name, v.district AS village_district, v.regency AS village_regency, v.province AS village_province,
   ST_X(v.center) AS village_lon, ST_Y(v.center) AS village_lat,
   lc.status AS check_status, lc.observed_at AS check_observed_at, lc.is_demo AS check_demo,
@@ -101,11 +133,13 @@ export const incidentSelect = `SELECT i.*, ST_X(i.centroid) AS lon, ST_Y(i.centr
   task.closed_at AS task_closed_at, task.assignee_id AS task_assignee_id, task.assignee_name AS task_assignee_name,
   task.assignee_organization AS task_assignee_organization, task.assigned_by_name AS task_assigned_by
   FROM incidents i LEFT JOIN villages v ON v.id = i.village_id
-  LEFT JOIN LATERAL (SELECT status, observed_at, is_demo FROM verifications WHERE incident_id = i.id ORDER BY observed_at DESC, received_at DESC LIMIT 1) lc ON true
+  LEFT JOIN LATERAL (SELECT c.status, c.observed_at, c.is_demo FROM verifications c WHERE c.incident_id = i.id${s.rows('c')}
+    ORDER BY c.observed_at DESC, c.received_at DESC LIMIT 1) lc ON true
   LEFT JOIN LATERAL (SELECT a.id, a.status, a.note, a.created_at, a.updated_at, a.closed_at, a.assignee_id, u.name AS assignee_name,
       u.organization AS assignee_organization, b.name AS assigned_by_name
     FROM assignments a JOIN users u ON u.id = a.assignee_id JOIN users b ON b.id = a.assigned_by
-    WHERE a.incident_id = i.id ORDER BY (a.status IN ${OPEN}) DESC, a.created_at DESC LIMIT 1) task ON true`;
+    WHERE a.incident_id = i.id${s.rows('a')} ORDER BY (a.status IN ${OPEN}) DESC, a.created_at DESC LIMIT 1) task ON true`;
+}
 
 export function cardIncident(row: Record<string, any>): CardIncident {
   return { detectionCount: row.detection_count, onPeat: row.on_peat, lastDetectedAt: row.last_detected_at, level: row.level as Level, nearStatic: row.near_static,
@@ -130,7 +164,10 @@ export function assignmentModel(row: Record<string, any>, prefix = 'task_', team
     createdAt: (at('created_at') as Date).toISOString(), updatedAt: (at('updated_at') as Date).toISOString(), closedAt: (at('closed_at') as Date | null)?.toISOString() ?? null };
 }
 
-/** `team` is false for visitors who are not signed in: they see the squad of a task, not its note. */
+/**
+ * A row of incidentSelect as the API returns it; field checks and the task are those of the row's scope. `team` is false
+ * for visitors who are not signed in: they see the squad of a task, not its note.
+ */
 export function incidentModel(row: Record<string, any>, team = true) {
   const village = row.village_id ? { id: row.village_id, name: row.village_name, district: row.village_district, regency: row.village_regency,
     province: row.village_province, center: [row.village_lon, row.village_lat] as [number, number] } : null;
@@ -142,7 +179,7 @@ export function incidentModel(row: Record<string, any>, team = true) {
     satellites: row.satellites, maxFrp: row.max_frp === null ? null : Number(row.max_frp),
     bestConfidence: row.best_confidence, onPeat: row.on_peat, nearStatic: row.near_static, centroid: [row.lon, row.lat] as [number, number],
     settlementMeters: row.settlement_m, score: row.score, scoreParts: row.score_parts, level: row.level,
-    firstVerifiedAt: row.first_verified_at?.toISOString() ?? null, latestStatus: row.latest_status,
+    firstVerifiedAt: row.scope_verified_at?.toISOString() ?? null, latestStatus: row.scope_status ?? null,
     latestCheck: row.check_status ? { status: row.check_status, observedAt: row.check_observed_at.toISOString(), demo: row.check_demo } : null,
     assignment: assignmentModel(row, 'task_', team),
     nearestPlace: nearestPlace(row),
@@ -152,19 +189,24 @@ export function incidentModel(row: Record<string, any>, team = true) {
   };
 }
 
-export async function getIncident(db: Database, idOrCode: string) {
+export async function getIncident(db: Database, idOrCode: string, scope: Scope) {
   const byId = /^[0-9a-f-]{36}$/i.test(idOrCode);
-  const result = await db.query(`${incidentSelect} WHERE ${byId ? 'i.id = $1::uuid' : 'i.code = $1'}`, [idOrCode]);
+  const result = await db.query(`${incidentSelect(scope)} WHERE ${byId ? 'i.id = $1::uuid' : 'i.code = $1'}`, [idOrCode]);
   requireCondition(result.rows[0], 404, 'NOT_FOUND', 'Kejadian tidak ditemukan. Muat ulang daftar kejadian.');
   return result.rows[0];
 }
 
-/** Keeps an incident's verification summary in step with its reports. */
+/**
+ * Keeps an incident's verification summaries in step with its reports: first_verified_at and latest_status from real
+ * field checks (the public's), first_verified_any_at and latest_status_any from all of them (a demo session's).
+ */
 export async function refreshVerificationSummary(db: Database, ids: string[]) {
   if (!ids.length) return;
   await db.query(`UPDATE incidents i SET
-      first_verified_at = (SELECT min(observed_at) FROM verifications WHERE incident_id = i.id),
-      latest_status = (SELECT status FROM verifications WHERE incident_id = i.id ORDER BY observed_at DESC, received_at DESC LIMIT 1)
+      first_verified_at = (SELECT min(observed_at) FROM verifications WHERE incident_id = i.id AND NOT is_demo),
+      latest_status = (SELECT status FROM verifications WHERE incident_id = i.id AND NOT is_demo ORDER BY observed_at DESC, received_at DESC LIMIT 1),
+      first_verified_any_at = (SELECT min(observed_at) FROM verifications WHERE incident_id = i.id),
+      latest_status_any = (SELECT status FROM verifications WHERE incident_id = i.id ORDER BY observed_at DESC, received_at DESC LIMIT 1)
     WHERE i.id = ANY($1::uuid[])`, [ids]);
 }
 
@@ -184,24 +226,28 @@ export function regionFilter(query: Record<string, unknown>, params: unknown[]) 
   return parts.length ? ` AND ${parts.join(' AND ')}` : '';
 }
 
-/** Open = no field check and no open task; assigned = an open task; checked = at least one field check. */
-export const statusFilters = {
-  all: '',
-  open: ` AND i.first_verified_at IS NULL AND NOT EXISTS (SELECT 1 FROM assignments x WHERE x.incident_id = i.id AND x.status IN ${OPEN})`,
-  assigned: ` AND EXISTS (SELECT 1 FROM assignments x WHERE x.incident_id = i.id AND x.status IN ${OPEN})`,
-  checked: ' AND i.first_verified_at IS NOT NULL',
-} as const;
-const sorts = {
-  priority: `(i.first_verified_at IS NULL AND i.level = 'tinggi') DESC, i.score DESC, i.last_detected_at DESC, i.id`,
-  recent: 'i.last_detected_at DESC, i.score DESC, i.id',
-  size: 'i.detection_count DESC, i.score DESC, i.id',
-  checked: 'lc.observed_at DESC NULLS LAST, i.score DESC, i.id',
-} as const;
+export const incidentStatuses = ['all', 'open', 'assigned', 'checked'] as const;
+/** Open = no field check and no open task; assigned = an open task; checked = at least one field check; as the scope sees them. */
+export function statusFilter(status: (typeof incidentStatuses)[number], scope: Scope) {
+  const s = scopeSql(scope);
+  const openTask = `EXISTS (SELECT 1 FROM assignments x WHERE x.incident_id = i.id AND x.status IN ${OPEN}${s.rows('x')})`;
+  return { all: '', open: ` AND ${s.firstVerified()} IS NULL AND NOT ${openTask}`, assigned: ` AND ${openTask}`, checked: ` AND ${s.firstVerified()} IS NOT NULL` }[status];
+}
+const sorts = ['priority', 'recent', 'size', 'checked'] as const;
+/** `checked` orders by the latest field check of the scope (incidentSelect's lc). */
+function sortSql(sort: (typeof sorts)[number], scope: Scope) {
+  return {
+    priority: `(${scopeSql(scope).firstVerified()} IS NULL AND i.level = 'tinggi') DESC, i.score DESC, i.last_detected_at DESC, i.id`,
+    recent: 'i.last_detected_at DESC, i.score DESC, i.id',
+    size: 'i.detection_count DESC, i.score DESC, i.id',
+    checked: 'lc.observed_at DESC NULLS LAST, i.score DESC, i.id',
+  }[sort];
+}
 const levels = ['tinggi', 'sedang', 'rendah'] as const;
 
 // Vector tiles cut by PostGIS (ST_AsMVT). Shapes change only with new reference data; hotspots every ingest.
 // Hotspot tiles take the time window ($4 hours, and $5 the archive day): field checks and tasks are never replayed,
-// an archive tile shows their state now.
+// an archive tile shows their state now. Only kejadian carries field check and task state, as its scope sees it.
 const tileSql = {
   desa: () => `SELECT ST_AsMVT(q, 'desa', 4096, 'geom') AS mvt FROM (SELECT id, name, district, regency, peat_share,
       ST_AsMVTGeom(geom_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
@@ -209,9 +255,9 @@ const tileSql = {
   kabupaten: () => `SELECT ST_AsMVT(q, 'kabupaten', 4096, 'geom') AS mvt FROM (SELECT name, province, villages,
       ST_AsMVTGeom(ST_SimplifyPreserveTopology(geom_3857, CASE WHEN $1 < 7 THEN 400 WHEN $1 < 9 THEN 120 ELSE 30 END), ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
     FROM regencies WHERE geom_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156)) q`,
-  kejadian: (window: TimeWindow) => `SELECT ST_AsMVT(q, 'kejadian', 4096, 'geom') AS mvt FROM (SELECT i.id::text AS id, i.level, i.detection_count AS count, i.score,
-      (i.first_verified_at IS NOT NULL) AS verified, i.on_peat AS peat,
-      EXISTS (SELECT 1 FROM assignments a WHERE a.incident_id = i.id AND a.status IN ${OPEN}) AS assigned, i.modis_only AS "modisOnly",
+  kejadian: (window: TimeWindow, scope: Scope) => `SELECT ST_AsMVT(q, 'kejadian', 4096, 'geom') AS mvt FROM (SELECT i.id::text AS id, i.level, i.detection_count AS count, i.score,
+      (${scopeSql(scope).firstVerified()} IS NOT NULL) AS verified, i.on_peat AS peat,
+      EXISTS (SELECT 1 FROM assignments a WHERE a.incident_id = i.id AND a.status IN ${OPEN}${scopeSql(scope).rows('a')}) AS assigned, i.modis_only AS "modisOnly",
       ST_AsMVTGeom(i.centroid_3857, ST_TileEnvelope($1, $2, $3), 4096, 64, true) AS geom
     FROM incidents i WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}
       AND i.centroid_3857 && ST_TileEnvelope($1, $2, $3, margin => 0.0156) ORDER BY i.score) q`,
@@ -235,8 +281,14 @@ const tileSql = {
 const LIVE_TTL = 120_000, ARCHIVE_TTL = 3_600_000;
 const tiles = new TileCache(32 * 1024 * 1024);
 let archiveDays: { at: number; body: unknown } | null = null;
-/** Forgets every cut tile and the archive day counts, so the next request shows new detections, checks and tasks at once. */
-export const clearTileCache = () => { tiles.clear(); archiveDays = null; firstDay = null; };
+/**
+ * Forgets every cut tile and the archive day counts, so the next request shows new detections, checks and tasks at once.
+ * A demo account's check or task changes only what demo sessions see: with `scope` 'demo' just their tiles go.
+ */
+export const clearTileCache = (scope?: Scope) => {
+  if (scope === 'demo') { tiles.drop(key => key.endsWith('/demo')); return; }
+  tiles.clear(); archiveDays = null; firstDay = null;
+};
 /** Bytes held by the tile cache, for the tests. */
 export const tileCacheBytes = () => tiles.totalBytes;
 
@@ -268,15 +320,20 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const hours = hotspots ? hoursParam(query.hours, 24, 168) : 0;
     const tanggal = hotspots ? await archiveDate(pool, query.tanggal) : null;
     const ttl = hotspots && !tanggal ? LIVE_TTL : ARCHIVE_TTL;
-    const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}`;
+    // Everyone gets the real scope. A demo session asks for its own view of field checks and tasks with &lihat=demo;
+    // for anyone else the parameter changes nothing. Demo tiles stay out of shared caches.
+    const scope: Scope = layer === 'kejadian' && query.lihat === 'demo' && request.user?.demo ? 'demo' : 'real';
+    const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}/${scope}`;
     let body = tiles.get(key, ttl);
     if (!body) {
       const sqlParams: unknown[] = [z, x, y];
-      const sql = layer === 'kejadian' || layer === 'deteksi' ? tileSql[layer](timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
+      const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
+        : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
       body = ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
       tiles.set(key, body);
     }
-    reply.header('Content-Type', 'application/vnd.mapbox-vector-tile').header('Cache-Control', `public, max-age=${ttl / 1000}`);
+    reply.header('Content-Type', 'application/vnd.mapbox-vector-tile')
+      .header('Cache-Control', scope === 'demo' ? 'private, max-age=60' : `public, max-age=${ttl / 1000}`);
     return body;
   });
 
@@ -319,11 +376,12 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const params: unknown[] = [];
     const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     const where = regionFilter(query, params);
-    const rows = (await pool.query(`WITH tasks AS (SELECT DISTINCT incident_id FROM assignments WHERE status IN ${OPEN})
+    const s = scopeSql(scopeOf(request));
+    const rows = (await pool.query(`WITH tasks AS (SELECT DISTINCT a.incident_id FROM assignments a WHERE a.status IN ${OPEN}${s.rows('a')})
       SELECT r.name, r.province, ST_X(r.center) AS lon, ST_Y(r.center) AS lat, count(*)::integer AS incidents,
         count(*) FILTER (WHERE i.level = 'tinggi')::integer AS high,
-        count(*) FILTER (WHERE i.level = 'tinggi' AND i.first_verified_at IS NULL AND t.incident_id IS NULL)::integer AS open,
-        count(*) FILTER (WHERE i.first_verified_at IS NOT NULL)::integer AS checked
+        count(*) FILTER (WHERE i.level = 'tinggi' AND ${s.firstVerified()} IS NULL AND t.incident_id IS NULL)::integer AS open,
+        count(*) FILTER (WHERE ${s.firstVerified()} IS NOT NULL)::integer AS checked
       FROM incidents i JOIN villages v ON v.id = i.village_id JOIN regencies r ON r.name = v.regency LEFT JOIN tasks t ON t.incident_id = i.id
       WHERE ${window.within('i.last_detected_at')}${where}
       GROUP BY r.name, r.province, r.center ORDER BY open DESC, high DESC, incidents DESC, r.name`, params)).rows;
@@ -337,9 +395,10 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const params: unknown[] = [];
     const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     const where = regionFilter(query, params);
+    const s = scopeSql(scopeOf(request));
     const incidents = (await pool.query(`SELECT count(*)::integer AS incidents,
-        count(*) FILTER (WHERE i.level = 'tinggi' AND i.first_verified_at IS NULL)::integer AS high_open,
-        count(*) FILTER (WHERE i.first_verified_at IS NOT NULL)::integer AS verified,
+        count(*) FILTER (WHERE i.level = 'tinggi' AND ${s.firstVerified()} IS NULL)::integer AS high_open,
+        count(*) FILTER (WHERE ${s.firstVerified()} IS NOT NULL)::integer AS verified,
         count(DISTINCT i.village_id)::integer AS villages
       FROM incidents i JOIN villages v ON v.id = i.village_id WHERE ${window.within('i.last_detected_at')}${where}`, params)).rows[0];
     const detections = (await pool.query(`SELECT count(*)::integer AS n FROM detections d JOIN villages v ON v.id = d.village_id
@@ -353,10 +412,11 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const params: unknown[] = [];
     let where = regionFilter(query, params);
     if (q) { params.push(`%${q}%`); where += ` AND (v.name ILIKE $${params.length} OR v.district ILIKE $${params.length} OR v.regency ILIKE $${params.length})`; }
+    const firstVerified = scopeSql(scopeOf(request)).firstVerified();
     const result = await pool.query(`SELECT v.id, v.name, v.district, v.regency, v.province, v.peat_share, v.area_ha, ST_X(v.center) AS lon, ST_Y(v.center) AS lat,
         count(i.id) FILTER (WHERE i.last_detected_at > now() - interval '24 hours')::integer AS incidents_24h,
         count(i.id) FILTER (WHERE i.last_detected_at > now() - interval '7 days')::integer AS incidents_7d,
-        count(i.id) FILTER (WHERE i.last_detected_at > now() - interval '24 hours' AND i.level = 'tinggi' AND i.first_verified_at IS NULL)::integer AS open_high
+        count(i.id) FILTER (WHERE i.last_detected_at > now() - interval '24 hours' AND i.level = 'tinggi' AND ${firstVerified} IS NULL)::integer AS open_high
       FROM villages v LEFT JOIN incidents i ON i.village_id = v.id WHERE true${where}
       GROUP BY v.id ORDER BY ${q ? 'v.name' : 'incidents_7d DESC, v.name'} LIMIT 60`, params);
     return { data: result.rows.map(row => ({ id: row.id, name: row.name, district: row.district, regency: row.regency, province: row.province,
@@ -368,7 +428,8 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const village = (await pool.query(`SELECT id, name, district, regency, province, peat_share, area_ha, center_source, ST_X(center) AS lon, ST_Y(center) AS lat,
       ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.0001), 5)::json AS geometry FROM villages WHERE id = $1`, [id])).rows[0];
     requireCondition(village, 404, 'NOT_FOUND', 'Desa tidak ditemukan. Cari desa lain.');
-    const incidents = await pool.query(`${incidentSelect} WHERE i.village_id = $1 AND i.last_detected_at > now() - interval '7 days' ORDER BY i.last_detected_at DESC LIMIT 100`, [id]);
+    const incidents = await pool.query(`${incidentSelect(scopeOf(request))} WHERE i.village_id = $1 AND i.last_detected_at > now() - interval '7 days'
+      ORDER BY i.last_detected_at DESC LIMIT 100`, [id]);
     const daily = await pool.query(`SELECT to_char(day, 'YYYY-MM-DD') AS day, count(d.id)::integer AS detections
       FROM generate_series((now() AT TIME ZONE 'Asia/Jakarta')::date - 6, (now() AT TIME ZONE 'Asia/Jakarta')::date, interval '1 day') AS day
       LEFT JOIN detections d ON d.village_id = $1 AND (d.acq_at AT TIME ZONE 'Asia/Jakarta')::date = day::date
@@ -389,30 +450,34 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
       const chosen = String(query.level).split(',').map(level => choice(level.trim(), levels, 'Prioritas'));
       params.push(chosen); where += ` AND i.level = ANY($${params.length}::text[])`;
     }
-    where += statusFilters[choice(query.status ?? 'all', ['all', 'open', 'assigned', 'checked'] as const, 'Status')];
+    const scope = scopeOf(request);
+    where += statusFilter(choice(query.status ?? 'all', incidentStatuses, 'Status'), scope);
     const peat = choice(query.peat === undefined || query.peat === '' ? '0' : String(query.peat), ['0', '1', 'true', 'false'] as const, 'Filter gambut');
     if (peat === '1' || peat === 'true') where += ' AND i.on_peat';
     if (query.village !== undefined) { params.push(String(query.village)); where += ` AND i.village_id = $${params.length}`; }
-    const sort = choice(query.sort ?? 'priority', ['priority', 'recent', 'size', 'checked'] as const, 'Urutan');
+    const sort = choice(query.sort ?? 'priority', sorts, 'Urutan');
     const limit = query.limit === undefined || query.limit === '' ? 100 : Number(query.limit);
     requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 500, 400, 'INVALID_INPUT', 'Batas daftar harus 1–500.');
-    const result = await pool.query(`${incidentSelect} WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}${where}
-      ORDER BY ${sorts[sort]} LIMIT ${limit}`, params);
+    const result = await pool.query(`${incidentSelect(scope)} WHERE i.village_id IS NOT NULL AND ${window.within('i.last_detected_at')}${where}
+      ORDER BY ${sortSql(sort, scope)} LIMIT ${limit}`, params);
     return { data: result.rows.map(row => incidentModel(row, Boolean(request.user))) };
   });
 
   app.get('/api/v1/incidents/:id', async request => {
-    const row = await getIncident(pool, String(object(request.params).id));
+    const scope = scopeOf(request);
+    const s = scopeSql(scope);
+    const row = await getIncident(pool, String(object(request.params).id), scope);
     const signedIn = Boolean(request.user);
     const detections = await pool.query(`SELECT id, satellite, acq_at, latitude, longitude, confidence, confidence_pct, frp, bright_ti4, scan, track, daynight,
         on_peat, near_static
       FROM detections WHERE incident_id = $1 ORDER BY acq_at, id`, [row.id]);
-    // The public sees what was found and when; who checked it, their notes and photos are for signed-in teams.
+    // The public sees what was found and when; who checked it, their notes and photos are for signed-in teams. Field
+    // checks and tasks are those of the scope.
     const verifications = await pool.query(`SELECT v.id, v.status, v.false_alarm_kind, v.observed_at, v.received_at, v.distance_m, v.is_demo,
         v.note, v.photo_url, v.photo_thumb_url, u.name AS reporter, u.role AS reporter_role
-      FROM verifications v JOIN users u ON u.id = v.user_id WHERE v.incident_id = $1 ORDER BY v.observed_at DESC`, [row.id]);
+      FROM verifications v JOIN users u ON u.id = v.user_id WHERE v.incident_id = $1${s.rows('v')} ORDER BY v.observed_at DESC`, [row.id]);
     const tasks = await pool.query(`SELECT a.status, a.created_at, a.enroute_at, a.closed_at, u.name AS assignee
-      FROM assignments a JOIN users u ON u.id = a.assignee_id WHERE a.incident_id = $1 ORDER BY a.created_at`, [row.id]);
+      FROM assignments a JOIN users u ON u.id = a.assignee_id WHERE a.incident_id = $1${s.rows('a')} ORDER BY a.created_at`, [row.id]);
     const order = { detected: 0, assigned: 1, enroute: 2, checked: 3, cancelled: 4 } as const;
     const timeline = [
       ...passes(detections.rows),
