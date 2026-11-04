@@ -3,12 +3,16 @@ import argon2 from 'argon2';
 import type pg from 'pg';
 import { createPool, transaction } from './db.js';
 import { alertSubscribers, refreshIncidents } from './ingest.js';
-import { clearTileCache, refreshVerificationSummary } from './incidents.js';
+import { clearTileCache, refreshVerificationSummary, repairVerificationSummaries } from './incidents.js';
+import { demoDomain } from './models.js';
+import { deleteUploads, uploadsDirectory } from './uploads.js';
 
-// The shared demo accounts at titik-api.mrramdn.com. They are not official accounts of any agency. A reset
-// keeps every real satellite detection and only takes back what the demo accounts did, then subscribes the
-// squads to the villages where the satellites saw the most in the last three days, so there is always
-// something real to check, and adds a few example checks and tasks marked as demo.
+// The shared demo accounts at titik-api.mrramdn.com. They are not official accounts of any agency. What they do stays
+// in the demo scope: only demo sessions see their field checks and tasks (see Scope in incidents.ts). A reset keeps
+// every real satellite detection and only takes back what the demo accounts did (field checks and their photos, tasks,
+// alerts, watched villages and push subscriptions), then subscribes the squads to the villages where the satellites saw
+// the most in the last three days, so there is always something real to check, and adds a few example checks and tasks
+// marked as demo.
 
 export const demoPassword = 'TitikApiDemo!26';
 const user = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -25,6 +29,33 @@ export const demoSquads = [
   { id: user(5), name: 'Regu MPA Cengal (demo)', email: 'regu-cengal@titikapi.test', role: 'mpa', organization: squadOrganization, district: 'Cengal' },
 ] as const;
 const [mpa, kades, bpbd] = demoAccounts;
+const demoIds = [...demoAccounts, ...demoSquads].map(account => account.id);
+
+/**
+ * Takes back what demo false alarms taught the triage. Before demo checks stopped teaching it, and on the judged version
+ * after a rollback (see reconcile.ts), a demo false alarm left a fixed heat source and flagged every detection of its
+ * incident, and later ones within its radius. Those detections are found before the sources go, then lose the flag,
+ * unless a source that is left still covers them or a real false alarm flagged their incident. Nothing else is worked
+ * out again: a real false alarm flags every detection of its incident however far, so measuring distances afresh on the
+ * incidents of demo checks would take back real triage. A check of a demo account counts as demo even if it was not
+ * marked. Returns how many sources went and the incidents whose detections changed, to be scored again once the
+ * transaction is committed.
+ */
+export async function takeBackDemoFalseAlarms(client: pg.PoolClient) {
+  const demo = (alias: string) => `(${alias}.is_demo OR ${alias}.user_id = ANY($1::uuid[]))`;
+  const flagged = (await client.query(`WITH s AS (SELECT s.geom, s.radius_m, c.incident_id FROM static_sources s JOIN verifications c ON c.id = s.verification_id
+      WHERE ${demo('c')})
+    SELECT d.id FROM s JOIN detections d ON d.incident_id = s.incident_id WHERE d.near_static
+    UNION SELECT d.id FROM s JOIN detections d ON ST_DWithin(s.geom, d.geom, s.radius_m / 90000.0::float8) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)
+      WHERE d.near_static`, [demoIds])).rows.map(row => String(row.id));
+  const sources = (await client.query(`DELETE FROM static_sources s USING verifications c WHERE c.id = s.verification_id AND ${demo('c')}`, [demoIds])).rowCount ?? 0;
+  if (!flagged.length) return { sources, rescore: [] as string[] };
+  const unflagged = (await client.query(`UPDATE detections d SET near_static = false WHERE d.id = ANY($2::bigint[])
+      AND NOT EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))
+      AND NOT EXISTS (SELECT 1 FROM verifications v WHERE v.incident_id = d.incident_id AND v.status = 'alarm_palsu' AND NOT ${demo('v')})
+    RETURNING d.incident_id`, [demoIds, flagged])).rows;
+  return { sources, rescore: [...new Set(unflagged.map(row => row.incident_id as string | null).filter((id): id is string => Boolean(id)))] };
+}
 
 // Example field reports, written only on incidents that are already a day old and marked as demo everywhere.
 const examples = [
@@ -35,36 +66,46 @@ const examples = [
   { status: 'asap_bara', minutes: 212, note: 'Contoh dari akun demo. Sisa bara setelah pemadaman awal.' },
 ] as const;
 
-/** An open incident (no check, no open task) from the last 24 hours, high priority first, preferring the given villages. */
+/** An open incident (no check, no open task of any scope) from the last 24 hours, high priority first, preferring the given villages. */
 async function openIncident(client: pg.PoolClient, villages: string[], exclude: string[]) {
   return (await client.query(`SELECT i.id FROM incidents i JOIN villages v ON v.id = i.village_id
-    WHERE i.first_verified_at IS NULL AND i.last_detected_at > now() - interval '24 hours' AND NOT (i.id = ANY($2::uuid[]))
+    WHERE i.first_verified_any_at IS NULL AND i.last_detected_at > now() - interval '24 hours' AND NOT (i.id = ANY($2::uuid[]))
       AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.incident_id = i.id AND a.status IN ('ditugaskan', 'menuju'))
     ORDER BY (i.village_id = ANY($1::text[])) DESC, (i.level = 'tinggi') DESC, (v.regency = 'Ogan Komering Ilir') DESC, i.score DESC, i.id
     LIMIT 1`, [villages, exclude])).rows[0]?.id as string | undefined;
 }
 
-export async function resetDemo(pool: pg.Pool) {
+/**
+ * Starts the demo over. `uploadsDir` is the photo folder of the server (UPLOAD_DIR); the photos of the demo field checks
+ * are deleted from it once the database is reset, so a failed reset never leaves a report without its photo.
+ */
+export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) {
   const passwordHash = await argon2.hash(demoPassword, { type: argon2.argon2id });
   const lockedHash = await argon2.hash(randomBytes(32).toString('hex'), { type: argon2.argon2id });
   const accounts = [...demoAccounts.map(account => ({ ...account, hash: passwordHash })), ...demoSquads.map(account => ({ ...account, hash: lockedHash }))];
   const ids = accounts.map(account => account.id);
-  const affected = await transaction(pool, async client => {
+  const { rescore, photos } = await transaction(pool, async client => {
     for (const account of accounts) {
       await client.query('DELETE FROM users WHERE email = $1 AND id <> $2', [account.email, account.id]);
       await client.query(`INSERT INTO users (id, name, email, password_hash, role, organization) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, role = EXCLUDED.role,
           organization = EXCLUDED.organization`, [account.id, account.name, account.email, account.hash, account.role, account.organization]);
     }
-    const touched = (await client.query('SELECT DISTINCT incident_id FROM verifications WHERE user_id = ANY($1::uuid[])', [ids])).rows.map(row => row.incident_id as string);
-    await client.query('DELETE FROM static_sources WHERE verification_id IN (SELECT id FROM verifications WHERE user_id = ANY($1::uuid[]))', [ids]);
-    await client.query('DELETE FROM verifications WHERE user_id = ANY($1::uuid[])', [ids]);
-    await client.query('DELETE FROM assignments WHERE assignee_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])', [ids]);
+    // Demo field checks and tasks: those of these accounts and any other row marked as demo.
+    const demoChecks = 'is_demo OR user_id = ANY($1::uuid[])';
+    const checks = (await client.query(`SELECT photo_url, photo_thumb_url FROM verifications WHERE ${demoChecks}`, [ids])).rows;
+    // What old demo false alarms taught the triage goes first, while their checks still say whose they were. Only
+    // incidents whose detections changed are scored again.
+    const { rescore } = await takeBackDemoFalseAlarms(client);
+    await client.query(`DELETE FROM verifications WHERE ${demoChecks}`, [ids]);
+    await client.query('DELETE FROM assignments WHERE is_demo OR assignee_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM alerts WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM subscriptions WHERE user_id = ANY($1::uuid[])', [ids]);
-    await client.query(`UPDATE detections d SET near_static = EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at)
-      AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)) WHERE d.incident_id = ANY($1::uuid[])`, [touched]);
-    await refreshVerificationSummary(client, touched);
+    await client.query('DELETE FROM push_subscriptions WHERE user_id = ANY($1::uuid[]) OR user_id IN (SELECT id FROM users WHERE email LIKE $2)', [ids, `%${demoDomain}`]);
+    // The summaries of every incident whose checks they no longer follow are worked out again: those whose demo checks
+    // just went, and any an older version left behind, such as the judged version's reset after a rollback, which
+    // deleted demo checks but kept the demo session's summary of them (see reconcile.ts).
+    await repairVerificationSummaries(client);
 
     // The demo squads and village head work in the pilot regency, Ogan Komering Ilir.
     const ranked = `SELECT i.village_id FROM incidents i JOIN villages v ON v.id = i.village_id
@@ -87,18 +128,19 @@ export async function resetDemo(pool: pg.Pool) {
       for (const village of chosen) await client.query('INSERT INTO subscriptions (user_id, village_id, radius_km) VALUES ($1, $2, 1) ON CONFLICT DO NOTHING', [squad.id, village]);
     }
 
-    // Sample checks land on recent incidents, first in the demo volunteer's own villages, then in the OKI pilot.
+    // Sample checks land on recent incidents, first in the demo volunteer's own villages, then in the OKI pilot. Like
+    // every demo check they store the incident centre as their place and a rounded distance (see verifications.ts).
     const candidates = (await client.query(`SELECT DISTINCT ON (i.village_id) i.id, i.first_detected_at, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat,
         (i.village_id = ANY($1::text[]))::integer * 2 + (v.regency = 'Ogan Komering Ilir')::integer AS rank
       FROM incidents i JOIN villages v ON v.id = i.village_id
-      WHERE i.first_verified_at IS NULL AND i.first_detected_at BETWEEN now() - interval '30 hours' AND now() - interval '4 hours'
+      WHERE i.first_verified_any_at IS NULL AND i.first_detected_at BETWEEN now() - interval '30 hours' AND now() - interval '4 hours'
       ORDER BY i.village_id, i.score DESC`, [villages])).rows
       .sort((a, b) => b.rank - a.rank || b.first_detected_at - a.first_detected_at).slice(0, examples.length);
     for (const [index, incident] of candidates.entries()) {
       const example = examples[index]!;
       await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, note, latitude, longitude, accuracy_m, distance_m, observed_at, received_at, is_demo)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 12, 140, $8, $8, true)`,
-      [incident.id, mpa.id, randomUUID(), example.status, example.note, incident.lat - 0.0009, incident.lon - 0.0009,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 100, $8, $8, true)`,
+      [incident.id, mpa.id, randomUUID(), example.status, example.note, incident.lat, incident.lon,
         new Date(incident.first_detected_at.getTime() + example.minutes * 60_000)]);
     }
     const seeded = candidates.map(candidate => candidate.id as string);
@@ -107,28 +149,32 @@ export async function resetDemo(pool: pg.Pool) {
     // Two example tasks from the demo BPBD account: one waiting for the demo volunteer, one squad already on the way.
     const forVolunteer = await openIncident(client, mine, []);
     if (forVolunteer) {
-      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, note, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, now() - interval '35 minutes', now() - interval '35 minutes')`,
+      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, note, created_at, updated_at, is_demo)
+        VALUES ($1, $2, $3, $4, now() - interval '35 minutes', now() - interval '35 minutes', true)`,
       [forVolunteer, mpa.id, bpbd.id, 'Contoh dari akun demo. Cek titik panas terdekat dari jalan desa dan kirim foto.']);
     }
     const squad = demoSquads[0];
     const forSquad = await openIncident(client, squadVillages.get(squad.id) ?? [], forVolunteer ? [forVolunteer] : []);
     if (forSquad) {
-      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, status, note, created_at, enroute_at, updated_at)
-        VALUES ($1, $2, $3, 'menuju', $4, now() - interval '80 minutes', now() - interval '50 minutes', now() - interval '50 minutes')`,
+      await client.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, status, note, created_at, enroute_at, updated_at, is_demo)
+        VALUES ($1, $2, $3, 'menuju', $4, now() - interval '80 minutes', now() - interval '50 minutes', now() - interval '50 minutes', true)`,
       [forSquad, squad.id, bpbd.id, 'Contoh dari akun demo. Cek titik panas di tepi kanal dan laporkan kondisinya.']);
     }
     // Alerts for the demo accounts only; nobody else's inbox changes.
     const recent = (await client.query("SELECT id FROM incidents WHERE last_detected_at > now() - interval '24 hours'")).rows.map(row => row.id as string);
     await alertSubscribers(client, recent, { userIds: ids });
-    return touched;
+    return { rescore, photos: checks.flatMap(row => [row.photo_url as string | null, row.photo_thumb_url as string | null]) };
   });
-  if (affected.length) await refreshIncidents(pool, affected);
+  const photosDeleted = await deleteUploads(uploadsDir, photos);
+  if (rescore.length) await refreshIncidents(pool, rescore);
   clearTileCache();
+  return { photosDeleted };
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href && process.argv[2] === 'reset') {
   const pool = createPool();
-  try { await resetDemo(pool); console.log('Demo accounts reset. Satellite data kept.'); }
-  finally { await pool.end(); }
+  try {
+    const { photosDeleted } = await resetDemo(pool);
+    console.log(`Demo accounts reset. Satellite data kept. Photo files deleted: ${photosDeleted}.`);
+  } finally { await pool.end(); }
 }

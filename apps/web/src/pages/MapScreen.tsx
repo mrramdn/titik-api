@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Outlet, useLocation, useNavigate, useOutletContext } from 'react-router';
+import { Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router';
 import { Info, Search, X } from 'lucide-react';
-import { defaultFilters, incidentQuery, type Incident, type IncidentFilters, type IncidentSort, type Level, type StatusFilter } from '../api';
+import { incidentQuery, tanggalParam, type ArchiveDays, type Incident, type IncidentFilters, type IncidentSort, type Level, type StatusFilter } from '../api';
 import { Shell } from '../components/Shell';
 import { PriorityMark, StatusLine, useApi, useDataVersion } from '../components/ui';
+import { useLoad } from '../components/bpbd/data';
 import { signOutFlag, useRoleSwitch } from '../components/shell/roles';
-import { MapView, type Selected } from '../map/MapView';
-import { narrowed, prepareRows, summarize } from '../map/list';
+import { MapView } from '../map/LazyMapView';
+import type { Selected } from '../map/MapView';
+import { inArchive, quietSuggestion, windowStart, withTanggal } from '../map/archive';
+import { ArchiveBanner, ArchivePicker, ArchiveSwitch } from '../map/ArchiveControls';
+import { initialFilters, storeFilters } from '../map/filterStorage';
+import { clearedFilters, narrowed, prepareRows, summarize } from '../map/list';
+import { riskLinkDate } from '../map/risk';
 import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
 import { shortProvince, useRegion, type RegencyRef } from '../region';
 import { useSession } from '../session';
+import { mapPath } from '../routes';
+import { clockOffset, readFreshness } from '../components/shell/freshness';
 
 const text = dict({
   id: {
@@ -24,8 +32,11 @@ const text = dict({
     title: 'Desa {village} · Kec. {district}', outside: 'Di luar batas desa', fromSettlement: '{km} dari permukiman', peat: 'lahan gambut',
     hotspotOne: '{n} titik panas', hotspotMany: '{n} titik panas', uncertain: 'lokasi ±1 km', score: 'Skor prioritas {score} dari 100',
     loading: 'Memuat kejadian…', noMatch: 'Tidak ada kejadian yang cocok dengan filter ini.', noneIn: 'Tidak ada titik panas di desa dalam {window} terakhir.',
-    widen: 'Lihat 7 hari terakhir', checkedEvery: 'Data satelit diperiksa tiap 30 menit.', retry: 'Muat ulang', more: 'Tampilkan {n} kejadian lagi',
-    caveat: 'Titik panas perlu dicek di lapangan.',
+    noneDay: 'Tidak ada titik panas di desa pada {date}.', noneRange: 'Tidak ada titik panas di desa pada {from} sampai {to}.',
+    widen: 'Lihat 7 hari terakhir', widenArchive: 'Lihat 7 hari sampai tanggal ini', checkedEvery: 'Data satelit diperiksa tiap 30 menit.', retry: 'Muat ulang',
+    more: 'Tampilkan {n} kejadian lagi',
+    demo: 'Demo portofolio dengan data satelit asli, bukan sistem peringatan resmi. Darurat 112.', demoMore: 'Selengkapnya',
+    quiet: 'Sedikit titik panas dalam 24 jam terakhir.', quietLink: 'Lihat hari tersibuk di arsip, {date}',
   },
   en: {
     intro: 'This map shows satellite hotspots, grouped into incidents per village and ranked by priority.',
@@ -38,28 +49,35 @@ const text = dict({
     title: '{village} · {district} district', outside: 'Outside village boundaries', fromSettlement: '{km} from a settlement', peat: 'peatland',
     hotspotOne: '{n} hotspot', hotspotMany: '{n} hotspots', uncertain: 'location ±1 km', score: 'Priority score {score} of 100',
     loading: 'Loading incidents…', noMatch: 'No incidents match these filters.', noneIn: 'No hotspots in villages in the last {window}.',
-    widen: 'Show the last 7 days', checkedEvery: 'Satellite data is checked every 30 minutes.', retry: 'Reload', more: 'Show {n} more incidents',
-    caveat: 'Hotspots need a field check.',
+    noneDay: 'No hotspots in villages on {date}.', noneRange: 'No hotspots in villages from {from} to {to}.',
+    widen: 'Show the last 7 days', widenArchive: 'Show the 7 days up to this date', checkedEvery: 'Satellite data is checked every 30 minutes.', retry: 'Reload',
+    more: 'Show {n} more incidents',
+    demo: 'Portfolio demo with real satellite data, not an official warning system. Emergency 112.', demoMore: 'Read more',
+    quiet: 'Few hotspots in the last 24 hours.', quietLink: 'See the busiest day in the archive, {date}',
   },
 });
 type Key = keyof typeof text.id;
 
-export interface Ctx { hours: number; setHours(h: number): void; filters: IncidentFilters; setFilters(f: IncidentFilters): void; setSelected(s: Selected | null): void }
+/** `archive` lists the archive's days; null while loading, and for an older server without an archive. */
+export interface Ctx {
+  hours: number; setHours(h: number): void; filters: IncidentFilters; setFilters(f: IncidentFilters): void; setSelected(s: Selected | null): void;
+  archive: ArchiveDays | null;
+}
 export const useScreen = () => useOutletContext<Ctx>();
 
-const filterKey = 'titikapi.filters';
-function storedFilters(): IncidentFilters {
-  try { return { ...defaultFilters, ...JSON.parse(sessionStorage.getItem(filterKey) ?? '{}') }; } catch { return defaultFilters; }
-}
-
-/** The map stays mounted while the sidebar switches between the list and an incident. */
+/**
+ * The map stays mounted while the sidebar switches between the list and an incident, and keeps its archive date
+ * meanwhile. It opens on the date in the address only (see filterStorage.ts).
+ */
 export function MapScreen() {
-  const [filters, setFiltersState] = useState<IncidentFilters>(storedFilters);
+  const navigate = useNavigate();
+  const location = useLocation();
+  // The dashboard's fire danger card opens the map on live data with that layer on, at tomorrow.
+  const [riskDate] = useState(() => riskLinkDate(location.state));
+  const [filters, setFiltersState] = useState<IncidentFilters>(() => initialFilters(location.search, riskDate !== null));
   const [selected, setSelected] = useState<Selected | null>(null);
   const { bbox, regencies, findRegency, province } = useRegion();
   const { version } = useDataVersion();
-  const navigate = useNavigate();
-  const location = useLocation();
   const { signOut } = useSession();
   // "Lihat sebagai: Publik" and "Keluar" land here first and sign out once the map is open (see useSignOutToMap).
   const signedOutAt = useRef<string | null>(null);
@@ -68,20 +86,48 @@ export function MapScreen() {
     signedOutAt.current = location.key;
     void signOut().finally(() => navigate(location.pathname, { replace: true, state: null }));
   }, [location.key]);
-  const setFilters = (next: IncidentFilters) => { setFiltersState(next); try { sessionStorage.setItem(filterKey, JSON.stringify(next)); } catch { /* private mode */ } };
+  const setFilters = (next: IncidentFilters) => { setFiltersState(next); storeFilters(next); };
   // A regency from the other province makes no sense once the province changes.
   useEffect(() => { if (filters.regency && regencies.length && !regencies.some(r => r.name === filters.regency)) setFilters({ ...filters, regency: '' }); }, [province, regencies.length]);
+  // The archive's days. An older server has none (404): the archive stays hidden and an archive date falls back to live
+  // data, as does a date outside the archive.
+  const archive = useLoad<ArchiveDays>('/archive/days', version);
+  const archiveDays = archive.data && Array.isArray(archive.data.days) && archive.data.days.length ? archive.data : null;
+  useEffect(() => {
+    if (filters.tanggal && (archive.status === 404 || (archive.data && !inArchive(archive.data, filters.tanggal)))) setFilters({ ...filters, tanggal: '' });
+  }, [archive.status, archive.data, filters.tanggal]);
+  // The address carries the archive date while the map screen is open, so an archive view can be shared as it is.
+  useEffect(() => {
+    const search = withTanggal(location.search, filters.tanggal);
+    if (search !== location.search) navigate({ pathname: location.pathname, search, hash: location.hash }, { replace: true });
+  }, [filters.tanggal, location.pathname, location.search]);
   const regency = filters.regency ? findRegency(filters.regency) : null;
-  const context: Ctx = { hours: filters.hours, setHours: hours => setFilters({ ...filters, hours }), filters, setFilters, setSelected };
+  const archived = Boolean(filters.tanggal);
+  const context: Ctx = { hours: filters.hours, setHours: hours => setFilters({ ...filters, hours }), filters, setFilters, setSelected, archive: archiveDays };
   return (
-    <Shell>
-      <main className="mapscreen">
-        <aside className="sidebar dark"><Outlet context={context} /></aside>
-        <MapView hours={filters.hours} filters={{ levels: filters.levels, status: filters.status, peat: filters.peat }} version={version}
+    <Shell freshness={!archived}>
+      <main className={`mapscreen ${archived ? 'archive' : ''}`}>
+        {archived && <ArchiveBanner tanggal={filters.tanggal} onLive={() => setFilters({ ...filters, tanggal: '' })} />}
+        <aside className="sidebar dark"><Outlet context={context} /><DemoNote /></aside>
+        <MapView hours={filters.hours} filters={{ levels: filters.levels, status: filters.status, peat: filters.peat }} version={version} tanggal={filters.tanggal}
+          initialLayers={riskDate !== null ? { risiko: true } : undefined} initialRiskDate={riskDate}
           bounds={(regency?.bbox as [number, number, number, number] | undefined) ?? bbox} boundsMinZoom={regency ? 8.4 : undefined}
           selected={selected} onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} />
       </main>
     </Shell>
+  );
+}
+
+/**
+ * Under the list and the incident panel alike (a shared link opens the panel first): what this is and what it is not,
+ * with the way to the terms of use. On a phone it sits right under the map.
+ */
+function DemoNote() {
+  const t = useT(text);
+  return (
+    <p className="side-foot note"><Info size={16} className="icon" aria-hidden="true" />
+      <span>{t('demo')} <Link to="/tentang#ketentuan" className="side-foot-link">{t('demoMore')}</Link></span>
+    </p>
   );
 }
 
@@ -112,7 +158,9 @@ function Intro({ onClose }: { onClose(): void }) {
   );
 }
 
-function Filters({ filters, onChange, regencies }: { filters: IncidentFilters; onChange(f: IncidentFilters): void; regencies: RegencyRef[] }) {
+interface FiltersProps { filters: IncidentFilters; onChange(f: IncidentFilters): void; regencies: RegencyRef[]; archive: ArchiveDays | null }
+
+function Filters({ filters, onChange, regencies, archive }: FiltersProps) {
   const t = useT(text), f = useFormat();
   const set = (patch: Partial<IncidentFilters>) => onChange({ ...filters, ...patch });
   const toggleLevel = (level: Level) => set({ levels: filters.levels.includes(level) ? filters.levels.filter(item => item !== level) : levels.filter(item => item === level || filters.levels.includes(item)) });
@@ -125,11 +173,13 @@ function Filters({ filters, onChange, regencies }: { filters: IncidentFilters; o
         </button>
       ))}
       <button type="button" className={`fchip ${filters.peat ? 'on' : ''}`} aria-pressed={filters.peat} onClick={() => set({ peat: !filters.peat })}>{t('peatOnly')}</button>
+      {archive && <ArchiveSwitch archive={archive} tanggal={filters.tanggal} onChange={tanggal => set({ tanggal })} />}
       <div className="fseg" role="group" aria-label={t('time')}>
         {([[24, 'h24'], [72, 'd3'], [168, 'd7']] as [number, Key][]).map(([hours, key]) => (
           <button key={hours} type="button" className={filters.hours === hours ? 'on' : ''} aria-pressed={filters.hours === hours} onClick={() => set({ hours })}>{t(key)}</button>
         ))}
       </div>
+      {archive && filters.tanggal && <ArchivePicker archive={archive} tanggal={filters.tanggal} onChange={tanggal => set({ tanggal })} />}
       <select className="fselect" aria-label={t('status')} value={filters.status} onChange={event => set({ status: event.target.value as StatusFilter })}>
         <option value="all">{t('statusAll')}</option><option value="open">{t('statusOpen')}</option>
         <option value="assigned">{t('statusAssigned')}</option><option value="checked">{t('statusChecked')}</option>
@@ -142,13 +192,13 @@ function Filters({ filters, onChange, regencies }: { filters: IncidentFilters; o
           </optgroup>
         ))}
       </select>
-      {narrowed(filters) && <button type="button" className="fclear" onClick={() => onChange({ ...defaultFilters, hours: filters.hours, sort: filters.sort })}>{t('clear')}</button>}
+      {narrowed(filters) && <button type="button" className="fclear" onClick={() => onChange(clearedFilters(filters))}>{t('clear')}</button>}
     </div>
   );
 }
 
-/** One incident in the list: priority bar, place, why it matters, score, age, status. */
-function IncidentRow({ incident, onOpen }: { incident: Incident; onOpen(): void }) {
+/** One incident in the list: priority bar, place, why it matters, score, age (the time itself in the archive), status. */
+function IncidentRow({ incident, archive, onOpen }: { incident: Incident; archive: boolean; onOpen(): void }) {
   const t = useT(text), f = useFormat();
   const v = incident.village;
   const reason = [
@@ -168,7 +218,9 @@ function IncidentRow({ incident, onOpen }: { incident: Incident; onOpen(): void 
       </span>
       <span className="inc-side">
         <span className="inc-score" title={t('score', { score: incident.score })} aria-label={t('score', { score: incident.score })}>{incident.score}</span>
-        <time className="inc-time" dateTime={incident.lastDetectedAt} title={f.span(incident.lastDetectedAt, incident.lastDetectedAt)}>{f.ago(incident.lastDetectedAt)}</time>
+        <time className="inc-time" dateTime={incident.lastDetectedAt} title={f.span(incident.lastDetectedAt, incident.lastDetectedAt)}>
+          {archive ? `${f.dayTime(incident.lastDetectedAt)} WIB` : f.ago(incident.lastDetectedAt)}
+        </time>
       </span>
     </button>
   );
@@ -176,7 +228,7 @@ function IncidentRow({ incident, onOpen }: { incident: Incident; onOpen(): void 
 
 export function IncidentList() {
   const t = useT(text), f = useFormat();
-  const { filters, setFilters, setSelected } = useScreen();
+  const { filters, setFilters, setSelected, archive } = useScreen();
   const { query, regencies } = useRegion();
   const { version, status } = useDataVersion();
   const { user } = useSession();
@@ -191,8 +243,16 @@ export function IncidentList() {
   const legacy = Boolean(status && !('serverTime' in status));
   const asked = legacy && filters.levels.length > 1 ? { ...filters, levels: [] } : filters;
   const list = useApi<Incident[]>(`/incidents${incidentQuery(asked, query)}&limit=${LIMIT}`, version);
-  // /summary knows the time window and the region only, so other filters do not refetch it.
-  const server = useApi<Summary>(`/summary?hours=${filters.hours}${filters.regency ? `&regency=${encodeURIComponent(filters.regency)}` : ''}${query}`, version);
+  // /summary knows the time window, the archive date and the region only, so other filters do not refetch it.
+  const summaryPath = `/summary?hours=${filters.hours}${filters.regency ? `&regency=${encodeURIComponent(filters.regency)}` : ''}${query}${tanggalParam(filters.tanggal)}`;
+  const server = useApi<Summary>(summaryPath, version);
+  // The last 24 hours over both provinces decide whether the live map is quiet. Asked for only when the list's own
+  // summary is not already that, and not in the archive or when the server has no archive to point to.
+  const quietPath = '/summary?hours=24';
+  const live = useApi<Summary>(archive && !filters.tanggal && summaryPath !== quietPath ? quietPath : null, version);
+  // Not while the data is stale (the top bar's warning), nor before that is known: fewer hotspots then mean missing data.
+  const stalled = !status || (readFreshness(status, Date.now() + clockOffset(status.serverTime))?.stalled ?? true);
+  const quietDay = quietSuggestion((summaryPath === quietPath ? server.data : live.data)?.incidents, archive, filters.tanggal, stalled);
   const hits = useApi<VillageHit[]>(q.trim().length >= 2 ? `/villages?q=${encodeURIComponent(q.trim())}${query}` : null);
   const rows = useMemo(() => (Array.isArray(list.data) ? prepareRows(list.data, filters) : null), [list.data, key]);
   // Counts follow the same filters as the rows: from the rows when the list is complete; from /summary when only
@@ -201,7 +261,11 @@ export function IncidentList() {
   const serverExact = !filters.levels.length && filters.status === 'all' && !filters.peat;
   const counts = rows && (complete || !serverExact || !server.data) ? summarize(rows, !complete) : server.data ? { ...server.data, atLeast: false } : null;
   const closeIntro = () => { setIntro(false); try { localStorage.setItem(introKey, 'seen'); } catch { /* private mode */ } };
+  const archived = Boolean(filters.tanggal);
   const windowLabel = t(filters.hours === 24 ? 'h24' : filters.hours === 72 ? 'd3' : 'd7');
+  const start = archived ? windowStart(filters.tanggal, filters.hours) : '';
+  const none = !archived ? t('noneIn', { window: windowLabel })
+    : start === filters.tanggal ? t('noneDay', { date: f.calendar(filters.tanggal) }) : t('noneRange', { from: f.calendar(start), to: f.calendar(filters.tanggal) });
   const sorts: [IncidentSort, Key][] = [['priority', 'byPriority'], ['recent', 'byRecent'], ['size', 'bySize']];
   const number = (n: number, atLeast = false) => `${f.num(n)}${atLeast ? '+' : ''}`;
   return (
@@ -216,13 +280,23 @@ export function IncidentList() {
               {!hits.data.length && <div className="empty">{t('noVillage')}</div>}
             </div>
           )}
-          <Filters filters={filters} onChange={setFilters} regencies={regencies} />
+          <Filters filters={filters} onChange={setFilters} regencies={regencies} archive={archive} />
         </div>
         <div className="sumrow" aria-live="polite">
           <div><b>{counts ? number(counts.incidents, counts.atLeast) : '–'}</b><span>{t('incidents')}</span></div>
           <div className="hot"><b>{counts ? number(counts.highOpen, counts.atLeast) : '–'}</b><span>{t('highOpen')}</span></div>
           <div><b>{counts ? number(counts.detections, counts.atLeast) : '–'}</b><span>{t('hotspots')}</span></div>
         </div>
+        {quietDay && (
+          <p className="quiet-hint">{t('quiet')}{' '}
+            <a href={mapPath(quietDay)} onClick={event => {
+              // A plain click switches the map in place; a modified one opens the archive day in a new tab.
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              setFilters({ ...filters, tanggal: quietDay });
+            }}>{t('quietLink', { date: f.calendar(quietDay) })}</a>
+          </p>
+        )}
         <div className="list-head">
           <span className="label">{t('sort')}</span>
           <div className="sortseg" role="group" aria-label={t('sort')}>
@@ -235,18 +309,17 @@ export function IncidentList() {
         )}
         {rows && !rows.length && !list.loading && (
           <div className="side-msg">
-            <p>{narrowed(filters) ? t('noMatch') : t('noneIn', { window: windowLabel })}</p>
-            {narrowed(filters) ? <button type="button" className="btn btn-dark btn-sm" onClick={() => setFilters({ ...defaultFilters, hours: filters.hours, sort: filters.sort })}>{t('clear')}</button>
-              : filters.hours < 168 ? <button type="button" className="btn btn-dark btn-sm" onClick={() => setFilters({ ...filters, hours: 168 })}>{t('widen')}</button>
-              : <p className="muted">{t('checkedEvery')}</p>}
+            <p>{narrowed(filters) ? t('noMatch') : none}</p>
+            {narrowed(filters) ? <button type="button" className="btn btn-dark btn-sm" onClick={() => setFilters(clearedFilters(filters))}>{t('clear')}</button>
+              : filters.hours < 168 ? <button type="button" className="btn btn-dark btn-sm" onClick={() => setFilters({ ...filters, hours: 168 })}>{t(archived ? 'widenArchive' : 'widen')}</button>
+              : archived ? null : <p className="muted">{t('checkedEvery')}</p>}
           </div>
         )}
-        <div className="inc-list">{rows?.slice(0, shown).map(incident => <IncidentRow key={incident.id} incident={incident} onOpen={() => navigate(`/kejadian/${incident.id}`)} />)}</div>
+        <div className="inc-list">{rows?.slice(0, shown).map(incident => <IncidentRow key={incident.id} incident={incident} archive={archived} onOpen={() => navigate(`/kejadian/${incident.id}`)} />)}</div>
         {rows && rows.length > shown && (
           <div className="side-more"><button type="button" className="btn btn-dark btn-block" onClick={() => setShown(shown + PAGE)}>{t('more', { n: f.num(Math.min(PAGE, rows.length - shown)) })}</button></div>
         )}
       </div>
-      <div className="side-foot note"><Info size={16} className="icon" aria-hidden="true" />{t('caveat')}</div>
     </>
   );
 }

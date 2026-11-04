@@ -9,7 +9,7 @@ import { transaction } from './db.js';
 import { ApiError, choice, object, requireCondition, text, uuid } from './errors.js';
 import { closeOpenAssignment } from './assignments.js';
 import { falseAlarmLabel } from './geo.js';
-import { clearTileCache, getIncident, refreshVerificationSummary } from './incidents.js';
+import { clearTileCache, getIncident, refreshVerificationSummary, scopeOf } from './incidents.js';
 
 export const statuses = ['api_aktif', 'asap_bara', 'bakar_terkendali', 'alarm_palsu', 'tidak_terjangkau'] as const;
 const falseAlarmKinds = ['industri', 'pembakaran_sampah', 'lainnya'] as const;
@@ -35,6 +35,14 @@ async function readReport(request: FastifyRequest) {
   return { fields, photo };
 }
 
+/**
+ * SQL: a distance (`metres`, an SQL expression) to one significant figure, in steps of at least 100 m and never under
+ * 100 m: 122,291 m becomes 100,000, 93,203 becomes 90,000, 2,345 becomes 2,000, 456 becomes 500 and 40 becomes 100.
+ * NULL stays NULL.
+ */
+export const roughDistanceSql = (metres: string) => `CASE WHEN (${metres}) IS NOT NULL
+  THEN greatest(100, round((${metres})::numeric, -greatest(2, floor(log(greatest((${metres})::numeric, 1))))::integer))::integer END`;
+
 const optionalNumber = (value: unknown, name: string, min: number, max: number) => {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
@@ -45,7 +53,7 @@ const optionalNumber = (value: unknown, name: string, min: number, max: number) 
 export function installVerifications(app: FastifyInstance, pool: pg.Pool, uploadsDir: string) {
   app.post('/api/v1/incidents/:id/verifications', async (request, reply) => {
     const user = authenticated(request, 'mpa');
-    const incident = await getIncident(pool, String(object(request.params).id));
+    const incident = await getIncident(pool, String(object(request.params).id), scopeOf(request));
     const { fields, photo } = await readReport(request);
     const clientUuid = uuid(fields.clientUuid);
     // The same report sent again after a lost connection is answered with the first copy.
@@ -81,21 +89,33 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
       written.push(join(uploadsDir, `${name}.jpg`), join(uploadsDir, `${name}.thumb.jpg`));
       photoUrl = `/uploads/${name}.jpg`; thumbUrl = `/uploads/${name}.thumb.jpg`;
     }
+    // A false alarm from a real account teaches the triage. Demo accounts are open to every visitor: theirs never does.
+    const teaches = status === 'alarm_palsu' && !user.demo;
     try {
       const saved = await transaction(pool, async client => {
+        // A demo account is shared, and other visitors read its reports: the place stored is the incident's centre, never
+        // the visitor's position. The distance to the hotspot is measured from that position, as for anyone, but kept only
+        // to one significant figure and at least 100 m (2,345 m as 2,000): every demo session reads it, and three exact
+        // distances from one place would give that place away to a tenth of a metre. A real check keeps its metres.
         const inserted = await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, note, latitude, longitude, accuracy_m,
             distance_m, observed_at, photo_url, photo_thumb_url, is_demo)
-          SELECT $1, $2, $3, $4, $5, $6, $7::float8, $8::float8, $9,
-            CASE WHEN $7::float8 IS NULL THEN NULL ELSE round(ST_Distance(ST_SetSRID(ST_MakePoint($8::float8, $7::float8), 4326)::geography, i.centroid::geography))::integer END,
-            $10, $11, $12, $13 FROM incidents i WHERE i.id = $1
+          SELECT $1, $2, $3, $4, $5, $6,
+            CASE WHEN $7::float8 IS NULL THEN NULL WHEN $13::boolean THEN ST_Y(i.centroid) ELSE $7::float8 END,
+            CASE WHEN $8::float8 IS NULL THEN NULL WHEN $13::boolean THEN ST_X(i.centroid) ELSE $8::float8 END,
+            CASE WHEN $13::boolean THEN NULL ELSE $9::numeric END,
+            CASE WHEN $7::float8 IS NULL THEN NULL WHEN $13::boolean THEN ${roughDistanceSql('d.m')} ELSE round(d.m)::integer END,
+            $10, $11, $12, $13
+          FROM incidents i, LATERAL (SELECT ST_Distance(ST_SetSRID(ST_MakePoint($8::float8, $7::float8), 4326)::geography, i.centroid::geography) AS m) d
+          WHERE i.id = $1
           ON CONFLICT (client_uuid) DO NOTHING RETURNING id`,
         [incident.id, user.id, clientUuid, status, falseAlarmKind, note, latitude, longitude, accuracy, observedAt, photoUrl, thumbUrl, user.demo]);
         requireCondition(inserted.rows[0], 409, 'CONFLICT', 'Laporan ini sudah diterima.');
         await refreshVerificationSummary(client, [incident.id]);
-        // Any field check finishes the open task of the incident, whoever filed it.
-        const closedAssignment = await closeOpenAssignment(client, incident.id, observedAt);
+        // A field check finishes the incident's open task of its own scope, whoever filed it: a demo check never closes a
+        // real task, nor a real check a demo one.
+        const closedAssignment = await closeOpenAssignment(client, incident.id, observedAt, user.demo);
         // A verified false alarm teaches the triage: later detections at the same spot are flagged for 30 days.
-        if (status === 'alarm_palsu') {
+        if (teaches) {
           await client.query(`INSERT INTO static_sources (kind, label, geom, radius_m, verification_id, expires_at)
             SELECT 'alarm_palsu', $2, centroid, 375, $3, now() + interval '30 days' FROM incidents WHERE id = $1`,
           [incident.id, `Alarm palsu dari cek lapangan (${falseAlarmLabel[falseAlarmKind!]})`, inserted.rows[0].id]);
@@ -103,12 +123,12 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
         }
         return { id: inserted.rows[0].id as string, closedAssignment };
       });
-      if (status === 'alarm_palsu') {
+      if (teaches) {
         const { refreshIncidents } = await import('./ingest.js');
         await pool.query(`UPDATE detections d SET near_static = true WHERE d.incident_id = $1`, [incident.id]);
         await refreshIncidents(pool, [incident.id]);
       }
-      clearTileCache();
+      clearTileCache(user.demo ? 'demo' : undefined);
       reply.code(201);
       return { data: { id: saved.id, duplicate: false, closedAssignment: saved.closedAssignment } };
     } catch (error) {

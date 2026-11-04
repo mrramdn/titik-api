@@ -6,14 +6,15 @@
   --chrome-line: rgb(255 255 255 / 0.08);
   --chrome-text: #f3efea;
   --chrome-text-2: rgb(243 239 234 / 0.68);
-  --chrome-text-3: rgb(243 239 234 / 0.48);
+  --chrome-text-3: rgb(243 239 234 / 0.54);
   --surface-bg: #f6f6f4;
   --surface-card: #ffffff;
   --surface-subtle: #efeeeb;
   --surface-line: #e6e4e0;
   --text: #191614;
   --text-2: #57514b;
-  --text-3: #8a837c;
+  /* Small grey text meets AA: 4.52:1 on --surface-bg, 4.69:1 on the #fbfaf8 hover rows, 4.89:1 on white. */
+  --text-3: #76706a;
   --priority-high: #e5381c;
   --priority-medium: #f08c00;
   --priority-low: #8e8a85;
@@ -46,6 +47,8 @@ h1, h2, h3, p { margin: 0; }
 .label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-3); }
 .dark .label, .label.on-dark { color: var(--chrome-text-3); }
 .muted { color: var(--text-3); }
+/* --text-3 is a grey for light surfaces: on the dark sidebar it measures 3.78:1. Use --chrome-text-2 or -3 there. */
+.dark .muted { color: var(--chrome-text-2); }
 .title-28 { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.4px; }
 .title-24 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.3px; }
 .heading-20 { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.2px; }
@@ -67,6 +70,7 @@ h1, h2, h3, p { margin: 0; }
 .freshness { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--chrome-text-2); white-space: nowrap; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-checked); box-shadow: 0 0 0 3px rgb(47 158 68 / 0.2); }
 .live-dot.stale { background: var(--priority-medium); box-shadow: 0 0 0 3px rgb(240 140 0 / 0.2); }
+.live-dot.stalled { background: var(--priority-high); box-shadow: 0 0 0 3px rgb(229 56 28 / 0.25); }
 .topnav { display: flex; gap: 4px; margin-left: auto; }
 .topnav a { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); color: var(--chrome-text-2); font-weight: 500; }
 .topnav a:hover { color: var(--chrome-text); background: var(--chrome-900); }
@@ -132,10 +136,14 @@ h1, h2, h3, p { margin: 0; }
 .banner-warn { background: rgb(232 89 12 / 0.1); color: #9a3b0a; }
 .banner-ok { background: rgb(47 158 68 / 0.1); color: #1f6e31; }
 .empty { padding: 24px 16px; text-align: center; color: var(--text-3); font-size: 13px; }
+.dark .empty { color: var(--chrome-text-2); }
 .hairline { height: 1px; background: var(--surface-line); border: 0; margin: 0; }
 .dark .hairline { background: var(--chrome-line); }
 .link { color: var(--info); font-weight: 500; }
 .dark .link { color: #74b4f0; }
+/* A data source's credit as a link, in the colour of the note it sits in. */
+.credit { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+.credit:hover { text-decoration-color: currentColor; }
 
 /* ---------- map screen (sidebar + map) ---------- */
 .mapscreen { flex: none; display: grid; grid-template-columns: 380px 1fr; height: calc(100dvh - 48px); min-height: 0; }
@@ -186,6 +194,10 @@ h1, h2, h3, p { margin: 0; }
 
 .map-pane { position: relative; min-width: 0; min-height: 0; height: 100%; }
 .map { width: 100%; height: 100%; min-height: 240px; background: #e8e6e1; }
+/* The map's place while MapLibre downloads (map/LazyMapView.tsx); on its grey --text-3 would measure 3.92:1. */
+.map-loading { display: grid; place-items: center; color: var(--text-2); font-size: 12px; line-height: 16px; }
+/* A part that downloads when needed and did not arrive (components/LoadBoundary.tsx). */
+.load-failed { display: grid; justify-items: center; gap: 10px; max-width: 24rem; margin: 0 auto; padding: 16px; text-align: center; color: var(--text-2); font-size: 13px; line-height: 18px; }
 .map-controls { position: absolute; top: 16px; right: 16px; display: grid; gap: 8px; z-index: 5; }
 .map-control { width: 64px; height: 52px; display: grid; place-items: center; align-content: center; gap: 3px; border-radius: var(--radius-md); background: var(--chrome-950); color: var(--chrome-text); border: 0; box-shadow: var(--shadow-float); cursor: pointer; }
 .map-control span { font-size: 11px; line-height: 12px; font-weight: 500; color: var(--chrome-text-2); }
@@ -272,6 +284,8 @@ h1, h2, h3, p { margin: 0; }
 .radio { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--surface-line); flex: none; }
 .option.on { background: rgb(232 89 12 / 0.07); box-shadow: inset 3px 0 0 var(--status-smoke); }
 .option.on .radio { border: 5px solid var(--status-smoke); }
+/* A chosen option's tint brings --text-3 under 4.5:1 (4.21:1 on the field check's --surface-subtle). */
+.option.on .text small { color: var(--text-2); }
 .field { display: grid; gap: 6px; }
 .field textarea, .field input[type='text'], .field input[type='email'], .field input[type='password'], .field select, .input {
   font: inherit; color: var(--text); padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--surface-line); background: var(--surface-card); outline: none; width: 100%; }
@@ -289,6 +303,8 @@ h1, h2, h3, p { margin: 0; }
 .role .tile { width: 40px; height: 40px; background: var(--surface-subtle); color: var(--text); }
 .doc { display: grid; gap: 14px; max-width: 72ch; }
 .doc h2 { font-size: 16px; line-height: 22px; font-weight: 600; margin-top: 12px; }
+/* A section opened by its fragment (/tentang#ketentuan) clears the sticky top bar. */
+.doc h2[id] { scroll-margin-top: 64px; }
 .doc p, .doc li { color: var(--text-2); line-height: 22px; }
 .doc ol, .doc ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .bars7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 120px; }

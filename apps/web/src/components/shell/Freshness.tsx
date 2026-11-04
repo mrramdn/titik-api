@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ExternalLink } from 'lucide-react';
 import { dict, useT } from '../../i18n';
 import { useFormat } from '../../format';
 import { satelliteName } from '../../i18n/common';
 import { useDataVersion } from '../ui';
-import { clockOffset, readFreshness, roughMinutes, type PassWindow } from './freshness';
+import { clockOffset, readFreshness, roughMinutes, SIPONGI_URL, type PassWindow } from './freshness';
 import { usePopover } from './popover';
 
 const text = dict({
@@ -17,6 +18,9 @@ const text = dict({
     failed: 'Pemeriksaan terakhir gagal. Server mencoba lagi pada jadwal berikutnya.', overdue: 'Data lintasan {sat} ±{span} WIB belum masuk.',
     colSat: 'Satelit', colLast: 'Lintasan terakhir', colNext: 'Berikutnya', inactive: 'Tidak aktif', late: 'belum masuk',
     delay: 'NASA FIRMS merilis titik panas paling lambat ±3 jam setelah satelit melintas.', open: 'Rincian data satelit',
+    stalled: 'Data belum diperbarui sejak {time} WIB', stalledSince: 'Tertunda sejak',
+    stalledLong: 'Data di sini terakhir diperbarui {time} WIB, lebih dari 2 jam lalu. Titik panas terbaru bisa belum tampil.',
+    official: 'Data resmi di SiPongi+',
   },
   en: {
     data: 'Satellite data {time} WIB ({sat})', noData: 'No satellite data yet', checked: 'Checked {time}, every {n} min', checkedShort: 'Checked {time}',
@@ -28,6 +32,9 @@ const text = dict({
     failed: 'The last check failed. The server tries again at the next run.', overdue: 'Data from the {sat} pass ±{span} WIB has not arrived.',
     colSat: 'Satellite', colLast: 'Last pass', colNext: 'Next', inactive: 'Inactive', late: 'not in yet',
     delay: 'NASA FIRMS releases hotspots up to about 3 hours after the satellite passes.', open: 'Satellite data details',
+    stalled: 'Data not updated since {time} WIB', stalledSince: 'Delayed since',
+    stalledLong: 'The data here was last updated at {time} WIB, more than 2 hours ago. The newest hotspots may be missing.',
+    official: 'Official data on SiPongi+',
   },
 });
 
@@ -38,7 +45,10 @@ function useNow(intervalMs = 60_000) {
   return now;
 }
 
-/** Pass-aware freshness: newest acquisition, last check, next pass. Compact on small screens, details in a popover. */
+/**
+ * Pass-aware freshness: newest acquisition, last check, next pass. Compact on small screens, details in a popover.
+ * Two hours without a successful check turn it into a warning with that time and a link to SiPongi+.
+ */
 export function Freshness() {
   const t = useT(text), f = useFormat();
   const { status } = useDataVersion();
@@ -63,21 +73,34 @@ export function Freshness() {
   const short = [checkedShort, nextShort].filter(Boolean).join(' · ');
   const long = [checked, next].filter(Boolean).join(' · ');
   const overdue = info.satellites.filter(s => s.overdue);
+  const stalled = info.stalled ? t('stalled', { time: when(info.lastSuccessAt!) }) : null;
+  const official = <a className="fresh-official" href={SIPONGI_URL} target="_blank" rel="noopener noreferrer">{t('official')}<ExternalLink size={12} aria-hidden="true" /></a>;
   return (
-    <div className="fresh" ref={root}>
-      <button type="button" className="fresh-btn" aria-expanded={open} aria-haspopup="dialog" aria-label={`${t('open')}. ${data}`} onClick={toggle}>
-        <i className={`live-dot ${info.stale ? 'stale' : ''}`} aria-hidden="true" />
-        <span className="fresh-compact">{info.latest ? `${when(info.latest.at)} WIB` : t('noData')}</span>
-        <span className="fresh-parts">
-          <span className="fresh-line">{data}</span>
-          {checkedShort && <span className="fresh-line fresh-sub fresh-min">{checkedShort}</span>}
-          {short && <span className="fresh-line fresh-sub fresh-short">{short}</span>}
-          {long && <span className="fresh-line fresh-sub fresh-long">{long}</span>}
-        </span>
+    <div className={`fresh ${info.stalled ? 'stalled' : ''}`} ref={root}>
+      <button type="button" className="fresh-btn" aria-expanded={open} aria-haspopup="dialog" aria-label={`${t('open')}. ${stalled ?? data}`} onClick={toggle}>
+        <i className={`live-dot ${info.stalled ? 'stalled' : info.stale ? 'stale' : ''}`} aria-hidden="true" />
+        <span className="fresh-compact">{info.stalled
+          ? <span className="fresh-stack"><b>{t('stalledSince')}</b><span>{when(info.lastSuccessAt!)}</span></span>
+          : info.latest ? `${when(info.latest.at)} WIB` : t('noData')}</span>
+        {stalled ? (
+          <span className="fresh-parts">
+            <span className="fresh-line fresh-warn-line">{stalled}</span>
+            <span className="fresh-line fresh-sub">{data}</span>
+          </span>
+        ) : (
+          <span className="fresh-parts">
+            <span className="fresh-line">{data}</span>
+            {checkedShort && <span className="fresh-line fresh-sub fresh-min">{checkedShort}</span>}
+            {short && <span className="fresh-line fresh-sub fresh-short">{short}</span>}
+            {long && <span className="fresh-line fresh-sub fresh-long">{long}</span>}
+          </span>
+        )}
       </button>
+      {info.stalled && <span className="fresh-aside">{official}</span>}
       {open && (
         <div className="fresh-pop" role="dialog" aria-label={t('title')}>
           <h3 className="heading-16">{t('title')}</h3>
+          {info.stalled && <div className="fresh-stalled"><p>{t('stalledLong', { time: when(info.lastSuccessAt!) })}</p>{official}</div>}
           <div className="fresh-facts">
             {info.latest && <p>{t('newest', { sat: satelliteName(info.latest.code), time: when(info.latest.at) })}</p>}
             {info.checkedAt && <p>{t('checkedLong', { time: f.time(info.checkedAt), n: info.intervalMinutes })}{info.nextRunAt ? ` ${t('nextRun', { time: f.time(info.nextRunAt) })}` : ''}</p>}

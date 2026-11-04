@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Flame, Navigation } from 'lucide-react';
 import type { Incident, IngestStatus, Level, ScorePart, Status } from '../api';
 import { api, ApiError, type ErrorCode } from '../api';
 import { dict, useLang, useT } from '../i18n';
 import { errorText } from '../i18n/common';
 import { formatter, useFormat, wib, wibDay } from '../format';
+import { useSession } from '../session';
 
 const text = dict({
   id: {
@@ -83,8 +84,11 @@ const waWords = {
   en: { priority: '{level} priority', hotspots: '{n} hotspots', peat: 'peatland', last: 'last seen {time} WIB', location: 'Location', detail: 'Details', caveat: 'Hotspots need a field check.', near: 'near {place}', uncertain: 'location ±{km}' },
 };
 
-/** The WhatsApp message for an incident: where, how urgent, a map link, the incident link, one caveat. */
-export function waText(incident: Incident, lang: 'id' | 'en') {
+/**
+ * The WhatsApp message for an incident: where, how urgent, where the smoke drifts when the panel knows the wind
+ * ("Asap mengarah ke Desa A, Desa B."), a map link, the incident link, one caveat.
+ */
+export function waText(incident: Incident, lang: 'id' | 'en', smoke?: string | null) {
   const f = formatter(lang), w = waWords[lang];
   const fill = (s: string, v: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_, k: string) => String(v[k]));
   const village = incident.village;
@@ -94,7 +98,7 @@ export function waText(incident: Incident, lang: 'id' | 'en') {
   facts.push(fill(w.last, { time: f.time(incident.lastDetectedAt) }));
   if (incident.nearestPlace) facts.push(fill(w.near, { place: f.place(incident.nearestPlace) }));
   if (incident.modisOnly && incident.locationUncertaintyM) facts.push(fill(w.uncertain, { km: f.km(incident.locationUncertaintyM) }));
-  return [where, facts.join(' · '), `${w.location}: ${mapUrl(incident.centroid)}`, `${w.detail}: ${location.origin}${incident.sharePath}`, w.caveat].filter(Boolean).join('\n');
+  return [where, facts.join(' · '), smoke, `${w.location}: ${mapUrl(incident.centroid)}`, `${w.detail}: ${location.origin}${incident.sharePath}`, w.caveat].filter(Boolean).join('\n');
 }
 
 /** Shares through the phone's share sheet, or WhatsApp where there is none. */
@@ -130,12 +134,22 @@ export function useErrorText() {
 }
 
 // One poll of /ingest/status for the whole app. `version` changes when a new ingest run lands, so lists and map
-// tiles can reload; the top bar shows the status itself.
+// tiles can reload; the top bar shows the status itself. It also changes when the visitor signs in or out: a demo
+// session sees demo field checks and tasks that nobody else sees, so what is on screen loads again for the new account.
 interface DataVersion { status: IngestStatus | null; version: number }
 const DataVersionContext = createContext<DataVersion>({ status: null, version: 0 });
 export function DataVersionProvider({ children, intervalMs = 5 * 60_000 }: { children: ReactNode; intervalMs?: number }) {
   const [state, setState] = useState<DataVersion>({ status: null, version: 0 });
   const last = useRef<number | null>(null);
+  const account = useSession().user?.id ?? null;
+  const shownAccount = useRef(account);
+  const [switches, setSwitches] = useState(0);
+  useEffect(() => {
+    if (shownAccount.current === account) return;
+    shownAccount.current = account;
+    setSwitches(count => count + 1);
+  }, [account]);
+  const value = useMemo(() => ({ status: state.status, version: state.version + switches }), [state, switches]);
   useEffect(() => {
     let alive = true;
     const load = () => api<{ data: IngestStatus }>('/ingest/status').then(body => {
@@ -150,12 +164,16 @@ export function DataVersionProvider({ children, intervalMs = 5 * 60_000 }: { chi
     document.addEventListener('visibilitychange', visible);
     return () => { alive = false; clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
   }, [intervalMs]);
-  return <DataVersionContext.Provider value={state}>{children}</DataVersionContext.Provider>;
+  return <DataVersionContext.Provider value={value}>{children}</DataVersionContext.Provider>;
 }
 export const useDataVersion = () => useContext(DataVersionContext);
 
 export interface Loaded<T> { data: T | null; error: string | null; loading: boolean; reload(): void }
-/** GET /api/v1{path}; reloads when the path changes, when reload() is called, or when `version` changes. */
+/**
+ * GET /api/v1{path}; reloads when the path changes, when reload() is called, or when `version` changes. A request
+ * no longer needed (the screen closed, or the path changed) is cancelled, so it leaves the server's line for heavy
+ * lists instead of holding one of the places this address has there.
+ */
 export function useApi<T>(path: string | null, version = 0): Loaded<T> {
   const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean }>({ data: null, error: null, loading: Boolean(path) });
   const [tick, setTick] = useState(0);
@@ -163,10 +181,11 @@ export function useApi<T>(path: string | null, version = 0): Loaded<T> {
   useEffect(() => {
     if (!path) return;
     let alive = true;
+    const request = new AbortController();
     setState(previous => ({ ...previous, loading: true }));
-    api<{ data: T }>(path).then(body => { if (alive) setState({ data: body.data, error: null, loading: false }); })
+    api<{ data: T }>(path, { signal: request.signal }).then(body => { if (alive) setState({ data: body.data, error: null, loading: false }); })
       .catch(error => { if (alive) setState(previous => ({ data: previous.data, error: describe(error), loading: false })); });
-    return () => { alive = false; };
+    return () => { alive = false; request.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, tick, version]);
   return { ...state, reload: () => setTick(value => value + 1) };

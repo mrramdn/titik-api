@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { Incident, IngestSatellite, IngestStatus } from '../../api';
+import type { ArchiveDays, Incident, IngestSatellite, IngestStatus } from '../../api';
 import { defaultFilters } from '../../api';
-import { clockOffset, readFreshness, roughMinutes } from './freshness';
+import { clockOffset, readFreshness, roughMinutes, SIPONGI_URL, STALLED_MINUTES } from './freshness';
+import { QUIET_INCIDENTS, quietSuggestion } from '../../map/archive';
 import { incidentState, matchesFilters, prepareRows, summarize } from '../../map/list';
 import { incidentFilter } from '../../map/style';
 import { dailyLayer } from '../../map/imagery';
@@ -14,7 +15,7 @@ const sat = (satellite: IngestSatellite['satellite'], extra: Partial<IngestSatel
   last24h: 0, medianLatencyMin: null, nextWindow: null, ...extra,
 });
 const status = (satellites: IngestSatellite[]): IngestStatus => ({
-  serverTime: at(0), runId: 7, intervalMinutes: 30, nextRunAt: at(19), lastRun: { finishedAt: at(0), ok: true, error: null }, runs: [], satellites,
+  serverTime: at(0), runId: 7, intervalMinutes: 30, nextRunAt: at(19), lastRun: { finishedAt: at(0), ok: true, error: null }, lastSuccessAt: at(0), runs: [], satellites,
 });
 
 describe('freshness in the top bar', () => {
@@ -72,13 +73,72 @@ describe('freshness in the top bar', () => {
     expect(roughMinutes(200)).toEqual({ unit: 'hour', n: 3 });
     expect(roughMinutes(-1)).toBeNull();
   });
+
+  it('says the data stopped updating only after two hours without a successful check', () => {
+    expect(STALLED_MINUTES).toBe(120);
+    const base = status([sat('N21', { latestAcquisition: at(-500) })]);
+    expect(readFreshness(base, now)).toMatchObject({ stalled: false, lastSuccessAt: at(0) });
+    expect(readFreshness({ ...base, lastSuccessAt: at(-120) }, now)!.stalled).toBe(false);
+    // A failed run since then does not count as a check that worked.
+    const late = readFreshness({ ...base, lastRun: { finishedAt: at(-5), ok: false, error: 'FIRMS' }, lastSuccessAt: at(-121) }, now)!;
+    expect(late).toMatchObject({ stalled: true, lastSuccessAt: at(-121), failed: true, checkedAt: at(-5) });
+    // Before the first successful live run there is no time to give, and no warning.
+    expect(readFreshness({ ...base, lastSuccessAt: null }, now)).toMatchObject({ stalled: false, lastSuccessAt: null });
+  });
+
+  it('takes the last success from the recent runs of an older server', () => {
+    const old = { intervalMinutes: 30, satellites: [], runs: [
+      { id: 9, finishedAt: at(-10), source: 'live', feeds: [], inserted: 0, error: 'Semua sumber FIRMS gagal diambil.' },
+      { id: 8, finishedAt: at(-200), source: 'live', feeds: [], inserted: 3, error: null },
+    ] } as unknown as IngestStatus;
+    expect(readFreshness(old, now)).toMatchObject({ lastSuccessAt: at(-200), stalled: true, failed: true });
+    expect(readFreshness({ ...old, runs: [] }, now)).toMatchObject({ lastSuccessAt: null, stalled: false });
+  });
+
+  it('sends visitors to SiPongi+ at its current address, not the retired menlhk.go.id one', () => {
+    // The ministry split moved SiPongi+ to the Ministry of Forestry; sipongi.menlhk.go.id answers NXDOMAIN since.
+    const url = new URL(SIPONGI_URL);
+    expect(url.protocol).toBe('https:');
+    expect(url.hostname).toBe('sipongi.gakkum.kehutanan.go.id');
+    expect(url.hostname).not.toMatch(/menlhk\.go\.id$/);
+  });
+});
+
+describe('quiet live map', () => {
+  const archive: ArchiveDays = { first: '2026-10-08', last: '2026-11-02', days: [
+    { date: '2026-10-22', detections: 23316, incidents: 3237 },
+    { date: '2026-10-23', detections: 25614, incidents: 3001 },
+    { date: '2026-10-28', detections: 311, incidents: 47 },
+  ] };
+
+  it('points to the busiest archive day while fewer than 100 incidents show in 24 hours', () => {
+    expect(QUIET_INCIDENTS).toBe(100);
+    expect(quietSuggestion(47, archive, '')).toBe('2026-10-23');
+    expect(quietSuggestion(0, archive, '')).toBe('2026-10-23');
+    expect(quietSuggestion(99, archive, '')).toBe('2026-10-23');
+    expect(quietSuggestion(100, archive, '')).toBe('');
+  });
+
+  it('stays away while the data is stale: then fewer hotspots mean missing data, not a quiet day', () => {
+    expect(quietSuggestion(47, archive, '', true)).toBe('');
+    expect(quietSuggestion(0, archive, '', true)).toBe('');
+    expect(quietSuggestion(47, archive, '', false)).toBe('2026-10-23');
+  });
+
+  it('stays away in the archive, without an archive, before the count is known and when no day was busy', () => {
+    expect(quietSuggestion(12, archive, '2026-10-23')).toBe('');
+    expect(quietSuggestion(12, null, '')).toBe('');
+    expect(quietSuggestion(undefined, archive, '')).toBe('');
+    expect(quietSuggestion(null, archive, '')).toBe('');
+    expect(quietSuggestion(12, { ...archive, days: [archive.days[2]!] }, '')).toBe('');
+  });
 });
 
 const incident = (extra: Partial<Incident>): Incident => ({
   id: 'i', code: 'c', village: { id: 'v', name: 'Cengal', district: 'Cengal', regency: 'Ogan Komering Ilir', province: 'Sumatera Selatan', center: [105, -3] },
   firstDetectedAt: at(-60), lastDetectedAt: at(-60), detectionCount: 3, viirsCount: 3, modisCount: 0, modisOnly: false, locationUncertaintyM: null,
   satellites: ['N21'], maxFrp: 10, bestConfidence: 'nominal', onPeat: false, nearStatic: false, centroid: [105, -3], settlementMeters: 900, score: 50,
-  scoreParts: [], level: 'sedang', firstVerifiedAt: null, latestStatus: null, latestCheck: null, assignment: null, nearestPlace: null, card: null, sharePath: '/k/c',
+  scoreParts: [], level: 'sedang', firstVerifiedAt: null, latestStatus: null, latestCheck: null, assignment: null, nearestPlace: null, indicatedAreaHa: null, card: null, sharePath: '/k/c',
   ...extra,
 });
 const task = (status: 'ditugaskan' | 'menuju' | 'selesai') => ({ id: 'a', status, assignee: { id: 'u', name: 'Regu', organization: 'MPA' }, assignedBy: 'b', note: '',

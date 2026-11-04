@@ -15,10 +15,15 @@ const make = (layer: string, satellite: DailyLayer['satellite'], date: string, p
   tiles: `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${layer}/default/${date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`,
 });
 
+const noaa20 = (date: string) => make('VIIRS_NOAA20_CorrectedReflectance_TrueColor', 'NOAA-20', date, 'midday');
+
 /** The newest complete daily image at this moment (WIB). */
 export function dailyLayer(now = new Date()): DailyLayer {
   const { date, hour } = wibParts(now);
-  if (hour >= 17) return make('VIIRS_NOAA20_CorrectedReflectance_TrueColor', 'NOAA-20', date, 'midday');
+  if (hour >= 17) return noaa20(date);
   if (hour >= 12) return make('MODIS_Terra_CorrectedReflectance_TrueColor', 'Terra', date, 'morning');
-  return make('VIIRS_NOAA20_CorrectedReflectance_TrueColor', 'NOAA-20', previousDay(date), 'midday');
+  return noaa20(previousDay(date));
 }
+
+/** The archive's image: NOAA-20's midday pass on that WIB date (YYYY-MM-DD), the pass closest to the day's VIIRS hotspots. */
+export const dailyLayerFor = (date: string): DailyLayer => noaa20(date);

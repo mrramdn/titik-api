@@ -5,6 +5,7 @@ import webpush from 'web-push';
 import type pg from 'pg';
 import { cardText, formatCount } from './geo.js';
 import { cardIncident, incidentSelect } from './incidents.js';
+import { demoDomain } from './models.js';
 
 const publicKey = process.env.VAPID_PUBLIC_KEY ?? '';
 const privateKey = process.env.VAPID_PRIVATE_KEY ?? '';
@@ -17,14 +18,19 @@ const defaultSender: Sender = (subscription, payload) => webpush.sendNotificatio
 
 export interface Notification { title: string; body: string; url: string; tag: string }
 
-/** Sends one notification to every browser of a user. Returns how many were delivered; dead subscriptions are removed. */
+/**
+ * Sends one notification to every browser of a user. Returns how many were delivered; dead subscriptions are removed.
+ * A demo account's notifications say so in the title, as anyone may have turned them on.
+ */
 export async function pushToUser(pool: pg.Pool, userId: string, notification: Notification, send: Sender = defaultSender) {
   if (!pushEnabled() && send === defaultSender) return 0;
-  const subscriptions = await pool.query('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1', [userId]);
+  const subscriptions = await pool.query(`SELECT p.endpoint, p.p256dh, p.auth, u.email FROM push_subscriptions p JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = $1`, [userId]);
   let delivered = 0;
   for (const subscription of subscriptions.rows) {
+    const payload = String(subscription.email).endsWith(demoDomain) ? { ...notification, title: `Demo · ${notification.title}` } : notification;
     try {
-      await send({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify(notification));
+      await send({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify(payload));
       delivered++;
     } catch (error) {
       const status = (error as { statusCode?: number }).statusCode;
@@ -40,8 +46,9 @@ export async function pushToUser(pool: pg.Pool, userId: string, notification: No
  */
 export async function pushAlerts(pool: pg.Pool, alertIds: string[], send: Sender = defaultSender) {
   if (!alertIds.length || (!pushEnabled() && send === defaultSender)) return 0;
+  // The text tells the detections only, never field checks or tasks, so one scope serves every recipient.
   const rows = (await pool.query(`SELECT a.id AS alert_id, a.user_id, inc.*
-    FROM alerts a JOIN (${incidentSelect}) inc ON inc.id = a.incident_id WHERE a.id = ANY($1::uuid[])
+    FROM alerts a JOIN (${incidentSelect('real')}) inc ON inc.id = a.incident_id WHERE a.id = ANY($1::uuid[])
     ORDER BY a.user_id, inc.score DESC, inc.last_detected_at DESC`, [alertIds])).rows;
   const byUser = new Map<string, Record<string, any>[]>();
   for (const row of rows) byUser.set(row.user_id, [...(byUser.get(row.user_id) ?? []), row]);

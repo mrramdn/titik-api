@@ -3,6 +3,11 @@
 
 /* ---------- top bar ---------- */
 .app > main:not(.mapscreen) { flex: 1 0 auto; }
+/* "Langsung ke isi": out of sight until a keyboard reaches it, then over the top bar. */
+.skip-link { position: absolute; top: 8px; left: 8px; z-index: 60; padding: 8px 12px; border-radius: var(--radius-md); background: var(--surface-card); color: var(--text); font-weight: 500; box-shadow: var(--shadow-float); transform: translateY(-200%); }
+.skip-link:focus { transform: none; outline: 2px solid var(--text); outline-offset: 2px; }
+/* Read by screen readers, not shown. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .topbar { gap: 14px; }
 .brand { flex: none; }
 .region-chip { position: relative; flex: none; }
@@ -19,7 +24,7 @@
 .fresh-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fresh-sub { font-size: 11px; line-height: 15px; color: var(--chrome-text-3); }
 .fresh-short, .fresh-long { display: none; }
-.fresh-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 420px; display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface-card); color: var(--text); box-shadow: 0 10px 30px rgb(0 0 0 / 0.25); }
+.fresh-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 420px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--surface-card); color: var(--text); box-shadow: 0 10px 30px rgb(0 0 0 / 0.25); }
 .fresh-facts { display: grid; gap: 4px; }
 .fresh-facts p { font-size: 13px; line-height: 18px; color: var(--text-2); }
 .fresh-facts .fresh-warn { color: #9a3b0a; }
@@ -28,7 +33,20 @@
 .fresh-table td { padding: 6px 8px 6px 0; border-top: 1px solid var(--surface-line); color: var(--text-2); white-space: nowrap; }
 .fresh-table td:first-child { color: var(--text); white-space: normal; }
 .fresh-table tr.off td { color: var(--text-3); }
-.fresh-table td.late { color: #9a3b0a; }
+.fresh-table td.late { color: #9a3b0a; white-space: normal; }
+/* No successful check for two hours: the time in amber, a red dot, and SiPongi+ beside it (popover on small screens). */
+.fresh.stalled { display: flex; align-items: center; gap: 10px; }
+.fresh.stalled .fresh-btn { min-width: 0; }
+.fresh.stalled .fresh-compact, .fresh-warn-line { color: #ffb37a; }
+/* Small screens: two short lines, and on the narrowest the logo alone, so the warning fits beside the region. */
+.fresh-stack { display: grid; font-size: 11px; line-height: 14px; }
+.fresh-stack b { font-weight: 600; }
+@media (max-width: 400px) { .topbar:has(.fresh.stalled) .brand-name { display: none; } }
+.fresh-aside { display: none; flex: none; }
+.fresh-official { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.fresh-aside .fresh-official { color: var(--chrome-text); text-decoration-color: var(--chrome-text-3); }
+.fresh-official:hover { text-decoration-color: currentColor; }
+.fresh-stalled { display: grid; gap: 6px; justify-items: start; padding: 10px 12px; border-radius: var(--radius-md); background: rgb(232 89 12 / 0.1); color: #9a3b0a; font-size: 13px; line-height: 18px; }
 
 .rolemenu { position: relative; }
 .rolemenu-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--chrome-line); background: var(--chrome-900); color: var(--chrome-text); font-size: 12px; cursor: pointer; white-space: nowrap; }
@@ -47,6 +65,8 @@
 .rolelist-text { display: grid; gap: 1px; min-width: 0; }
 .rolelist-text b { font-weight: 500; }
 .rolelist-text small { font-size: 12px; line-height: 16px; color: var(--text-3); }
+/* On the grey of a hovered or chosen row --text-3 measures 4.21:1. */
+.rolelist-item:hover:not(:disabled) .rolelist-text small, .rolelist-item.on .rolelist-text small { color: var(--text-2); }
 .rolelist-error { padding: 4px 10px; font-size: 12px; line-height: 16px; color: #9a3b0a; }
 .acct-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 10px; border-top: 1px solid var(--surface-line); font-size: 13px; color: var(--text-2); }
 .acct-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
@@ -77,7 +97,7 @@
   .rolemenu-label { display: inline; }
 }
 @container fresh (min-width: 220px) { .fresh-compact { display: none; } .fresh-parts { display: grid; } }
-@container fresh (min-width: 340px) { .fresh-min { display: none; } .fresh-short { display: block; } }
+@container fresh (min-width: 340px) { .fresh-min { display: none; } .fresh-short { display: block; } .fresh-aside { display: inline-flex; } }
 @container fresh (min-width: 540px) { .fresh-short { display: none; } .fresh-long { display: block; } }
 @media (max-width: 1279px) {
   .topnav a { padding: 0 8px; }
@@ -129,6 +149,26 @@
 .fclear { height: 28px; padding: 0 4px; border: 0; background: none; color: var(--chrome-text); font-size: 12px; font-weight: 500; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
 .fclear:hover { text-decoration-color: currentColor; }
 
+/* archive mode: a neutral banner over the map screen (amber means a late pass) and one bar per archive day */
+.mapscreen.archive { grid-template-rows: auto minmax(0, 1fr); }
+.archive-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 16px; background: var(--surface-subtle); color: var(--text); border-bottom: 1px solid var(--surface-line); font-size: 13px; line-height: 18px; }
+.archive-bar > .icon { color: var(--text-2); }
+.archive-bar p { flex: 1 1 12em; min-width: 0; font-weight: 500; }
+.archive-pick { flex: 1 0 100%; display: grid; gap: 6px; min-width: 0; }
+.archive-bars { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(7px, 1fr); gap: 2px; height: 56px; overflow-x: auto; scrollbar-width: none; }
+.archive-bars::-webkit-scrollbar { display: none; }
+.archive-bars button { display: flex; align-items: flex-end; height: 100%; padding: 0; border: 0; border-radius: 2px; background: none; cursor: pointer; }
+.archive-bars button:hover { background: var(--chrome-900); }
+.archive-bars i { display: block; width: 100%; border-radius: 2px 2px 0 0; background: var(--chrome-text-3); }
+.archive-bars button:hover i { background: var(--chrome-text-2); }
+.archive-bars button.on i { background: var(--chrome-text); }
+.archive-axis { display: flex; justify-content: space-between; font-size: 11px; line-height: 14px; color: var(--chrome-text-3); }
+.archive-select { width: 100%; }
+@media (max-width: 900px) {
+  .mapscreen.archive { grid-template-rows: auto 42vh 1fr; }
+  .archive-bar { order: -2; }
+}
+
 .sumrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 16px; border-top: 1px solid var(--chrome-line); border-bottom: 1px solid var(--chrome-line); }
 .sumrow > div { display: grid; gap: 2px; min-width: 0; }
 .sumrow b { font-size: 20px; line-height: 24px; font-weight: 600; letter-spacing: -0.3px; color: var(--chrome-text); }
@@ -151,6 +191,14 @@
 .side-msg { display: grid; justify-items: start; gap: 10px; padding: 20px 16px; font-size: 13px; line-height: 18px; color: var(--chrome-text-2); }
 .side-msg .muted { color: var(--chrome-text-3); }
 .side-more { padding: 12px 16px 16px; }
+/* A quiet live map points to the archive's busiest day. */
+.quiet-hint { margin: 12px 16px 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--chrome-900); border: 1px solid var(--chrome-line); font-size: 12px; line-height: 17px; color: var(--chrome-text-2); }
+.quiet-hint a { color: var(--chrome-text); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
+.quiet-hint a:hover { text-decoration-color: currentColor; }
+/* The demo line closes the sidebar on wide screens; on a phone it comes first, right under the map. */
+.side-foot-link { color: var(--chrome-text-2); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
+.side-foot-link:hover { color: var(--chrome-text); text-decoration-color: currentColor; }
+@media (max-width: 900px) { .side-foot { order: -1; border-bottom: 1px solid var(--chrome-line); } }
 
 /* ---------- incident panel ---------- */
 .ip-head { gap: 8px; }
@@ -160,6 +208,12 @@
 .ip-facts > div { display: grid; gap: 2px; align-content: start; min-width: 0; }
 .ip-facts b { font-size: 20px; line-height: 24px; font-weight: 600; letter-spacing: -0.3px; color: var(--chrome-text); }
 .ip-facts small { font-size: 12px; line-height: 16px; color: var(--chrome-text-3); }
+.ip-facts > .ip-area { grid-column: 1 / -1; }
+.detail .ip-wind { gap: 6px; }
+.ip-wind-line { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 18px; color: var(--chrome-text); }
+.ip-wind-arrow { flex: none; margin-top: 1px; color: var(--chrome-text-2); }
+.ip-wind-villages { font-size: 12px; line-height: 16px; color: var(--chrome-text-2); }
+.ip-wind-credit { font-size: 12px; line-height: 16px; color: var(--chrome-text-3); }
 .ip-actions { gap: 8px; }
 .ip-actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .ip-actions-row .btn { flex: 1 1 auto; padding: 0 12px; }
@@ -207,6 +261,8 @@
 .lg-ring { background: #fff; border-width: 3px; border-style: solid; box-shadow: none; }
 .lg-thin { width: 14px; height: 14px; border-width: 1.5px; background: transparent; }
 .lg-small { width: 8px; height: 8px; border: 0; box-shadow: none; }
+/* A map area: a faint fill of --c with a firm outline (pixel footprints at 25%, fire danger cells at their class opacity). */
+.lg-box { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 2px; border: 1px solid var(--c); background: color-mix(in srgb, var(--c) var(--fill, 25%), #fff); }
 .lg-inline { flex-wrap: wrap; gap: 4px 14px; }
 .lg-inline span, .lg-sizes span { display: inline-flex; align-items: center; gap: 6px; }
 .lg-sizes { flex-wrap: wrap; gap: 4px 12px; }
@@ -218,7 +274,26 @@
 .lg-bubble { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; background: var(--priority-high); color: #fff; font-size: 11px; font-weight: 700; font-style: normal; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12); }
 .lg-bubble-none { width: 20px; height: 20px; margin: 0 3px; background: var(--text-2); }
 .lg-note { margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--text-3); }
+.lg-range { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lg-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--surface-line); }
+.lg-link:hover { text-decoration-color: currentColor; }
+.mapcard :is(a, button):focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 @media (max-width: 600px) { .mapcard { left: 10px; right: 56px; width: auto; } }
+
+/* fire danger: the day switch over the map's top left and the card for one grid cell */
+.risk-days { position: absolute; top: 10px; left: 10px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; max-width: calc(100% - 76px); padding: 5px 6px 5px 10px; border-radius: var(--radius-md); background: #fff; color: var(--text); font-size: 12px; line-height: 16px; box-shadow: 0 0 0 2px rgb(0 0 0 / 0.1); }
+.risk-days b { font-weight: 600; }
+.risk-days > span { color: var(--text-2); }
+.risk-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-sm); background: var(--surface-subtle); }
+.risk-seg button { height: 24px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.risk-seg button:hover { color: var(--text); }
+.risk-seg button.on { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.risk-seg button:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.risk-class { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; font-weight: 600; }
+.risk-facts { display: grid; margin: 0; }
+.risk-facts > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-top: 1px solid var(--surface-line); }
+.risk-facts dt { color: var(--text-2); }
+.risk-facts dd { margin: 0; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- sign-in and about ---------- */
 .login .role:disabled { cursor: progress; opacity: 0.7; }
@@ -226,4 +301,6 @@
 .login-form form { display: grid; gap: 10px; max-width: 380px; }
 .login-form .btn { justify-self: start; }
 .about-contest { margin-top: 16px; }
+/* An address the app does not know (pages/NotFound.tsx). */
+.notfound-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .doc q { font-style: italic; }

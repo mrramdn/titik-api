@@ -1,0 +1,144 @@
+import { createElement, type ReactElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LangProvider } from './i18n';
+import { c3sAttribution, c3sNotice, c3sYears, CC_BY_URL, FireDangerCredit, OPEN_METEO_URL } from './components/OpenMeteo';
+import { EOX_ATTRIBUTION, sentinelUnderEsri } from './map/layers';
+import { riskAttribution } from './map/risk';
+import { RiskLegend } from './map/RiskParts';
+import { AboutDoc, aboutText } from './pages/About';
+import { OPENFREEMAP_URL, OPENMAPTILES_URL, OSM_COPYRIGHT_URL, ScreenshotCredits } from './pages/Landing';
+
+/** EOX's credit for the 2023 layer as cloudless.eox.at/license-non-commercial gives it. */
+const EOX_2023 = 'EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2023)';
+const C3S_SHORT = 'Contains modified Copernicus Climate Change Service information 2026';
+
+/** The text a reader sees in some HTML: tags dropped, entities read, spaces collapsed. */
+const textOf = (html: string) => html.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+/** `element` as HTML in Indonesian, or in English as a visitor who chose it. */
+function render(element: ReactElement, lang: 'id' | 'en') {
+  vi.stubGlobal('localStorage', { getItem: () => lang, setItem() {} });
+  return renderToStaticMarkup(createElement(LangProvider, null, element));
+}
+
+afterEach(() => { vi.unstubAllGlobals(); });
+
+describe('credits on the map', () => {
+  it('credits the detailed imagery word for word as EOX asks for the 2023 layer, with both links and the licence', () => {
+    expect(textOf(EOX_ATTRIBUTION)).toBe(`${EOX_2023} · CC BY-NC-SA 4.0`);
+    expect(EOX_ATTRIBUTION).toContain('<a href="https://cloudless.eox.at" target="_blank" rel="noopener">https://cloudless.eox.at</a>');
+    expect(EOX_ATTRIBUTION).toContain('<a href="https://eox.at" target="_blank" rel="noopener">EOX IT Services GmbH</a>');
+    expect(EOX_ATTRIBUTION).toContain('href="https://creativecommons.org/licenses/by-nc-sa/4.0/"');
+    expect(sentinelUnderEsri().attribution).toBe(EOX_ATTRIBUTION);
+  });
+
+  it('credits the fire danger cells to Open-Meteo and its licence, both linked, and to Copernicus for the ERA5 data they start from', () => {
+    const now = new Date('2026-11-04T05:00:00Z');
+    expect(riskAttribution(now)).toContain(`<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> `
+      + `(<a href="${CC_BY_URL}" target="_blank" rel="noopener">CC BY 4.0</a>)`);
+    expect(textOf(riskAttribution(now))).toBe(`Open-Meteo.com (CC BY 4.0) · ${C3S_SHORT}`);
+  });
+});
+
+describe('the Copernicus notice', () => {
+  it('is dated 2026, and 2026 to the current WIB year once that is later', () => {
+    // 23.59.59 WIB on 31 Dec 2026, then midnight WIB.
+    expect(c3sYears(new Date('2026-12-31T16:59:59Z'))).toBe('2026');
+    expect(c3sYears(new Date('2026-12-31T17:00:00Z'))).toBe('2026–2027');
+    expect(c3sYears(new Date('2028-06-01T00:00:00Z'))).toBe('2026–2028');
+    const later = new Date('2027-03-01T00:00:00Z');
+    expect(c3sAttribution(later)).toBe('Contains modified Copernicus Climate Change Service information 2026–2027');
+    expect(c3sNotice(later)).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026–2027. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
+    expect(textOf(riskAttribution(later))).toBe('Open-Meteo.com (CC BY 4.0) · Contains modified Copernicus Climate Change Service information 2026–2027');
+  });
+
+  it('stands next to Open-Meteo\'s credit where the fire danger shows without the map, in English in both languages', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-04T05:00:00Z'), toFake: ['Date'] });
+    try {
+      expect(textOf(render(createElement(FireDangerCredit), 'id'))).toBe(`Data cuaca: Open-Meteo.com · ${C3S_SHORT}`);
+      expect(textOf(render(createElement(FireDangerCredit), 'en'))).toBe(`Weather data by Open-Meteo.com · ${C3S_SHORT}`);
+      expect(render(createElement(FireDangerCredit), 'id')).toContain(`<span lang="en">${C3S_SHORT}</span>`);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('stands next to Open-Meteo\'s credit in the map\'s fire danger legend, open on screen beside the classes', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-04T05:00:00Z'), toFake: ['Date'] });
+    try {
+      expect(textOf(render(createElement(RiskLegend), 'id'))).toContain(`Data cuaca: Open-Meteo.com · ${C3S_SHORT}`);
+      expect(textOf(render(createElement(RiskLegend), 'en'))).toContain(`Weather data by Open-Meteo.com · ${C3S_SHORT}`);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('the landing page\'s screenshots', () => {
+  const credits = (lang: 'id' | 'en') => render(createElement(MemoryRouter, null, createElement(ScreenshotCredits)), lang);
+
+  it('credit the base map and Open-Meteo in one linked line, in both languages', () => {
+    expect(textOf(credits('id'))).toBe('Tangkapan layar di halaman ini: peta dasar OpenFreeMap (membuka tab baru) © OpenMapTiles (membuka tab baru), '
+      + 'data © kontributor OpenStreetMap (membuka tab baru) · Data cuaca: Open-Meteo.com (CC BY 4.0 (membuka tab baru)) · semua sumber data dan lisensinya ada di halaman Tentang.');
+    expect(textOf(credits('en'))).toBe('Screenshots on this page: base map OpenFreeMap (opens in a new tab) © OpenMapTiles (opens in a new tab), '
+      + 'data © OpenStreetMap contributors (opens in a new tab) · Weather data by Open-Meteo.com (CC BY 4.0 (opens in a new tab)) · every data source and its licence is on the About page.');
+  });
+
+  it('link OpenStreetMap\'s copyright page, OpenMapTiles, OpenFreeMap, Open-Meteo and its licence, and the About page\'s sources', () => {
+    for (const lang of ['id', 'en'] as const) {
+      const hrefs = [...credits(lang).matchAll(/href="([^"]+)"/g)].map(match => match[1]);
+      expect(hrefs, lang).toEqual([OPENFREEMAP_URL, OPENMAPTILES_URL, OSM_COPYRIGHT_URL, OPEN_METEO_URL, CC_BY_URL, '/tentang#sumber']);
+    }
+    expect(OSM_COPYRIGHT_URL).toBe('https://www.openstreetmap.org/copyright');
+    expect(CC_BY_URL).toBe('https://creativecommons.org/licenses/by/4.0/');
+  });
+});
+
+describe('the About page', () => {
+  it('says everything in Indonesian and English, with the same placeholders', () => {
+    expect(Object.keys(aboutText.en).sort()).toEqual(Object.keys(aboutText.id).sort());
+    const holes = (value: string) => (value.match(/\{\w+\}/g) ?? []).sort();
+    for (const key of Object.keys(aboutText.id) as (keyof typeof aboutText.id)[]) expect(holes(aboutText.en[key]), key).toEqual(holes(aboutText.id[key]));
+  });
+
+  it('gives EOX\'s credit word for word with its links, and the Copernicus notice in English in both languages', () => {
+    for (const lang of ['id', 'en'] as const) {
+      const html = render(createElement(AboutDoc), lang);
+      const text = textOf(html);
+      expect(text, lang).toContain(EOX_2023);
+      expect(html, lang).toContain('href="https://cloudless.eox.at"');
+      expect(html, lang).toContain('href="https://eox.at"');
+      expect(html, lang).toContain('href="https://creativecommons.org/licenses/by-nc-sa/4.0/"');
+      expect(html, lang).toContain(`<q lang="en">${c3sNotice()}</q>`);
+      expect(html, lang).toContain('<h2 id="sumber">');
+      expect(text, lang).not.toMatch(/\{\w+\}/);
+    }
+    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Bahaya kebakaran juga memakai data reanalisis ERA5 dari Copernicus Climate Change Service: ');
+    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: ');
+    expect(c3sNotice(new Date('2026-11-04T05:00:00Z'))).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
+  });
+
+  it('links Open-Meteo and the CC BY 4.0 licence in its line on the weather data, in both languages', () => {
+    const line = { id: 'Data cuaca untuk bahaya kebakaran dan angin di kejadian dari Open-Meteo.com, CC BY 4.0.', en: 'Weather data for fire danger and the wind at incidents from Open-Meteo.com, CC BY 4.0.' };
+    for (const lang of ['id', 'en'] as const) {
+      const item = /<li>[^<]*<a[^>]*>Open-Meteo\.com<\/a>[^]*?<\/li>/.exec(render(createElement(AboutDoc), lang))?.[0] ?? '';
+      expect(textOf(item), lang).toContain(line[lang]);
+      expect([...item.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map(match => `${match[2]} ${match[1]}`), lang)
+        .toEqual([`Open-Meteo.com ${OPEN_METEO_URL}`, `CC BY 4.0 ${CC_BY_URL}`]);
+    }
+  });
+
+  it('says in its privacy section what the web server\'s log keeps, why, that it goes after 14 days, and that Cloudflare also sees addresses', () => {
+    // What nginx's combined log format keeps: address, time, request, referrer and user agent.
+    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Server web mencatat alamat IP, waktu, halaman yang dibuka, perujuk, dan jenis peramban pada setiap permintaan, '
+      + 'untuk keamanan dan pemecahan masalah, lalu menghapus catatan itu otomatis setelah 14 hari. Situs ini dilayani lewat Cloudflare, yang juga memproses alamat IP untuk mengantar dan melindungi situs.');
+    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The web server records the IP address, time, requested page, referring page and browser of each request, '
+      + 'for security and troubleshooting, and deletes these records automatically after 14 days. The site is served through Cloudflare, which also processes IP addresses to deliver and protect it.');
+  });
+
+  it('says that no tracking cookie is used, what its one cookie is for, and what stays in the browser', () => {
+    // auth.ts sets titikapi_session at sign-in and nothing else; the web app keeps the rest in localStorage, IndexedDB
+    // and the service worker's caches.
+    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Titik Api tidak memakai cookie pelacak atau analitik. Cookie-nya hanya satu, untuk menjaga sesi setelah masuk. '
+      + 'Pilihan bahasa, filter, posisi GPS terakhir, data untuk dipakai tanpa sinyal, dan laporan yang belum terkirim hanya disimpan di peramban ini.');
+    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('Titik Api uses no tracking or analytics cookies. Its one cookie keeps you signed in. '
+      + 'Your language, filters, last GPS position, data kept for use without signal and reports not yet sent are stored only in this browser.');
+  });
+});

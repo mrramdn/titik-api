@@ -31,8 +31,23 @@ export interface Freshness {
   stale: boolean;
   /** The last ingest run ended with an error. */
   failed: boolean;
+  /** When the last successful live check finished, or null when the status does not say. */
+  lastSuccessAt: string | null;
+  /** No successful check for more than STALLED_MINUTES: the data on screen may be old. */
+  stalled: boolean;
   satellites: SatelliteRow[];
 }
+
+/**
+ * The top bar says the data has stopped updating once the last successful check is over 2 hours old: four missed
+ * 30-minute runs, so one slow FIRMS file does not alarm visitors. GET /health/data, for monitoring, turns stale at 90.
+ */
+export const STALLED_MINUTES = 120;
+/**
+ * SiPongi+, the official forest and land fire monitoring system: where to look while the data here is not updating.
+ * It moved to the Ministry of Forestry with the ministry split; sipongi.menlhk.go.id no longer resolves.
+ */
+export const SIPONGI_URL = 'https://sipongi.gakkum.kehutanan.go.id/';
 
 const order = ['N21', 'N20', 'N', 'T', 'A'];
 const MINUTE = 60_000;
@@ -77,6 +92,8 @@ export function readFreshness(status: Partial<IngestStatus> | null | undefined, 
     next.arrival = Math.min(next.arrival, window.arrival);
     next.codes.push(window.code);
   }
+  // An older server sends no lastSuccessAt: then the newest of its last runs that succeeded, if any.
+  const lastSuccessAt = status.lastSuccessAt !== undefined ? status.lastSuccessAt : status.runs?.find(run => run && !run.error && run.finishedAt)?.finishedAt ?? null;
   return {
     latest: newest ? { at: newest.latest!, code: newest.code } : null,
     checkedAt: status.lastRun?.finishedAt ?? status.runs?.[0]?.finishedAt ?? null,
@@ -85,6 +102,8 @@ export function readFreshness(status: Partial<IngestStatus> | null | undefined, 
     next: next ? { start: next.start, end: next.end, expectedBy: next.expectedBy, arrival: iso(next.arrival), started: time(next.start) <= now, codes: next.codes } : null,
     stale: satellites.some(s => s.overdue),
     failed: status.lastRun ? status.lastRun.ok === false : Boolean(status.runs?.[0]?.error),
+    lastSuccessAt,
+    stalled: lastSuccessAt !== null && now - time(lastSuccessAt) > STALLED_MINUTES * MINUTE,
     satellites,
   };
 }

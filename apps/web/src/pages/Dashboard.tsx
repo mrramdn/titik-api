@@ -6,12 +6,14 @@ import { CalendarDays, Download, Info, X } from 'lucide-react';
 import { incidentQuery, type RegionSummary } from '../api';
 import { Shell } from '../components/Shell';
 import { Banner, useDataVersion } from '../components/ui';
-import { MapView, type MapFilters } from '../map/MapView';
+import { MapView } from '../map/LazyMapView';
+import type { MapFilters } from '../map/MapView';
 import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
 import { useRegion } from '../region';
 import { useSession } from '../session';
 import { canUseBpbd, RoleGate } from '../components/bpbd/RoleGate';
+import { DangerCard } from '../components/bpbd/DangerCard';
 import { focusKeys, Kpis, type Focus } from '../components/bpbd/Kpis';
 import { RegencyList } from '../components/bpbd/RegencyList';
 import { Lanes } from '../components/bpbd/Lanes';
@@ -141,6 +143,7 @@ function Dashboard() {
             {regency && focus !== 'all' && <button type="button" className="bd-clear" onClick={() => update({ regency: '', focus: 'all' })}>{t('clear')}</button>}
           </div>
         )}
+        <DangerCard province={province} version={version} />
         <div className={`bd-body ${regionRows ? '' : 'no-side'}`}>
           {regionRows && <RegencyList rows={regionRows} selected={regency} onSelect={name => update({ regency: name })}
             selectedCount={regency && counts.action && !counts.action.more && !lanes.loading && !dash.loading ? counts.action.value : undefined} />}

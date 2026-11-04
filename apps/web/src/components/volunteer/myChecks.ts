@@ -18,3 +18,8 @@ export function rememberCheck(incidentId: string, check: MyCheck) {
   const next = Object.fromEntries(Object.entries({ ...myChecks(), [incidentId]: check }).filter(([, value]) => new Date(value.at).getTime() > cutoff));
   try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* private mode: the card falls back to the server status */ }
 }
+
+/** Forgets them all: another account signed in on this phone (see accountData.ts). */
+export function forgetMyChecks() {
+  try { localStorage.removeItem(storageKey); } catch { /* private mode: nothing was kept */ }
+}

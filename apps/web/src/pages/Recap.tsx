@@ -1,8 +1,8 @@
 // Rekap harian: one WIB day for the province chosen in the top bar, ready to share on WhatsApp or print on A4.
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ChevronLeft, Printer, Share2 } from 'lucide-react';
-import type { Recap } from '../api';
+import type { Recap, RegencyRiskDay, Risk } from '../api';
 import { Shell } from '../components/Shell';
 import { Banner, shareText, useDataVersion } from '../components/ui';
 import { dict, useLang, useT } from '../i18n';
@@ -13,6 +13,9 @@ import { useSession } from '../session';
 import { canUseBpbd, RoleGate } from '../components/bpbd/RoleGate';
 import { isDate, shiftDate, todayWib, useLoad } from '../components/bpbd/data';
 import { assignmentOrder, checkedShare, longDate, recapText, statusOrder } from '../components/bpbd/recapText';
+import { fwiLabel, highDanger, partialText, regencyDays, riskPath } from '../map/risk';
+import { RiskSwatch } from '../map/RiskParts';
+import { FireDangerCredit } from '../components/OpenMeteo';
 
 const text = dict({
   id: {
@@ -29,6 +32,8 @@ const text = dict({
     emptyTitle: 'Tidak ada kejadian', empty: 'Tidak ada kejadian pada {date} di {place}. Pilih tanggal lain.', dashboard: 'Buka dasbor',
     note: 'Waktu tanggap adalah median dari deteksi satelit sampai cek lapangan pertama. Tanggal mengikuti WIB.',
     printed: 'Dicetak dari Titik Api, {time} WIB.',
+    danger: 'Bahaya kebakaran',
+    dangerNote: 'Bahaya kebakaran: FWI dari data model Open-Meteo dengan kelas BMKG. Tiap kabupaten diberi kelas yang mencakup bagian terluas wilayahnya. Baris kecil menyebut kelas tertinggi yang, bersama kelas di atasnya, mencakup sedikitnya 10% wilayah, beserta bagian wilayah itu. Bukan produk resmi BMKG.',
   },
   en: {
     back: 'Dashboard', title: 'Daily recap', both: 'Sumatera Selatan and Kalimantan Tengah',
@@ -44,6 +49,8 @@ const text = dict({
     emptyTitle: 'No incidents', empty: 'No incidents on {date} in {place}. Choose another date.', dashboard: 'Open the dashboard',
     note: 'Response time is the median from the satellite detection to the first field check. Dates follow WIB.',
     printed: 'Printed from Titik Api, {time} WIB.',
+    danger: 'Fire danger',
+    dangerNote: 'Fire danger: FWI from Open-Meteo model data with BMKG classes. Each regency gets the class that covers the largest part of its area. The small line names the highest class that, together with the classes above it, covers at least 10% of the area, with that part of the area. Not an official BMKG product.',
   },
 });
 
@@ -66,6 +73,11 @@ function RecapView() {
   const date = isDate(asked) && asked <= today ? asked : today;
   const setDate = (value: string) => setParams(isDate(value) && value < today ? { date: value } : {}, { replace: true });
   const recap = useLoad<Recap>(`/recap?date=${date}${query}`, version);
+  // That date's fire danger per regency: today's forecast, or the archive day. Without it (an older server, a date the
+  // weather archive does not hold, nothing computed yet) the column stays away. The day is found by its date: a copy
+  // of the live answer that the service worker kept from an earlier day starts on that day, not on today.
+  const risk = useLoad<Risk>(riskPath(date === today ? '' : date), version);
+  const danger = useMemo(() => regencyDays(risk.data, date), [risk.data, date]);
   const place = province || t('both');
   const data = recap.data;
   const totals = data?.totals;
@@ -73,7 +85,12 @@ function RecapView() {
   const empty = Boolean(totals && !totals.incidents && !totals.detections && !hasAny(data?.checks) && !hasAny(data?.assignments));
   // Share and print only when there is a recap to pass on.
   const ready = Boolean(data && totals && !missing && !empty);
-  const share = () => { if (data) void shareText(recapText({ ...data, date }, lang, place, `${location.origin}/rekap?date=${date}`)); };
+  const dangerShown = danger.size > 0 && (data?.regencies ?? []).some(row => danger.has(`${row.province}/${row.name}`));
+  const share = () => {
+    if (!data) return;
+    const high = risk.data?.fetchedAt ? highDanger(risk.data, date, province) : [];
+    void shareText(recapText({ ...data, date }, lang, place, `${location.origin}/rekap?date=${date}`, high));
+  };
 
   return (
     <Shell>
@@ -122,7 +139,7 @@ function RecapView() {
                   <table className="bd-table recap-regencies">
                     <thead>
                       <tr><th>{t('regency')}</th><th className="num">{t('incidents')}</th><th className="num">{t('high')}</th><th className="num">{t('checked')}</th>
-                        <th className="num">{t('openHigh')}</th><th className="num">{t('response')}</th></tr>
+                        <th className="num">{t('openHigh')}</th><th className="num">{t('response')}</th>{dangerShown && <th>{t('danger')}</th>}</tr>
                     </thead>
                     <tbody>
                       {data.regencies.map(row => (
@@ -133,6 +150,7 @@ function RecapView() {
                           <td className="num">{f.num(row.checked)}</td>
                           <td className={`num ${row.openHigh ? 'hot' : ''}`}>{row.openHigh ? f.num(row.openHigh) : '–'}</td>
                           <td className="num">{f.duration(row.medianMinutes)}</td>
+                          {dangerShown && <td><DangerTag day={danger.get(`${row.province}/${row.name}`)} /></td>}
                         </tr>
                       ))}
                     </tbody>
@@ -173,12 +191,25 @@ function RecapView() {
             </div>
 
             <p className="note">{t('note')}</p>
+            {dangerShown && <p className="note">{t('dangerNote')}</p>}
+            {/* On the page and on paper; the WhatsApp text names neither source. */}
+            {dangerShown && <p className="note"><FireDangerCredit /></p>}
             <p className="note print-only">{t('printed', { time: f.dayTime(new Date()) })}</p>
           </div>
         )}
       </main>
     </Shell>
   );
+}
+
+/** A regency's fire danger class on the recap date, as on the map, and a higher class over part of it. */
+function DangerTag({ day }: { day: RegencyRiskDay | undefined }) {
+  const { lang } = useLang();
+  if (!day) return <>–</>;
+  return (<>
+    <span className="fwi-tag"><RiskSwatch fwiClass={day.fwiClass} />{fwiLabel[lang][day.fwiClass]}</span>
+    {day.partial && <small className="fwi-partial">{partialText(day.partial, lang)}</small>}
+  </>);
 }
 
 const sum = (counts?: Partial<Record<string, number>> | null) => Object.values(counts ?? {}).reduce<number>((total, value) => total + (value ?? 0), 0);

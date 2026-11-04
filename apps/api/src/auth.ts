@@ -29,8 +29,9 @@ export function installAuth(app: FastifyInstance, pool: pg.Pool, origins: Set<st
 
   const sessionCookie = { httpOnly: true, secure: production, sameSite: 'lax', path: '/', maxAge: SESSION_SECONDS } as const;
 
+  // Imagery tiles need no session (no lookup per tile, no renewed cookie on them) and check their origin themselves.
   app.addHook('onRequest', async (request, reply) => {
-    if (!request.url.startsWith('/api/')) return;
+    if (!request.url.startsWith('/api/') || request.url.startsWith('/api/v1/imagery/')) return;
     const origin = request.headers.origin;
     if (origin && !origins.has(origin)) throw new ApiError(403, 'INVALID_ORIGIN', 'Permintaan ditolak. Muat ulang halaman.');
     const authorization = request.headers.authorization;

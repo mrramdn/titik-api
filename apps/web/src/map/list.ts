@@ -1,5 +1,5 @@
 // The incident list beside the map: filter, sort and count with the same meaning as the API and the map layer.
-import type { Incident, IncidentFilters, IncidentSort } from '../api';
+import { defaultFilters, type Incident, type IncidentFilters, type IncidentSort } from '../api';
 
 type Checkable = Pick<Incident, 'latestCheck' | 'firstVerifiedAt' | 'assignment'>;
 /** checked = has a field check; assigned = an open task (ditugaskan or menuju) and no check yet; open = neither. */
@@ -48,5 +48,8 @@ export function summarize(rows: Incident[], atLeast = false): ListSummary {
   };
 }
 
-/** Any filter other than the time window and the sort order. */
+/** Any filter other than the time window, the sort order and the archive date. */
 export const narrowed = (filters: IncidentFilters) => filters.levels.length > 0 || filters.status !== 'all' || filters.peat || filters.regency !== '';
+
+/** "Hapus filter": the chips and the regency go; the time window, the sort order and the archive date stay. */
+export const clearedFilters = (filters: IncidentFilters): IncidentFilters => ({ ...defaultFilters, hours: filters.hours, sort: filters.sort, tanggal: filters.tanggal });

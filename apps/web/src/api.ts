@@ -4,27 +4,52 @@ export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
 
+/** How often a read the server was too busy for (503 BUSY) is asked again before its error shows. */
+export const BUSY_RETRIES = 2;
+
+/** Waits `ms`, or less if `signal` aborts first. */
+const pause = (ms: number, signal?: AbortSignal | null) => new Promise<void>(done => {
+  if (signal?.aborted) { done(); return; }
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); done(); }, ms);
+  const stop = () => { clearTimeout(timer); done(); };
+  signal?.addEventListener('abort', stop, { once: true });
+});
+
+/**
+ * Calls /api/v1{path}. A read refused because the server's heavy lists are at their limit (503 BUSY, as when one
+ * address opens the map and the dashboard at once) is asked again after the Retry-After it names (1–5 s), up to
+ * BUSY_RETRIES times, so a short rush never shows as an error. Writes are never repeated.
+ */
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, headers, ...rest } = init;
-  let response: Response;
-  try {
-    response = await fetch(`/api/v1${path}`, {
-      credentials: 'same-origin',
-      ...rest,
-      headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
-      ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
-    });
-  } catch {
-    throw new ApiError(0, 'OFFLINE', 'Tidak ada sinyal.');
+  const read = (rest.method ?? 'GET').toUpperCase() === 'GET';
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(`/api/v1${path}`, {
+        credentials: 'same-origin',
+        ...rest,
+        headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+        ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
+      });
+    } catch {
+      throw new ApiError(0, 'OFFLINE', 'Tidak ada sinyal.');
+    }
+    const body = await response.json().catch(() => null);
+    if (response.ok) return body as T;
+    const code = body?.error?.code ?? 'ERROR';
+    if (read && code === 'BUSY' && attempt < BUSY_RETRIES && !rest.signal?.aborted) {
+      const seconds = Number(response.headers.get('retry-after'));
+      await pause(Math.min(5, Math.max(1, Number.isFinite(seconds) && seconds > 0 ? seconds : 2)) * 1000, rest.signal);
+      continue;
+    }
+    throw new ApiError(response.status, code, body?.error?.message ?? 'Terjadi kesalahan.');
   }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(response.status, body?.error?.code ?? 'ERROR', body?.error?.message ?? 'Terjadi kesalahan.');
-  return body as T;
 }
 
 /** Codes the API can return; ASSIGNMENT_OPEN and ASSIGNMENT_CLOSED come with assignments. */
 export type ErrorCode = 'OFFLINE' | 'UNAUTHENTICATED' | 'FORBIDDEN' | 'NOT_FOUND' | 'INVALID_INPUT' | 'INVALID_ORIGIN' | 'INVALID_CREDENTIALS'
-  | 'INVALID_IMAGE' | 'CONFLICT' | 'NO_ALERTS' | 'NO_DEVICE' | 'ASSIGNMENT_OPEN' | 'ASSIGNMENT_CLOSED' | 'INTERNAL_ERROR' | 'ERROR';
+  | 'INVALID_IMAGE' | 'CONFLICT' | 'NO_ALERTS' | 'NO_DEVICE' | 'ASSIGNMENT_OPEN' | 'ASSIGNMENT_CLOSED' | 'RATE_LIMITED' | 'BUSY' | 'INTERNAL_ERROR' | 'ERROR';
 
 export type Level = 'tinggi' | 'sedang' | 'rendah';
 export type Status = 'api_aktif' | 'asap_bara' | 'bakar_terkendali' | 'alarm_palsu' | 'tidak_terjangkau';
@@ -45,6 +70,13 @@ export interface AssignmentSummary {
 export interface LatestCheck { status: Status; observedAt: string; demo: boolean }
 export interface IncidentVillage { id: string; name: string; district: string; regency: string; province: string; center: [number, number] }
 
+/**
+ * Field checks and tasks follow the session everywhere (incidents, history, counts, dashboard, recap, export): visitors
+ * and real accounts get real ones only; a demo session gets real and demo ones together. The shared demo accounts
+ * never change what anyone else sees. The kejadian tiles do the same with &lihat=demo (see map/layers.ts tileUrls).
+ * Notes, photos and who filed a check or assigned a task come to signed-in accounts only, and to a demo session (open to
+ * anyone) for demo rows only: it reads real checks and tasks as a visitor does (empty or left out).
+ */
 export interface Incident {
   id: string; code: string; village: IncidentVillage | null;
   firstDetectedAt: string; lastDetectedAt: string;
@@ -57,6 +89,11 @@ export interface Incident {
   score: number; scoreParts: ScorePart[]; level: Level;
   firstVerifiedAt: string | null; latestStatus: Status | null; latestCheck: LatestCheck | null;
   assignment: AssignmentSummary | null; nearestPlace: NearestPlace | null;
+  /**
+   * Indicated hot area in hectares: the largest area covered by the pixel footprints of one satellite pass (VIIRS,
+   * or MODIS when only MODIS saw it, then coarse). Not burned area. Null when no footprint could be computed.
+   */
+  indicatedAreaHa: number | null;
   /** Indonesian text built by the server (push notifications); the web app formats its own per language. */
   card: string | null; sharePath: string;
 }
@@ -82,6 +119,7 @@ export interface VillageSummary { id: string; name: string; district: string; re
 /** One bubble per regency on the zoomed-out map. */
 export interface RegionSummary { name: string; province: string; center: [number, number]; incidents: number; high: number; open: number; checked: number }
 
+/** GET /recap. Indicated hot areas stay per incident (see Incident): added up they would read as burned area. */
 export interface Recap {
   date: string; province: string | null;
   totals: { incidents: number; high: number; checked: number; checkedShare: number | null; medianMinutes: number | null; falseAlarms: number; detections: number };
@@ -100,6 +138,11 @@ export interface IngestSatellite {
 export interface IngestStatus {
   serverTime: string; runId: number | null; intervalMinutes: number; nextRunAt: string | null;
   lastRun: { finishedAt: string | null; ok: boolean; error: string | null } | null;
+  /**
+   * When the last successful live ingest run finished; null before the first. Snapshot and fixture runs do not count.
+   * GET /health/data (for monitoring) is stale from 90 minutes after it; the web app says so from 2 hours.
+   */
+  lastSuccessAt: string | null;
   runs: { id: number; finishedAt: string; source: string; feeds: { satellite: string; rows: number; inArea: number; latest: string | null; error: string | null }[]; inserted: number; error: string | null }[];
   satellites: IngestSatellite[];
 }
@@ -107,8 +150,15 @@ export interface IngestStatus {
 /** `checked` orders by the latest field check, newest first. */
 export type IncidentSort = 'priority' | 'recent' | 'size' | 'checked';
 export type StatusFilter = 'all' | 'open' | 'assigned' | 'checked';
-export interface IncidentFilters { hours: number; levels: Level[]; status: StatusFilter; peat: boolean; regency: string; sort: IncidentSort }
-export const defaultFilters: IncidentFilters = { hours: 24, levels: [], status: 'all', peat: false, regency: '', sort: 'priority' };
+/**
+ * `tanggal` is a WIB date (YYYY-MM-DD) for the archive, '' for live data. In the archive the time window ends at the
+ * end of that day: `hours` = 24 shows that day, 72 that day and the two before.
+ */
+export interface IncidentFilters { hours: number; levels: Level[]; status: StatusFilter; peat: boolean; regency: string; sort: IncidentSort; tanggal: string }
+export const defaultFilters: IncidentFilters = { hours: 24, levels: [], status: 'all', peat: false, regency: '', sort: 'priority', tanggal: '' };
+
+/** `&tanggal=…` for the archive, '' for live data: appended to /incidents, /summary, /regions/summary, /risk and the kejadian and deteksi tiles. */
+export const tanggalParam = (tanggal: string) => (tanggal ? `&tanggal=${tanggal}` : '');
 
 /**
  * Query string for GET /incidents. `levels` empty means every level; `status`: open = not checked and no open task,
@@ -121,5 +171,93 @@ export function incidentQuery(filters: Partial<IncidentFilters>, extra = ''): st
   if (f.status !== 'all') parts.push(`status=${f.status}`);
   if (f.peat) parts.push('peat=1');
   if (f.regency) parts.push(`regency=${encodeURIComponent(f.regency)}`);
-  return `?${parts.join('&')}${extra}`;
+  return `?${parts.join('&')}${tanggalParam(f.tanggal)}${extra}`;
 }
+
+/**
+ * GET /archive/days: every WIB day from the first day with data (`first`) to yesterday (`last`), oldest first, with
+ * the detections and incidents inside the two provinces. A `tanggal` outside first..last is refused (INVALID_INPUT).
+ */
+export interface ArchiveDay { date: string; detections: number; incidents: number }
+export interface ArchiveDays { first: string; last: string; days: ArchiveDay[] }
+
+/**
+ * Fire danger (GET /risk): the Canadian Fire Weather Index System (Van Wagner 1987), the system BMKG's fire danger
+ * rating adapts, computed by Titik Api from Open-Meteo weather at 12.00 WIB on a 0.5° grid over the two provinces.
+ * Classes are BMKG's published FWI classes (bmkg.go.id/cuaca/karhutla/fwi): rendah 0–1, sedang 2–6, tinggi 7–13,
+ * sangat_tinggi above 13. Not an official BMKG product. Past days come from model analysis, today and later from
+ * the forecast. Live: three days from today (WIB); with `tanggal`: that day only.
+ */
+export type FwiClass = 'rendah' | 'sedang' | 'tinggi' | 'sangat_tinggi';
+/** The six FWI System values. DC (drought code) is the smoke indicator for peat: severe haze is far more frequent above 400 (de Groot et al. 2007). */
+export interface FwiCodes { ffmc: number; dmc: number; dc: number; isi: number; bui: number; fwi: number }
+export interface RiskDay {
+  date: string;
+  /** False for days already past (model analysis), true for today and later (forecast). */
+  forecast: boolean;
+  fwiClass: FwiClass; codes: FwiCodes;
+  /** The weather the codes come from: 12.00 WIB temperature, humidity, wind and its direction (where it comes FROM, 0 = north), and rain over the 24 hours to 12.00. */
+  noon: { tempC: number; rhPct: number; windKmh: number; windFromDeg: number; rain24hMm: number };
+  /** Consecutive days with under 1 mm of rain up to this day (BMKG's "hari tanpa hujan"). */
+  dryDays: number;
+}
+/** One grid cell, by its centre; the cell spans ±cellSize/2 in longitude and latitude. */
+export interface RiskCell { lon: number; lat: number; days: RiskDay[] }
+/**
+ * A regency's fire danger on one day, by area: each grid cell counts with the share of the regency's area it covers
+ * (geodesic areas), so a cell that only touches the regency's edge counts for little. When some cells lack the day (a
+ * weather request failed), the shares come from the cells that have it. Each cell's class follows its FWI as on the grid.
+ */
+export interface RegencyRiskDay {
+  date: string;
+  /** True when any of its cells' values for the day is a forecast. */
+  forecast: boolean;
+  /** The class with the largest share; on a tie the higher class. */
+  fwiClass: FwiClass;
+  /** Share of the regency's area in each class, 0–1 in steps of 0.001; the four add up to 1. */
+  shares: Record<FwiClass, number>;
+  /**
+   * The highest class above `fwiClass` that, together with the classes above it, covers at least 10% of the regency;
+   * `share` is that combined share, the same test the dashboard card uses for tinggi or above. Null when there is none.
+   * rendah 59%, sedang 30%, tinggi 5% and sangat_tinggi 6% give { fwiClass: 'tinggi', share: 0.11 }.
+   */
+  partial: { fwiClass: FwiClass; share: number } | null;
+  /** Area-weighted mean FWI, one decimal. */
+  meanFwi: number;
+}
+/** `peatShare` is the share of the regency's village area on peat, 0–1. */
+export interface RegencyRisk {
+  name: string; province: string; center: [number, number]; peatShare: number;
+  days: RegencyRiskDay[];
+}
+export interface Risk {
+  /** The first day shown: today (WIB) live, else the archive date. */
+  asOf: string; archive: boolean;
+  /** When the weather was last fetched; null when nothing was computed yet (then `cells` and `regencies` are empty). */
+  fetchedAt: string | null;
+  /** Degrees; 0.5. */
+  cellSize: number;
+  cells: RiskCell[]; regencies: RegencyRisk[];
+}
+
+/**
+ * GET /incidents/:id/wind: wind at the incident from Open-Meteo, now when it was last detected within 24 hours,
+ * else at the hour of its last detection. `villages`: up to five other villages within 5 km in the 60° sector the
+ * wind blows toward, nearest first; empty when calm (under 5 km/h). The response is { data: null } when the
+ * weather service does not answer in time; the panel then leaves the wind out.
+ */
+export interface Wind {
+  mode: 'now' | 'detected'; at: string; speedKmh: number;
+  /** Where the wind comes from, and where smoke drifts (fromDeg + 180), in degrees (0 = north). */
+  fromDeg: number; towardDeg: number; calm: boolean;
+  villages: { id: string; name: string; distanceM: number; bearingDeg: number }[];
+}
+
+/**
+ * GET /config: public settings for the web app. `hdImagery`: Esri World Imagery is served by GET
+ * /imagery/{z}/{y}/{x} (zoom 11–18 over the two provinces, pages of this app only); false without an ArcGIS key on the
+ * server or once its daily or monthly cap is reached. `imageryAttribution`: Esri's copyright text for that imagery,
+ * plain text, shown after "Powered by Esri" while it is on screen; null when `hdImagery` is false. The key itself never
+ * leaves the server.
+ */
+export interface AppConfig { hdImagery: boolean; imageryAttribution: string | null }

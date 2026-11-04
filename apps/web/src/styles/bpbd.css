@@ -23,7 +23,8 @@
 /* tables (dashboard villages, recap) */
 .bd-table-wrap { min-width: 0; overflow-x: auto; background: var(--surface-card); border: 1px solid var(--surface-line); border-radius: var(--radius-lg); }
 .bd-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 18px; }
-.bd-table th { padding: 9px 14px; background: var(--surface-subtle); color: var(--text-3); font-size: 12px; font-weight: 500; text-align: left; white-space: nowrap; }
+/* On --surface-subtle --text-3 measures 4.21:1, under the 4.5:1 of AA; --text-2 gives 6.74:1. */
+.bd-table th { padding: 9px 14px; background: var(--surface-subtle); color: var(--text-2); font-size: 12px; font-weight: 500; text-align: left; white-space: nowrap; }
 .bd-table td { padding: 9px 14px; border-top: 1px solid var(--surface-line); color: var(--text-2); white-space: nowrap; }
 .bd-table .num { text-align: right; }
 .bd-table td.name { min-width: 160px; color: var(--text); font-weight: 500; white-space: normal; }
@@ -58,6 +59,15 @@
 .bd-filter svg { opacity: 0.7; }
 .bd-filter:hover svg { opacity: 1; }
 .bd-clear { padding: 0 4px; border: 0; background: none; color: var(--text-2); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+/* fire danger tomorrow */
+.bd-danger { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 12px 16px; background: var(--surface-card); border: 1px solid var(--surface-line); border-radius: var(--radius-lg); }
+.bd-danger > .icon { margin-top: 1px; color: var(--text-2); }
+.bd-danger-text { flex: 1 1 240px; display: grid; gap: 2px; min-width: 0; }
+.bd-danger-text h2 { font-size: 14px; line-height: 20px; font-weight: 600; }
+.bd-danger-text p { font-size: 13px; line-height: 18px; color: var(--text-2); }
+.bd-danger-text .caption { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.bd-danger .btn { align-self: center; }
 
 .bd-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
 .bd-body.no-side { grid-template-columns: minmax(0, 1fr); }
@@ -135,6 +145,7 @@
 .bd-assignee-text { flex: 1; display: grid; gap: 1px; min-width: 0; }
 .bd-assignee-text b { font-weight: 600; }
 .bd-assignee small { display: block; font-size: 12px; line-height: 16px; color: var(--text-3); }
+.bd-assignee.on small { color: var(--text-2); }
 .bd-assignee-text small.bd-assignee-phone { display: none; }
 .bd-assignee-side { flex: none; display: grid; justify-items: end; gap: 1px; font-size: 13px; color: var(--text-2); text-align: right; }
 .bd-dialog .field textarea { resize: vertical; min-height: 60px; }
@@ -195,6 +206,8 @@
 .recap-bar i { display: block; height: 6px; overflow: hidden; border-radius: 3px; background: var(--surface-subtle); }
 .recap-bar em { display: block; height: 100%; border-radius: 3px; background: var(--text-2); }
 .recap-bar b { font-weight: 600; text-align: right; }
+.fwi-tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fwi-partial { display: block; margin-top: 1px; color: var(--text-3); font-size: 12px; line-height: 16px; white-space: nowrap; }
 .recap-none { padding: 14px; border: 1px dashed var(--surface-line); border-radius: var(--radius-lg); font-size: 13px; color: var(--text-3); }
 .recap-empty { display: grid; justify-items: center; gap: 6px; padding: 36px 20px; border: 1px dashed var(--surface-line); border-radius: var(--radius-lg); text-align: center; }
 .recap-empty b { font-size: 16px; line-height: 22px; font-weight: 600; }
@@ -213,8 +226,9 @@
 @media (max-width: 520px) {
   .recap-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .recap-total > b { font-size: 20px; line-height: 26px; }
-  /* Phone tables keep the columns that fit: regencies without high priority and response time, villages without hotspots. */
-  .recap-regencies :is(th, td):is(:nth-child(3), :nth-child(6)), .recap-villages :is(th, td):nth-child(5) { display: none; }
+  /* Phone tables keep the columns that fit: regencies without high priority, response time and the columns after it,
+     villages without hotspots. */
+  .recap-regencies :is(th, td):is(:nth-child(3), :nth-child(n+6)), .recap-villages :is(th, td):nth-child(5) { display: none; }
   .recap-total:nth-child(n) { border-left: 1px solid var(--surface-line); border-top: 1px solid var(--surface-line); }
   .recap-total:nth-child(odd) { border-left: 0; }
   .recap-total:nth-child(-n+2) { border-top: 0; }
@@ -242,5 +256,5 @@
   .recap .bd-table { font-size: 9.5pt; }
   .recap .bd-table th, .recap .bd-table td { padding: 5px 8px; }
   .recap :is(.recap-totals, .recap-bars, .bd-table-wrap) { border-color: #ccc; }
-  .recap :is(.bd-table th, .recap-bar i, .recap-bar em, .hot) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .recap :is(.bd-table th, .recap-bar i, .recap-bar em, .hot, .fwi-tag i) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }

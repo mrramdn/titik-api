@@ -20,11 +20,21 @@ async function shoot(name, path, { width = 1440, height = 900, role, mobile = fa
   await page.goto(`${base}${path}`);
   await page.waitForTimeout(wait);
   if (action) await action(page);
-  await page.screenshot({ path: `${out}/${name}.png`, fullPage: !path.startsWith('/?') && path !== '/' });
+  // The map screen fills the window; the other pages, the landing page among them, are taken whole.
+  await page.screenshot({ path: `${out}/${name}.png`, fullPage: !path.startsWith('/peta') });
   await context.close();
 }
-await shoot('home-desktop', '/', { wait: 5000 });
-await shoot('home-mobile', '/', { width: 390, height: 844, mobile: true, wait: 5000 });
+// The landing page's screenshots load as they come into view: scroll through it first. Then a window as tall as the
+// page, since a full-page capture in headless Chromium leaves the images blank.
+const wholePage = async page => {
+  await page.evaluate(async () => { for (let y = 0; y < document.body.scrollHeight; y += 600) { window.scrollTo(0, y); await new Promise(done => setTimeout(done, 120)); } window.scrollTo(0, 0); });
+  await page.setViewportSize({ width: page.viewportSize().width, height: await page.evaluate(() => document.documentElement.scrollHeight) });
+  await page.waitForTimeout(1200);
+};
+await shoot('landing-desktop', '/', { wait: 3000, action: wholePage });
+await shoot('landing-mobile', '/', { width: 390, height: 844, mobile: true, wait: 3000, action: wholePage });
+await shoot('map-desktop', '/peta', { wait: 5000 });
+await shoot('map-mobile', '/peta', { width: 390, height: 844, mobile: true, wait: 5000 });
 await shoot('alerts-mobile', '/peringatan', { width: 390, height: 844, mobile: true, role: 'mpa' });
 await shoot('alerts-desktop', '/peringatan', { role: 'mpa' });
 await shoot('dashboard', '/dasbor', { role: 'bpbd', wait: 4000 });

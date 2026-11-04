@@ -38,13 +38,23 @@ export const formatCount = (n: number) => n.toLocaleString('id-ID');
 
 const timeFormat = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const dateFormat = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short' });
+const dateYearFormat = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', year: 'numeric' });
 /** "13.42" in Western Indonesian Time. */
 export const formatWib = (date: Date) => timeFormat.format(date).replace(':', '.');
 /** "16 Okt 13.42". */
 export const formatWibDateTime = (date: Date) => `${dateFormat.format(date).replace('.', '')} ${formatWib(date)}`;
+/** "16 Okt 2026", the WIB date. */
+export const formatWibDate = (date: Date) => dateYearFormat.format(date).replace('.', '');
 const dayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' });
 /** "13.42" on the same WIB day as `now`, else "15 Okt 13.42". */
 export const formatWibWhen = (date: Date, now = new Date()) => (dayFormat.format(date) === dayFormat.format(now) ? formatWib(date) : formatWibDateTime(date));
+/** The WIB day of a moment, "2026-10-23". */
+export const wibDay = (date = new Date()) => dayFormat.format(date);
+/** A day ("2026-10-23") moved by whole days. */
+export const addDays = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+/** True for a real calendar date written as YYYY-MM-DD (2026-02-31 is not one). */
+export const isCalendarDate = (text: string) => /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`))
+  && new Date(`${text}T00:00:00Z`).toISOString().startsWith(text);
 
 export interface ScoreInput {
   bestConfidence: string | null; maxFrp: number | null; viirsCount: number; modisCount: number;
@@ -107,14 +117,15 @@ export const uncertaintyText = (meters: number) => `lokasi ±${formatDistance(Ma
 
 /**
  * "46 titik panas · 6,9 km barat daya Dusun Sungai Perlu · Desa Cinta Jaya · lahan gambut · terakhir 14.20 WIB ·
- * prioritas tinggi. Titik panas perlu dicek di lapangan." The last detection carries its date when it was not today.
+ * prioritas tinggi. Titik panas perlu dicek di lapangan." The last detection carries its date when it was not today,
+ * or always with `dated` (a link preview is read on later days).
  */
-export function cardText(incident: CardIncident, now = new Date()) {
+export function cardText(incident: CardIncident, now = new Date(), dated = false) {
   const parts = [`${formatCount(incident.detectionCount)} titik panas`];
   if (incident.place) parts.push(placeText(incident.place));
   if (incident.modisOnly && incident.locationUncertaintyM) parts.push(uncertaintyText(incident.locationUncertaintyM));
   if (incident.village && !(incident.place?.kind === 'village' && incident.place.name === incident.village.name)) parts.push(`Desa ${incident.village.name}`);
   if (incident.onPeat) parts.push('lahan gambut');
-  parts.push(`terakhir ${formatWibWhen(incident.lastDetectedAt, now)} WIB`, `prioritas ${incident.level}`);
+  parts.push(`terakhir ${dated ? formatWibDateTime(incident.lastDetectedAt) : formatWibWhen(incident.lastDetectedAt, now)} WIB`, `prioritas ${incident.level}`);
   return `${parts.join(' · ')}.${incident.nearStatic ? ' Dekat sumber panas tetap.' : ''} Titik panas perlu dicek di lapangan.`;
 }

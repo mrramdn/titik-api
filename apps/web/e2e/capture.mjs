@@ -35,7 +35,7 @@ const shot = (page, name) => page.screenshot({ path: `${out}/${name}.png` });
 
 // Map: the overview, the pilot regency over peat, and the same view on the daily satellite image.
 { const { context, page } = await session(desktop);
-  await page.goto(`${base}/`); await page.waitForTimeout(6000);
+  await page.goto(`${base}/peta`); await page.waitForTimeout(6000);
   await shot(page, '01-peta');
   await page.selectOption('select.fselect[aria-label="Kabupaten"]', pilot); await page.waitForTimeout(3000);
   await page.getByRole('button', { name: 'Lapisan', exact: true }).click(); await page.waitForTimeout(400);
@@ -43,7 +43,7 @@ const shot = (page, name) => page.screenshot({ path: `${out}/${name}.png` });
   await shot(page, '02-peta-gambut');
   await context.close(); }
 { const { context, page } = await session(desktop, null, { legend: false });
-  await page.goto(`${base}/`); await page.waitForTimeout(3000);
+  await page.goto(`${base}/peta`); await page.waitForTimeout(3000);
   await page.selectOption('select.fselect[aria-label="Kabupaten"]', pilot); await page.waitForTimeout(2500);
   await page.getByRole('button', { name: 'Tampilan satelit' }).click(); await page.waitForTimeout(7000);
   await shot(page, '13-satelit');

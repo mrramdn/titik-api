@@ -3,17 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Titik Api · peringatan titik panas tingkat desa</title>
-    <meta name="description" content="Peringatan titik panas tingkat desa untuk pengendalian kebakaran hutan dan lahan di Sumatera Selatan dan Kalimantan Tengah. Data NASA FIRMS, cek lapangan relawan MPA, dasbor BPBD/Daops." />
-    <meta property="og:title" content="Titik Api" />
-    <meta property="og:description" content="Peringatan titik panas tingkat desa untuk pengendalian kebakaran hutan dan lahan di Sumatera Selatan dan Kalimantan Tengah." />
+    <title>Titik Api · demo dengan data satelit asli, bukan peringatan resmi</title>
+    <meta name="description" content="Demo portofolio peringatan titik panas tingkat desa di Sumatera Selatan dan Kalimantan Tengah, dengan data satelit asli NASA FIRMS. Bukan sistem peringatan resmi." />
+    <meta property="og:title" content="Titik Api · demo dengan data satelit asli" />
+    <meta property="og:description" content="Demo portofolio peringatan titik panas tingkat desa, dengan data satelit asli NASA FIRMS. Bukan sistem peringatan resmi." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="/og.png" />
+    <meta property="og:site_name" content="Titik Api · demo portofolio" />
+    <meta property="og:image" content="https://titik-api.mrramdn.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://titik-api.mrramdn.com/og.png" />
     <meta name="theme-color" content="#161312" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   </head>
   <body>
+    <noscript>
+      <div style="max-width: 40rem; margin: 0 auto; padding: 32px 16px; font: 15px/1.6 system-ui, sans-serif; color: #191614">
+        <p style="margin: 0 0 12px">Titik Api adalah demo portofolio yang memetakan titik panas dari satelit NASA FIRMS menjadi kejadian per desa di Sumatera Selatan dan Kalimantan Tengah. Datanya asli, tetapi ini bukan sistem peringatan resmi; aktifkan JavaScript untuk membuka peta.</p>
+        <p lang="en" style="margin: 0 0 12px">Titik Api is a portfolio demo that maps NASA FIRMS satellite hotspots to incidents per village in South Sumatra and Central Kalimantan. The data is real, but this is not an official warning system; turn on JavaScript to open the map.</p>
+        <p style="margin: 0">Kode sumber / source code: <a href="https://github.com/mrramdn/titik-api" style="color: #1971c2; text-decoration: underline">github.com/mrramdn/titik-api</a></p>
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

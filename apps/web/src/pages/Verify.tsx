@@ -2,7 +2,7 @@
 // signal for any incident opened (or prefetched on /tugas) while online; the report waits in the outbox.
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
-import { Camera, Check, ChevronLeft, CircleCheck, Clock, CloudOff, Compass, Copy, Navigation2, TriangleAlert } from 'lucide-react';
+import { Camera, Check, ChevronLeft, CircleCheck, Clock, CloudOff, Compass, Copy, Info, Navigation2, TriangleAlert } from 'lucide-react';
 import type { IncidentDetail, Status } from '../api';
 import { Banner, LevelBadge, RouteButton, useApi, useOnline } from '../components/ui';
 import { rememberCheck } from '../components/volunteer/myChecks';
@@ -11,7 +11,7 @@ import { useFormat } from '../format';
 import { bearing, coordText, nearestPoint } from '../geo';
 import { dict, useT } from '../i18n';
 import { falseAlarmLabel } from '../i18n/common';
-import { compressPhoto, enqueue, flush, onOutboxChange, queued } from '../outbox';
+import { belongsTo, compressPhoto, enqueue, flush, onOutboxChange, outboxSignedOut, queued, type QueuedReport } from '../outbox';
 import { useSession } from '../session';
 
 const text = dict({
@@ -26,12 +26,16 @@ const text = dict({
     nearestPoint: 'Titik terdekat', centre: 'Pusat kejadian', copy: 'Salin', copyLabel: 'Salin koordinat', copied: 'Disalin',
     status: 'Kondisi di lapangan', source: 'Sumber panas',
     sourceNote: 'Lokasi ini dicatat sebagai sumber panas tetap selama 30 hari. Titik panas berikutnya di sini mendapat prioritas lebih rendah.',
+    sourceNoteDemo: 'Laporan dari akun demo tidak mengubah prioritas titik panas. Lokasi ini tidak dicatat sebagai sumber panas tetap.',
+    demoShared: 'Akun demo dipakai bersama: catatan dan foto terlihat oleh pengunjung lain dan dihapus pukul 03.00 WIB. Posisi GPS-mu tidak disimpan, hanya perkiraan jaraknya ke titik panas, misalnya sekitar 4 km.',
     photo: 'Ambil foto', photoAgain: 'Ganti foto', preview: 'Pratinjau foto',
     note: 'Catatan (opsional)', notePlaceholder: 'Misalnya: asap dari kanal sebelah timur, sudah dipadamkan regu.',
     privacy: 'Server menghapus data lokasi di dalam foto. Nama pelapor hanya terlihat oleh tim yang masuk. Bakar terkendali dicatat sebagai kondisi di lapangan.',
     send: 'Kirim laporan', save: 'Simpan, kirim saat ada sinyal', saving: 'Menyimpan…', pick: 'Pilih kondisi di lapangan untuk mengirim.',
     sent: 'Laporan terkirim', sentBody: 'Dicek pukul {time} WIB. BPBD/Daops melihatnya di dasbor.',
     queued: 'Menunggu sinyal, dikirim otomatis', queuedBody: 'Dicek pukul {time} WIB. Laporan tersimpan di ponsel ini dan terkirim saat ada sinyal, dengan waktu cek ini.',
+    signIn: 'Sesi berakhir, masuk lagi untuk mengirim', signInBody: 'Dicek pukul {time} WIB. Laporan tersimpan di ponsel ini dan terkirim setelah akun ini masuk lagi, dengan waktu cek ini.',
+    signInAgain: 'Masuk lagi',
     rejected: 'Laporan ditolak server', rejectedBody: '{reason} Periksa isian lalu kirim ulang dari halaman kejadian.',
   },
   en: {
@@ -45,12 +49,16 @@ const text = dict({
     nearestPoint: 'Nearest point', centre: 'Incident centre', copy: 'Copy', copyLabel: 'Copy coordinates', copied: 'Copied',
     status: 'What you found', source: 'Heat source',
     sourceNote: 'This spot is recorded as a fixed heat source for 30 days. Later hotspots here get a lower priority.',
+    sourceNoteDemo: 'Reports from demo accounts do not change hotspot priority. This spot is not recorded as a fixed heat source.',
+    demoShared: 'Demo accounts are shared: notes and photos are visible to other visitors and are deleted at 03:00 WIB. Your GPS position is not stored, only its approximate distance to the hotspot, such as about 4 km.',
     photo: 'Take photo', photoAgain: 'Replace photo', preview: 'Photo preview',
     note: 'Note (optional)', notePlaceholder: 'For example: smoke from the canal to the east, put out by the crew.',
     privacy: 'The server removes location data from photos. Only signed-in teams see the reporter\'s name. A controlled burn is recorded as what you saw on site.',
     send: 'Send report', save: 'Save, send when there is signal', saving: 'Saving…', pick: 'Choose what you found to send.',
     sent: 'Report sent', sentBody: 'Checked at {time} WIB. BPBD/Daops see it on the dashboard.',
     queued: 'Waiting for signal, sent automatically', queuedBody: 'Checked at {time} WIB. The report is saved on this phone and goes out when there is signal, with this check time.',
+    signIn: 'Session ended: sign in again to send', signInBody: 'Checked at {time} WIB. The report is saved on this phone and goes out once this account signs in again, with this check time.',
+    signInAgain: 'Sign in again',
     rejected: 'The server refused the report', rejectedBody: '{reason} Check the form and send it again from the incident page.',
   },
 });
@@ -131,7 +139,14 @@ function TargetCard({ detail, position, gpsError }: { detail: IncidentDetail; po
   );
 }
 
-type Result = { state: 'sent' | 'queued' | 'rejected'; at: string; clientUuid: string; reason?: string };
+/** `signIn`: kept like `queued`, but the server said the session ended (401), so it waits for a sign-in, not a signal. */
+type Result = { state: 'sent' | 'queued' | 'signIn' | 'rejected'; at: string; clientUuid: string; incidentId: string; reason?: string };
+/**
+ * A report still in the outbox waits for a sign-in after a 401, or while another account or nobody is signed in (it goes
+ * out only under the account that filed it, and another tab can switch the account); else for a signal.
+ */
+const waitingState = (report: QueuedReport, viewer: string | null): Result['state'] =>
+  (outboxSignedOut() || !belongsTo(report, viewer) ? 'signIn' : 'queued');
 
 export function VerifyPage() {
   const { id } = useParams();
@@ -156,19 +171,52 @@ export function VerifyPage() {
     return () => navigator.geolocation.clearWatch(watch);
   }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
-  // A report saved without a signal leaves the outbox once it is sent; the result screen follows it.
+  // A report saved without a signal leaves the outbox once it is sent; the result screen follows it, and the account
+  // signed in now.
+  const viewer = user?.id ?? null;
   useEffect(() => {
-    if (!result || result.state !== 'queued') return;
-    return onOutboxChange(() => {
+    if (!result || (result.state !== 'queued' && result.state !== 'signIn')) return;
+    let alive = true;
+    const follow = () => {
       void queued().then(items => {
+        if (!alive) return;
         const item = items.find(entry => entry.clientUuid === result.clientUuid);
         if (!item) setResult({ ...result, state: 'sent' });
         else if (item.rejected) setResult({ ...result, state: 'rejected', reason: item.lastError ?? '' });
+        else if (waitingState(item, viewer) !== result.state) setResult({ ...result, state: waitingState(item, viewer) });
       });
-    });
-  }, [result]);
+    };
+    follow();
+    const stop = onOutboxChange(follow);
+    return () => { alive = false; stop(); };
+  }, [result, viewer]);
 
-  if (ready && !user) return <Navigate to="/masuk" replace />;
+  // A report filed here keeps its result on screen whoever is signed in by then. A 401 on its way out makes the session
+  // ask the server again, and the answer (nobody) would otherwise send the volunteer to /masuk before they read that
+  // the report waits for them; the redirect also waits while the report is being saved and sent.
+  if (result) {
+    const tone = result.state === 'sent' ? 'ok' : 'warn';
+    return (
+      <Frame>
+        <main className="page narrow">
+          <div className={`banner banner-${tone} v-result`} role="status">
+            {result.state === 'sent' ? <CircleCheck size={22} aria-hidden="true" /> : result.state === 'rejected' ? <TriangleAlert size={22} aria-hidden="true" /> : <Clock size={22} aria-hidden="true" />}
+            <div>
+              <strong className="heading-16">{t(result.state)}</strong>
+              <span>{result.state === 'rejected' ? t('rejectedBody', { reason: result.reason ?? '' }) : t(result.state === 'sent' ? 'sentBody' : result.state === 'signIn' ? 'signInBody' : 'queuedBody', { time: f.time(result.at) })}</span>
+            </div>
+          </div>
+          <div className="v-stack">
+            {result.state === 'signIn'
+              ? <Link to="/masuk" className="btn btn-primary btn-block">{t('signInAgain')}</Link>
+              : <Link to="/tugas" className="btn btn-primary btn-block">{t('toTasks')}</Link>}
+            <Link to={`/kejadian/${result.incidentId}`} className="btn btn-secondary btn-block">{t('viewIncident')}</Link>
+          </div>
+        </main>
+      </Frame>
+    );
+  }
+  if (ready && !user && !busy) return <Navigate to="/masuk" replace />;
   if (user && user.role !== 'mpa' && user.role !== 'admin') return <Frame><main className="page narrow"><Banner tone="warn">{t('roleOnly')}</Banner></main></Frame>;
   const d = incident.data;
   if (!d) {
@@ -190,34 +238,13 @@ export function VerifyPage() {
     try {
       await enqueue({ clientUuid, incidentId: d.id, incidentLabel: `KJD-${d.code.toUpperCase()}${d.village ? ` · ${d.village.name}` : ''}`, status,
         falseAlarmKind: status === 'alarm_palsu' ? kind : undefined, note: note.trim(), latitude: here?.[1] ?? null, longitude: here?.[0] ?? null,
-        accuracyM: position?.coords.accuracy ?? null, observedAt, photo });
+        accuracyM: position?.coords.accuracy ?? null, observedAt, photo, userId: user?.id });
       rememberCheck(d.id, { at: observedAt, status });
       if (navigator.onLine !== false) await flush();
       const item = (await queued()).find(entry => entry.clientUuid === clientUuid);
-      setResult({ clientUuid, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : 'queued', reason: item?.lastError ?? undefined });
+      setResult({ clientUuid, incidentId: d.id, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : waitingState(item, viewer), reason: item?.lastError ?? undefined });
     } finally { setBusy(false); }
   };
-
-  if (result) {
-    const tone = result.state === 'sent' ? 'ok' : 'warn';
-    return (
-      <Frame>
-        <main className="page narrow">
-          <div className={`banner banner-${tone} v-result`} role="status">
-            {result.state === 'sent' ? <CircleCheck size={22} aria-hidden="true" /> : result.state === 'queued' ? <Clock size={22} aria-hidden="true" /> : <TriangleAlert size={22} aria-hidden="true" />}
-            <div>
-              <strong className="heading-16">{t(result.state)}</strong>
-              <span>{result.state === 'rejected' ? t('rejectedBody', { reason: result.reason ?? '' }) : t(result.state === 'sent' ? 'sentBody' : 'queuedBody', { time: f.time(result.at) })}</span>
-            </div>
-          </div>
-          <div className="v-stack">
-            <Link to="/tugas" className="btn btn-primary btn-block">{t('toTasks')}</Link>
-            <Link to={`/kejadian/${d.id}`} className="btn btn-secondary btn-block">{t('viewIncident')}</Link>
-          </div>
-        </main>
-      </Frame>
-    );
-  }
 
   return (
     <Frame>
@@ -245,9 +272,10 @@ export function VerifyPage() {
         {status === 'alarm_palsu' && (
           <label className="field"><span className="label">{t('source')}</span>
             <select value={kind} onChange={event => setKind(event.target.value)}>{falseAlarmKinds.map(value => <option key={value} value={value}>{f.falseAlarm(value)}</option>)}</select>
-            <span className="note">{t('sourceNote')}</span>
+            <span className="note">{t(user?.demo ? 'sourceNoteDemo' : 'sourceNote')}</span>
           </label>
         )}
+        {user?.demo && <Banner icon={<Info size={16} aria-hidden="true" />}>{t('demoShared')}</Banner>}
         <label className="photo btn btn-secondary btn-block"><Camera size={16} aria-hidden="true" />{photo ? t('photoAgain') : t('photo')}
           <input type="file" accept="image/*" capture="environment" onChange={async event => {
             const file = event.target.files?.[0]; if (!file) return;

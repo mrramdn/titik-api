@@ -6,6 +6,7 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst, NetworkFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
+import { isApiRead, isMapHost, isPhoto, isTile, NAVIGATION_DENYLIST, PHOTO_MAX_AGE_SECONDS } from './swRoutes';
 
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: (string | { url: string; revision: string | null })[] };
 
@@ -13,17 +14,20 @@ self.skipWaiting();
 clientsClaim();
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
-registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/api\//, /^\/uploads\//] }));
+registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: NAVIGATION_DENYLIST }));
 
 // Map tiles get their own cache: their URLs change with every ingest run (&v=), and they must not push out the
 // incident data a volunteer needs without a signal.
-registerRoute(({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/v1/tiles/'),
+registerRoute(({ url, request }) => request.method === 'GET' && isTile(url),
   new NetworkFirst({ cacheName: 'tiles', networkTimeoutSeconds: 4, plugins: [new ExpirationPlugin({ maxEntries: 800, maxAgeSeconds: 2 * 24 * 3600 })] }));
-// Reads: fresh when there is a signal, the last copy when there is none.
-registerRoute(({ url, request }) => request.method === 'GET' && url.pathname.startsWith('/api/v1/') && !url.pathname.startsWith('/api/v1/export'),
+// Reads: fresh when there is a signal, the last copy when there is none. The copies are the signed-in account's: the app
+// empties this cache when another account, or none, takes over (see accountData.ts).
+registerRoute(({ url, request }) => request.method === 'GET' && isApiRead(url),
   new NetworkFirst({ cacheName: 'api', networkTimeoutSeconds: 4, plugins: [new ExpirationPlugin({ maxEntries: 400, maxAgeSeconds: 3 * 24 * 3600 })] }));
-registerRoute(({ url }) => url.pathname.startsWith('/uploads/'), new CacheFirst({ cacheName: 'photos', plugins: [new ExpirationPlugin({ maxEntries: 120 })] }));
-registerRoute(({ url }) => /(openfreemap\.org|tiles\.maps\.eox\.at|tiles\.globalforestwatch\.org|gibs\.earthdata\.nasa\.gov)$/.test(url.hostname),
+registerRoute(({ url }) => isPhoto(url), new CacheFirst({ cacheName: 'photos', plugins: [new ExpirationPlugin({ maxEntries: 120, maxAgeSeconds: PHOTO_MAX_AGE_SECONDS })] }));
+// Esri World Imagery (/api/v1/imagery/) matches no route on purpose (licence terms): the browser fetches it from the
+// network and no cache here keeps it.
+registerRoute(({ url }) => isMapHost(url),
   new CacheFirst({ cacheName: 'map', plugins: [new ExpirationPlugin({ maxEntries: 1500, maxAgeSeconds: 14 * 24 * 3600 })] }));
 
 self.addEventListener('push', event => {

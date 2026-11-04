@@ -8,6 +8,8 @@ function build(lang: Lang) {
   const locale = lang === 'en' ? 'en-GB' : 'id-ID';
   const clock = new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const date = new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short' });
+  const dateYear = new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', year: 'numeric' });
+  const weekdayDate = new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
   const w = words[lang];
   // Indonesian writes 13.42, English 13:42.
   const time = (iso: string | Date) => { const text = clock.format(new Date(iso)); return lang === 'id' ? text.replace(':', '.') : text.replace('.', ':'); };
@@ -16,8 +18,16 @@ function build(lang: Lang) {
   const num = (value: number, digits = 0) => value.toLocaleString(locale, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
   const km = (meters: number) => (meters < 1000 ? `${num(Math.max(10, Math.round(meters / 10) * 10))} m` : `${num(Math.round(meters / 100) / 10, 1)} km`);
   const wind = (degrees: number) => winds[lang][Math.round((((degrees % 360) + 360) % 360) / 45) % 8]!;
+  // A WIB calendar date (YYYY-MM-DD) read at noon, so no time zone can move it to the next or previous day.
+  const noon = (value: string) => new Date(`${value}T12:00:00+07:00`);
   return {
     lang, locale, time, day, dayTime, num, km, wind,
+    /** "23 Okt 2026" / "23 Oct 2026" for a WIB date (YYYY-MM-DD). */
+    calendar: (value: string) => dateYear.format(noon(value)).replace('.', ''),
+    /** "Jumat, 23 Okt 2026" / "Friday, 23 Oct 2026" for a WIB date (YYYY-MM-DD). */
+    weekdayDate: (value: string) => weekdayDate.format(noon(value)).replace('.', ''),
+    /** "12,5 ha" / "12.5 ha"; whole hectares from 100 up. */
+    ha: (hectares: number) => `${num(hectares, hectares < 100 ? 1 : 0)} ha`,
     /** "16 Okt 00.45 WIB", "16 Okt 00.20–01.41 WIB" or "14 Okt 13.18 – 15 Okt 01.41 WIB". */
     span(first: string, last: string) {
       const a = dayTime(first), b = dayTime(last);
