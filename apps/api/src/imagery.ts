@@ -387,9 +387,10 @@ class Shares {
     }
     const used = this.used.get(address) ?? 0;
     if (used >= this.options.addressDailyCap) {
+      // Once a day per address, without naming it: the log keeps no visitor's address.
       if (!this.warned.has(address)) {
         this.warned.add(address);
-        this.log.warn({ address, addressDailyCap: this.options.addressDailyCap }, 'Esri imagery stopped for one address: its daily share is used');
+        this.log.warn({ addressDailyCap: this.options.addressDailyCap }, 'Esri imagery stopped for one address: its daily share is used');
       }
       return 'share';
     }

@@ -401,6 +401,9 @@ test('one address takes at most its share of a day: 429 before Esri is asked, lo
   assert.equal(refused.headers['retry-after'], String(14 * 3600), 'until the next UTC day');
   empty(await from('203.0.113.9'), 429);
   assert.equal(warnings(), before + 1, 'logged once a day');
+  const warning = logged('its daily share is used').at(-1)!;
+  assert.deepEqual([JSON.parse(warning).address, JSON.parse(warning).addressDailyCap], [undefined, 2], 'with the cap, without the address');
+  assert.ok(!warning.includes('203.0.113.9'), warning);
   assert.equal(tileCalls(), 2, 'Esri is not asked past the share');
   assert.equal((await from('198.51.100.7')).statusCode, 200, 'another address has a share of its own');
   // An IPv6 client gets one share for its /64.
@@ -454,10 +457,11 @@ test('a tile the caps stop does not use up the share of its address', async () =
   const app = await imageryApp({ dailyCap: 2, addressDailyCap: 2 });
   answer = {};
   const from = (remoteAddress: string) => app.inject({ method: 'GET', url: `/api/v1/imagery/${OKI}`, headers: sameOrigin, remoteAddress });
+  const shareWarnings = logged('its daily share is used').length;
   assert.equal((await from('203.0.113.9')).statusCode, 200);
   assert.equal((await from('198.51.100.7')).statusCode, 200);
   for (let k = 0; k < 3; k++) empty(await from('198.51.100.7'), 503);
-  assert.equal(logged('its daily share is used').filter(line => line.includes('198.51.100.7')).length, 0, 'the cap answered, not the share');
+  assert.equal(logged('its daily share is used').length, shareWarnings, 'the cap answered, not the share');
   await close(app);
 });
 
