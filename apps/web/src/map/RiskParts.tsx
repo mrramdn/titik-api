@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { FwiClass, Risk, RiskDay } from '../api';
 import type { Loaded } from '../components/ui';
-import { OpenMeteoCredit } from '../components/OpenMeteo';
+import { FireDangerCredit, OpenMeteoCredit } from '../components/OpenMeteo';
 import { todayWib } from '../components/bpbd/data';
 import { nextWibMidnight, useClock } from '../clock';
 import { dict, useLang, useT } from '../i18n';
@@ -76,7 +76,7 @@ export function RiskLegend() {
     <h3 className="lg-title">{t('legend')}</h3>
     {fwiClasses.map(name => <div key={name} className="lg-row"><RiskSwatch fwiClass={name} />{fwiLabel[lang][name]}<small className="lg-range">{fwiRange[name]}</small></div>)}
     <p className="lg-note">{t('note')}</p>
-    <p className="lg-note"><OpenMeteoCredit /></p>
+    <p className="lg-note"><FireDangerCredit /></p>
     <a className="lg-link" href={BMKG_FWI_URL} target="_blank" rel="noopener noreferrer">{t('bmkg')}<ExternalLink size={12} aria-hidden="true" /></a>
   </>);
 }

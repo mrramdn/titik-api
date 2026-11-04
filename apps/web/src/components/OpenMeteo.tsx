@@ -1,7 +1,8 @@
 // Open-Meteo's attribution (its data is CC BY 4.0), linked, next to everything that shows its weather: the fire danger
 // on the map, the dashboard and the recap, and the wind at an incident. Also the notice of the Copernicus Climate Change
 // Service (C3S), whose ERA5 reanalysis, from Open-Meteo's archive, starts the fire danger's codes: in full on the About
-// page, short on the map and next to Open-Meteo's credit on the dashboard and the recap.
+// page, short in the map's attribution and next to Open-Meteo's credit in the map's legend, on the dashboard and in the
+// recap.
 import { dict, useT } from '../i18n';
 
 export const OPEN_METEO_URL = 'https://open-meteo.com/';
@@ -36,8 +37,9 @@ export function OpenMeteoCredit() {
 }
 
 /**
- * The fire danger's credits side by side, where its classes show without the map: Open-Meteo's, and the short
- * Copernicus notice for the ERA5 data the codes start from, in English as its licence words it.
+ * The fire danger's credits side by side, where its classes are read off: the map's legend, the dashboard card and the
+ * recap. Open-Meteo's, and the short Copernicus notice for the ERA5 data the codes start from, in English as its
+ * licence words it.
  */
 export function FireDangerCredit() {
   return <><OpenMeteoCredit /> · <span lang="en">{c3sAttribution()}</span></>;

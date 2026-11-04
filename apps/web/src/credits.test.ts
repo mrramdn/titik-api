@@ -6,6 +6,7 @@ import { LangProvider } from './i18n';
 import { c3sAttribution, c3sNotice, c3sYears, CC_BY_URL, FireDangerCredit, OPEN_METEO_URL } from './components/OpenMeteo';
 import { EOX_ATTRIBUTION, sentinelUnderEsri } from './map/layers';
 import { riskAttribution } from './map/risk';
+import { RiskLegend } from './map/RiskParts';
 import { AboutDoc, aboutText } from './pages/About';
 import { OPENFREEMAP_URL, OPENMAPTILES_URL, OSM_COPYRIGHT_URL, ScreenshotCredits } from './pages/Landing';
 
@@ -58,6 +59,14 @@ describe('the Copernicus notice', () => {
       expect(textOf(render(createElement(FireDangerCredit), 'id'))).toBe(`Data cuaca: Open-Meteo.com · ${C3S_SHORT}`);
       expect(textOf(render(createElement(FireDangerCredit), 'en'))).toBe(`Weather data by Open-Meteo.com · ${C3S_SHORT}`);
       expect(render(createElement(FireDangerCredit), 'id')).toContain(`<span lang="en">${C3S_SHORT}</span>`);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('stands next to Open-Meteo\'s credit in the map\'s fire danger legend, open on screen beside the classes', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-04T05:00:00Z'), toFake: ['Date'] });
+    try {
+      expect(textOf(render(createElement(RiskLegend), 'id'))).toContain(`Data cuaca: Open-Meteo.com · ${C3S_SHORT}`);
+      expect(textOf(render(createElement(RiskLegend), 'en'))).toContain(`Weather data by Open-Meteo.com · ${C3S_SHORT}`);
     } finally { vi.useRealTimers(); }
   });
 });
