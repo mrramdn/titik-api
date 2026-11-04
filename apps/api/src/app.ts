@@ -19,7 +19,7 @@ import { installRecap } from './recap.js';
 import { installStatus } from './status.js';
 import { installShare } from './share.js';
 import { installRisk } from './weather.js';
-import { installWind } from './wind.js';
+import { installWind, type WindOptions } from './wind.js';
 import { installImagery, type ImageryOptions } from './imagery.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
@@ -31,6 +31,8 @@ interface Options {
   tiles?: Partial<TileLimits>;
   /** Open-Meteo for the wind at an incident; the tests answer it themselves. */
   weatherFetch?: typeof fetch;
+  /** The wind lookups' budget of calls to Open-Meteo, and their clock; the tests set their own. */
+  wind?: Partial<Omit<WindOptions, 'fetch'>>;
   /** Esri World Imagery: key, caps and clock come from the environment; the tests set their own and answer Esri. */
   imagery?: Partial<ImageryOptions>;
   /** Where the log goes instead of stdout (the tests read it). */
@@ -90,7 +92,7 @@ export async function createApp(options: Options = {}) {
   installRecap(app, pool);
   installStatus(app, pool);
   installRisk(app, pool);
-  installWind(app, pool, options.weatherFetch);
+  installWind(app, pool, { ...options.wind, ...(options.weatherFetch && { fetch: options.weatherFetch }) });
   installShare(app, pool, webDir);
   const imagery = installImagery(app, pool, origins, options.imagery);
 
