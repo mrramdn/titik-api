@@ -10,7 +10,7 @@ import rateLimit from '@fastify/rate-limit';
 import type pg from 'pg';
 import { createPool } from './db.js';
 import { installAuth } from './auth.js';
-import { installIncidents } from './incidents.js';
+import { installIncidents, type TileLimits } from './incidents.js';
 import { installAlerts } from './alerts.js';
 import { installVerifications } from './verifications.js';
 import { installDashboard } from './dashboard.js';
@@ -27,6 +27,8 @@ import { uploadsDirectory } from './uploads.js';
 
 interface Options {
   pool?: pg.Pool; uploadsDir?: string; webDir?: string; origins?: string[]; production?: boolean; logger?: boolean; trustProxy?: string | false; pushSender?: Sender; demoLogin?: boolean;
+  /** Limits on map tiles that miss the cache; the tests make them small. */
+  tiles?: Partial<TileLimits>;
   /** Open-Meteo for the wind at an incident; the tests answer it themselves. */
   weatherFetch?: typeof fetch;
   /** Esri World Imagery: key, caps and clock come from the environment; the tests set their own and answer Esri. */
@@ -80,7 +82,7 @@ export async function createApp(options: Options = {}) {
     reply.header('Permissions-Policy', 'geolocation=(self), camera=(self)');
   });
   installAuth(app, pool, origins, production, options.demoLogin);
-  installIncidents(app, pool);
+  installIncidents(app, pool, options.tiles);
   installAlerts(app, pool, options.pushSender);
   installVerifications(app, pool, uploadsDir);
   installDashboard(app, pool);

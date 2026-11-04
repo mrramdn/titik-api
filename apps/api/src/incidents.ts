@@ -1,7 +1,8 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { requireCondition, choice, object } from './errors.js';
 import { addDays, cardText, isCalendarDate, wibDay, type CardIncident, type Level } from './geo.js';
+import { addressKey } from './imagery.js';
 import type { Database, User } from './models.js';
 
 const OPEN = `('ditugaskan', 'menuju')`;
@@ -148,6 +149,35 @@ export class TileCache {
   clear() { this.entries.clear(); this.bytes = 0; }
   get totalBytes() { return this.bytes; }
   get count() { return this.entries.size; }
+}
+
+/** A place at a Gate, or none: its queue was full, or the deadline came first. */
+export type Admission = 'ok' | 'full' | 'timeout';
+
+/**
+ * At most `places` holders at once; up to `queue` more wait in order, each until its deadline. A holder that leaves
+ * hands its place to the first in line.
+ */
+export class Gate {
+  private holders = 0;
+  private line: { admit: (answer: Admission) => void; timer: NodeJS.Timeout }[] = [];
+  constructor(private readonly places: number, private readonly queue: number) {}
+  get free() { return this.holders < this.places; }
+  get idle() { return this.holders === 0 && this.line.length === 0; }
+  enter(deadline: number): Promise<Admission> {
+    if (this.holders < this.places) { this.holders++; return Promise.resolve('ok'); }
+    if (this.line.length >= this.queue) return Promise.resolve('full');
+    const wait = deadline - Date.now();
+    if (wait <= 0) return Promise.resolve('timeout');
+    return new Promise(admit => {
+      const waiter = { admit, timer: setTimeout(() => { this.line.splice(this.line.indexOf(waiter), 1); admit('timeout'); }, wait) };
+      this.line.push(waiter);
+    });
+  }
+  leave() {
+    const next = this.line.shift();
+    if (next) { clearTimeout(next.timer); next.admit('ok'); } else this.holders--;
+  }
 }
 
 /**
@@ -318,15 +348,42 @@ const tileHours = (value: unknown) => {
   return hours;
 };
 const tiles = new TileCache(32 * 1024 * 1024);
+/** Counts the clears: a tile cut before one may miss what changed, so it answers its requests but is not kept. */
+let generation = 0;
 let archiveDays: { at: number; body: unknown } | null = null;
 /**
  * Forgets every cut tile and the archive day counts, so the next request shows new detections, checks and tasks at once.
  * A demo account's check or task changes only what demo sessions see: with `scope` 'demo' just their tiles go.
  */
 export const clearTileCache = (scope?: Scope) => {
+  generation++;
   if (scope === 'demo') { tiles.drop(key => key.endsWith('/demo')); return; }
   tiles.clear(); archiveDays = null; firstDay = null;
 };
+
+/**
+ * Limits on tiles that miss the cache. Each costs a query on the pool every route shares (10 connections), and one
+ * address sending tiles nobody else asks for kept /health, sign-in and field reports waiting behind them for a minute.
+ */
+export interface TileLimits {
+  /** Tile queries running at once; the rest of the pool stays free for everything else. */
+  running: number;
+  /** Tile queries waiting for one of those places, in order; past this a tile is 503. */
+  waiting: number;
+  /** The longest a tile waits, in milliseconds, before it is 503. */
+  waitMs: number;
+  /** Uncached tiles one address (an IPv6 address by its /64) has at the gate, running or waiting there. */
+  perAddress: number;
+  /**
+   * Its further uncached tiles wait for one of those places, at most this many per address and `queued` from all
+   * addresses together; past either a tile is 429. A map view on a desktop screen asks for 16 to 48 tiles at once, and
+   * about a hundred as the map opens, and MapLibre never asks again for a refused tile: refused at once, they would
+   * leave holes in the map.
+   */
+  queuedPerAddress: number;
+  queued: number;
+}
+export const tileLimits: TileLimits = { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200 };
 /** Bytes held by the tile cache, for the tests. */
 export const tileCacheBytes = () => tiles.totalBytes;
 
@@ -345,10 +402,63 @@ function passes(detections: { satellite: string; acq_at: Date }[]) {
   return events.map(({ end: _end, ...event }) => event);
 }
 
-export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
+export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: Partial<TileLimits> = {}) {
+  const limits: TileLimits = { ...tileLimits, ...options };
+  // Tile queries that miss the cache pass one gate; in front of it every address has a lane of its own.
+  const gate = new Gate(limits.running, limits.waiting);
+  const lanes = new Map<string, Gate>();
+  let queued = 0;
+  /** A place for one more uncached tile of `address`: at once, or after its earlier ones. */
+  async function enterLane(address: string, deadline: number): Promise<Admission> {
+    let lane = lanes.get(address);
+    if (!lane) lanes.set(address, (lane = new Gate(limits.perAddress, limits.queuedPerAddress)));
+    if (lane.free) return lane.enter(deadline);
+    if (queued >= limits.queued) return 'full';
+    queued++;
+    try { return await lane.enter(deadline); } finally { queued--; }
+  }
+  function leaveLane(address: string) {
+    const lane = lanes.get(address)!;
+    lane.leave();
+    if (lane.idle) lanes.delete(address);
+  }
+  // Requests for a tile that is being cut wait for that query instead of starting their own.
+  const flights = new Map<string, Promise<Buffer | null>>();
+  /** The tile from the query already cutting it, or from a new one through the gate; null when the gate refused. */
+  function cut(key: string, ttl: number, deadline: number, query: () => Promise<Buffer>) {
+    const started = generation, id = `${started} ${key}`;
+    let flight = flights.get(id);
+    if (!flight) {
+      flight = (async () => {
+        if ((await gate.enter(deadline)) !== 'ok') return null;
+        try {
+          const body = await query();
+          if (generation === started) tiles.set(key, body, ttl);
+          return body;
+        } finally { gate.leave(); }
+      })().finally(() => flights.delete(id));
+      flights.set(id, flight);
+    }
+    return flight;
+  }
+  // A refused tile is kept nowhere, and the map may ask again in two seconds. One warning a minute at most, no address.
+  let refused = { busy: 0, perAddress: 0 }, warnedAt = -Infinity;
+  function refuse(reply: FastifyReply, status: 429 | 503) {
+    refused[status === 503 ? 'busy' : 'perAddress']++;
+    if (Date.now() - warnedAt >= 60_000) {
+      app.log.warn(refused, 'Map tiles refused: uncached tile queries are at their limits');
+      warnedAt = Date.now();
+      refused = { busy: 0, perAddress: 0 };
+    }
+    return reply.code(status).header('Retry-After', '2').header('Cache-Control', 'no-store').send({ error: status === 503
+      ? { code: 'BUSY', message: 'Server sedang sibuk memuat peta. Coba lagi beberapa detik lagi.' }
+      : { code: 'RATE_LIMITED', message: 'Terlalu banyak ubin peta diminta sekaligus. Tunggu sebentar, lalu muat ulang peta.' } });
+  }
+
   // Panning through the archive asks for many tiles: tiles have their own limit per address instead of the general
-  // one (a route with its own limit is counted only there), so a busy map never locks the lists and forms.
-  app.get('/api/v1/tiles/:layer/:z/:x/:y', { config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } }, async (request, reply) => {
+  // one (a route with its own limit is counted only there), so a busy map never locks the lists and forms. An IPv6
+  // client counts by its /64, which it can fill with addresses of its own.
+  app.get('/api/v1/tiles/:layer/:z/:x/:y', { config: { rateLimit: { max: 3000, timeWindow: '1 minute', keyGenerator: request => addressKey(request.ip) } } }, async (request, reply) => {
     const params = object(request.params);
     const query = object(request.query ?? {});
     const layer = choice(params.layer, ['desa', 'kabupaten', 'kejadian', 'deteksi'] as const, 'Lapisan');
@@ -364,11 +474,20 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}/${scope}`;
     let body = tiles.get(key);
     if (!body) {
-      const sqlParams: unknown[] = [z, x, y];
-      const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
-        : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
-      body = ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
-      tiles.set(key, body, ttl);
+      // A miss costs a query on the shared pool. The address takes one of its places at the gate, or waits its turn for
+      // one; then the request joins the query already cutting this tile, or starts one through the gate.
+      const address = addressKey(request.ip), deadline = Date.now() + limits.waitMs;
+      const place = await enterLane(address, deadline);
+      if (place !== 'ok') return refuse(reply, place === 'full' ? 429 : 503);
+      try {
+        body = tiles.get(key) ?? (await cut(key, ttl, deadline, async () => {
+          const sqlParams: unknown[] = [z, x, y];
+          const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
+            : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
+          return ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
+        })) ?? undefined;
+      } finally { leaveLane(address); }
+      if (!body) return refuse(reply, 503);
     }
     reply.header('Content-Type', 'application/vnd.mapbox-vector-tile')
       .header('Cache-Control', scope === 'demo' ? 'private, max-age=60' : `public, max-age=${ttl / 1000}`);
