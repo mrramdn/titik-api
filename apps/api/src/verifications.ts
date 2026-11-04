@@ -35,6 +35,14 @@ async function readReport(request: FastifyRequest) {
   return { fields, photo };
 }
 
+/**
+ * SQL: a distance (`metres`, an SQL expression) to one significant figure, in steps of at least 100 m and never under
+ * 100 m: 122,291 m becomes 100,000, 93,203 becomes 90,000, 2,345 becomes 2,000, 456 becomes 500 and 40 becomes 100.
+ * NULL stays NULL.
+ */
+export const roughDistanceSql = (metres: string) => `CASE WHEN (${metres}) IS NOT NULL
+  THEN greatest(100, round((${metres})::numeric, -greatest(2, floor(log(greatest((${metres})::numeric, 1))))::integer))::integer END`;
+
 const optionalNumber = (value: unknown, name: string, min: number, max: number) => {
   if (value === undefined || value === null || value === '') return null;
   const number = Number(value);
@@ -86,15 +94,19 @@ export function installVerifications(app: FastifyInstance, pool: pg.Pool, upload
     try {
       const saved = await transaction(pool, async client => {
         // A demo account is shared, and other visitors read its reports: the place stored is the incident's centre, never
-        // the visitor's position, though the distance to the hotspot is measured from that position as for anyone.
+        // the visitor's position. The distance to the hotspot is measured from that position, as for anyone, but kept only
+        // to one significant figure and at least 100 m (2,345 m as 2,000): every demo session reads it, and three exact
+        // distances from one place would give that place away to a tenth of a metre. A real check keeps its metres.
         const inserted = await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, note, latitude, longitude, accuracy_m,
             distance_m, observed_at, photo_url, photo_thumb_url, is_demo)
           SELECT $1, $2, $3, $4, $5, $6,
             CASE WHEN $7::float8 IS NULL THEN NULL WHEN $13::boolean THEN ST_Y(i.centroid) ELSE $7::float8 END,
             CASE WHEN $8::float8 IS NULL THEN NULL WHEN $13::boolean THEN ST_X(i.centroid) ELSE $8::float8 END,
             CASE WHEN $13::boolean THEN NULL ELSE $9::numeric END,
-            CASE WHEN $7::float8 IS NULL THEN NULL ELSE round(ST_Distance(ST_SetSRID(ST_MakePoint($8::float8, $7::float8), 4326)::geography, i.centroid::geography))::integer END,
-            $10, $11, $12, $13 FROM incidents i WHERE i.id = $1
+            CASE WHEN $7::float8 IS NULL THEN NULL WHEN $13::boolean THEN ${roughDistanceSql('d.m')} ELSE round(d.m)::integer END,
+            $10, $11, $12, $13
+          FROM incidents i, LATERAL (SELECT ST_Distance(ST_SetSRID(ST_MakePoint($8::float8, $7::float8), 4326)::geography, i.centroid::geography) AS m) d
+          WHERE i.id = $1
           ON CONFLICT (client_uuid) DO NOTHING RETURNING id`,
         [incident.id, user.id, clientUuid, status, falseAlarmKind, note, latitude, longitude, accuracy, observedAt, photoUrl, thumbUrl, user.demo]);
         requireCondition(inserted.rows[0], 409, 'CONFLICT', 'Laporan ini sudah diterima.');

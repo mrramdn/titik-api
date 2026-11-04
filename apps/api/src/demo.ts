@@ -114,7 +114,7 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
     }
 
     // Sample checks land on recent incidents, first in the demo volunteer's own villages, then in the OKI pilot. Like
-    // every demo check they keep a distance and store the incident centre as their place.
+    // every demo check they store the incident centre as their place and a rounded distance (see verifications.ts).
     const candidates = (await client.query(`SELECT DISTINCT ON (i.village_id) i.id, i.first_detected_at, ST_X(i.centroid) AS lon, ST_Y(i.centroid) AS lat,
         (i.village_id = ANY($1::text[]))::integer * 2 + (v.regency = 'Ogan Komering Ilir')::integer AS rank
       FROM incidents i JOIN villages v ON v.id = i.village_id
@@ -124,7 +124,7 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
     for (const [index, incident] of candidates.entries()) {
       const example = examples[index]!;
       await client.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, note, latitude, longitude, accuracy_m, distance_m, observed_at, received_at, is_demo)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 140, $8, $8, true)`,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 100, $8, $8, true)`,
       [incident.id, mpa.id, randomUUID(), example.status, example.note, incident.lat, incident.lon,
         new Date(incident.first_detected_at.getTime() + example.minutes * 60_000)]);
     }

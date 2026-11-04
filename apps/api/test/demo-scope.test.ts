@@ -14,6 +14,7 @@ import { demoAccounts, resetDemo } from '../src/demo.js';
 import { statusLabel, wibDay } from '../src/geo.js';
 import { clearTileCache } from '../src/incidents.js';
 import { refreshIncidents } from '../src/ingest.js';
+import { roughDistanceSql } from '../src/verifications.js';
 import { account, bigVillage, emptyDatabase, insertDetection, insertIncident, testPool, tileOf, wibMidnight, type Account } from './fixtures.js';
 import { readTile } from './mvt.js';
 
@@ -233,23 +234,35 @@ test('a demo false alarm adds no fixed heat source and leaves the priority alone
   assert.ok(realAfter.score < realBefore.score && realAfter.score_parts.some((part: any) => part.points === -40));
 });
 
-test('a demo field check stores the incident centre and the distance to it, never the position of the visitor', async () => {
+test('a demo field check stores the incident centre and a rounded distance to it, never the position of the visitor', async () => {
   const row = async (name: string) => (await pool.query('SELECT latitude, longitude, accuracy_m, distance_m FROM verifications WHERE incident_id = $1 ORDER BY received_at LIMIT 1',
     [incidents[name]])).rows[0];
   const centre = await centroidOf('A');
   const visitor = { lat: points.A!.lat + 0.004, lon: points.A!.lon };
-  const distance = (await pool.query('SELECT round(ST_Distance(ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, centroid::geography))::int AS m FROM incidents WHERE id = $3',
-    [visitor.lon, visitor.lat, incidents.A])).rows[0].m;
-  assert.ok(distance > 400 && distance < 500);
-  assert.deepEqual(await row('A'), { latitude: centre.lat, longitude: centre.lon, accuracy_m: null, distance_m: distance });
-  // A real volunteer's report keeps the position and accuracy that were sent.
+  const distance = async (name: string, from: { lat: number; lon: number }) => (await pool.query(`SELECT round(ST_Distance(ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+    centroid::geography))::int AS m FROM incidents WHERE id = $3`, [from.lon, from.lat, incidents[name]])).rows[0].m as number;
+  const exact = await distance('A', visitor);
+  assert.ok(exact > 400 && exact < 450);
+  // Every demo session reads it: the distance is kept to one significant figure, in steps of at least 100 m.
+  assert.deepEqual(await row('A'), { latitude: centre.lat, longitude: centre.lon, accuracy_m: null, distance_m: 400 });
+  // A real volunteer's report keeps the position and accuracy that were sent, and the distance in metres.
   const position = { latitude: points.F!.lat - 0.002, longitude: points.F!.lon + 0.001 };
   await check(real.mpa.token, 'F', 'asap_bara', { note: 'Asap tipis dari kanal', ...position, accuracyM: 6 });
   const stored = await row('F');
   assert.deepEqual([stored.latitude, stored.longitude, Number(stored.accuracy_m)], [position.latitude, position.longitude, 6]);
+  assert.equal(stored.distance_m, await distance('F', { lat: position.latitude, lon: position.longitude }));
   // Without a position nothing is stored, as for anyone.
   await check(demo.mpa, 'G', 'tidak_terjangkau');
   assert.deepEqual(await row('G'), { latitude: null, longitude: null, accuracy_m: null, distance_m: null });
+});
+
+test('a demo distance keeps one significant figure, in steps of at least 100 m and never under 100 m', async () => {
+  const rough = async (metres: number | null) => (await pool.query(`SELECT ${roughDistanceSql('$1::float8')} AS m`, [metres])).rows[0].m as number | null;
+  for (const [metres, kept] of [[122_291, 100_000], [93_203, 90_000], [2_345, 2_000], [456, 500], [40, 100], [0, 100], [149.6, 100], [150, 200], [949, 900],
+    [950, 1_000], [99_999, 100_000]]) {
+    assert.equal(await rough(metres!), kept, `${metres} m`);
+  }
+  assert.equal(await rough(null), null, 'no position, no distance');
 });
 
 test('one open task per incident in each scope: a demo task never blocks a real one, and a check closes the task of its own scope', async () => {
@@ -330,7 +343,7 @@ test('the groundcheck export: real rows for a real account; a demo session also 
   const row = demoRows.get(a)!, centre = await centroidOf('A');
   assert.deepEqual([row.status_verifikasi, row.akun_demo, row.keterangan, row.foto], [statusLabel.asap_bara, 'ya', '', '']);
   assert.deepEqual([Number(row.lintang_pemeriksa), Number(row.bujur_pemeriksa)], [centre.lat, centre.lon], 'the incident centre, not where the visitor stood');
-  assert.ok(Number(row.jarak_pemeriksa_m) > 400);
+  assert.equal(Number(row.jarak_pemeriksa_m), 400, 'the rounded distance');
   // A real row keeps its result and distance, not the volunteer's position, note or photo.
   const realRow = demoRows.get(f)!;
   assert.deepEqual([realRow.status_verifikasi, realRow.akun_demo, realRow.jarak_pemeriksa_m], [statusLabel.asap_bara, 'tidak', realRows.get(f)!.jarak_pemeriksa_m]);
