@@ -10,7 +10,7 @@ import { highDanger, highDangerName, riskAge, riskAgeChangesAt, riskDayIndex, ty
 import { MAP_PATH } from '../../routes';
 import { earliest, nextWibMidnight, useClock } from '../../clock';
 import { shiftDate, todayWib, useLoad } from './data';
-import { OpenMeteoCredit } from '../OpenMeteo';
+import { FireDangerCredit } from '../OpenMeteo';
 
 const text = dict({
   id: {
@@ -71,7 +71,7 @@ export function DangerCard({ province, version }: { province: string; version?: 
         <h2 id="bd-danger-title">{t('title')}</h2>
         <p>{card.summary}</p>
         {card.age && <p className="caption">{card.age}.</p>}
-        {computed && <p className="caption">{t('note')} <OpenMeteoCredit /></p>}
+        {computed && <p className="caption">{t('note')} <FireDangerCredit /></p>}
       </div>
       {card.link && <Link to={MAP_PATH} state={card.link} className="btn btn-secondary btn-sm">{t('map')}</Link>}
     </section>

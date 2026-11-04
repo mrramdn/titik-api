@@ -8,7 +8,7 @@ import { dict, fill, type Lang } from '../i18n';
 import { formatter } from '../format';
 import { windName } from '../geo';
 import { shiftDate, todayWib } from '../components/bpbd/data';
-import { C3S_ATTRIBUTION, OPEN_METEO_ATTRIBUTION } from '../components/OpenMeteo';
+import { c3sAttribution, OPEN_METEO_ATTRIBUTION } from '../components/OpenMeteo';
 
 export const fwiClasses: FwiClass[] = ['rendah', 'sedang', 'tinggi', 'sangat_tinggi'];
 /**
@@ -22,7 +22,7 @@ export const fwiOpacity: Record<FwiClass, number> = { rendah: 0.25, sedang: 0.32
 export const fwiRange: Record<FwiClass, string> = { rendah: '0–1', sedang: '2–6', tinggi: '7–13', sangat_tinggi: '> 13' };
 export const BMKG_FWI_URL = 'https://www.bmkg.go.id/cuaca/karhutla/fwi';
 /** The fire danger cells' credit on the map: Open-Meteo, and Copernicus for the ERA5 data the codes start from. */
-export const RISK_ATTRIBUTION = `${OPEN_METEO_ATTRIBUTION} · ${C3S_ATTRIBUTION}`;
+export const riskAttribution = (now = new Date()) => `${OPEN_METEO_ATTRIBUTION} · ${c3sAttribution(now)}`;
 
 export const fwiLabel: Record<Lang, Record<FwiClass, string>> = {
   id: { rendah: 'Rendah', sedang: 'Sedang', tinggi: 'Tinggi', sangat_tinggi: 'Sangat tinggi' },

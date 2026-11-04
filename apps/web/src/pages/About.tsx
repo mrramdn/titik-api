@@ -1,7 +1,7 @@
 import { Fragment, useEffect, type ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import { Shell } from '../components/Shell';
-import { C3S_NOTICE } from '../components/OpenMeteo';
+import { c3sNotice } from '../components/OpenMeteo';
 import { SIPONGI_URL } from '../components/shell/freshness';
 import { dict, useLang, useT } from '../i18n';
 import { EOX_CLOUDLESS_URL, EOX_LICENCE_URL, EOX_URL } from '../map/layers';
@@ -183,7 +183,7 @@ export function AboutDoc() {
   const links: Record<string, ReactNode> = {
     lance: out(LANCE_DISCLAIMER_URL, t('lance')), sipongi: out(SIPONGI_URL, 'SiPongi+'), spartan: out(SPARTAN_URL, 'BMKG SPARTAN'),
     esri: out(ESRI_TERMS_URL, t('esri')), contact: out(contactUrl[lang], t('contact')),
-    eox: eoxCredit, eoxLicence: out(EOX_LICENCE_URL, 'CC BY-NC-SA 4.0'), c3s: <q lang="en">{C3S_NOTICE}</q>,
+    eox: eoxCredit, eoxLicence: out(EOX_LICENCE_URL, 'CC BY-NC-SA 4.0'), c3s: <q lang="en">{c3sNotice()}</q>,
   };
   return (
     <article className="doc">

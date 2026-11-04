@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LangProvider } from './i18n';
-import { C3S_NOTICE, CC_BY_URL, OPEN_METEO_URL } from './components/OpenMeteo';
+import { c3sAttribution, c3sNotice, c3sYears, CC_BY_URL, FireDangerCredit, OPEN_METEO_URL } from './components/OpenMeteo';
 import { EOX_ATTRIBUTION, sentinelUnderEsri } from './map/layers';
-import { RISK_ATTRIBUTION } from './map/risk';
+import { riskAttribution } from './map/risk';
 import { AboutDoc, aboutText } from './pages/About';
 import { OPENFREEMAP_URL, OPENMAPTILES_URL, OSM_COPYRIGHT_URL, ScreenshotCredits } from './pages/Landing';
 
@@ -33,8 +33,31 @@ describe('credits on the map', () => {
   });
 
   it('credits the fire danger cells to Open-Meteo, linked, and to Copernicus for the ERA5 data they start from', () => {
-    expect(RISK_ATTRIBUTION).toContain(`<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)`);
-    expect(textOf(RISK_ATTRIBUTION)).toBe(`Open-Meteo.com (CC BY 4.0) · ${C3S_SHORT}`);
+    const now = new Date('2026-11-04T05:00:00Z');
+    expect(riskAttribution(now)).toContain(`<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)`);
+    expect(textOf(riskAttribution(now))).toBe(`Open-Meteo.com (CC BY 4.0) · ${C3S_SHORT}`);
+  });
+});
+
+describe('the Copernicus notice', () => {
+  it('is dated 2026, and 2026 to the current WIB year once that is later', () => {
+    // 23.59.59 WIB on 31 Dec 2026, then midnight WIB.
+    expect(c3sYears(new Date('2026-12-31T16:59:59Z'))).toBe('2026');
+    expect(c3sYears(new Date('2026-12-31T17:00:00Z'))).toBe('2026–2027');
+    expect(c3sYears(new Date('2028-06-01T00:00:00Z'))).toBe('2026–2028');
+    const later = new Date('2027-03-01T00:00:00Z');
+    expect(c3sAttribution(later)).toBe('Contains modified Copernicus Climate Change Service information 2026–2027');
+    expect(c3sNotice(later)).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026–2027. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
+    expect(textOf(riskAttribution(later))).toBe('Open-Meteo.com (CC BY 4.0) · Contains modified Copernicus Climate Change Service information 2026–2027');
+  });
+
+  it('stands next to Open-Meteo\'s credit where the fire danger shows without the map, in English in both languages', () => {
+    vi.useFakeTimers({ now: new Date('2026-11-04T05:00:00Z'), toFake: ['Date'] });
+    try {
+      expect(textOf(render(createElement(FireDangerCredit), 'id'))).toBe(`Data cuaca: Open-Meteo.com · ${C3S_SHORT}`);
+      expect(textOf(render(createElement(FireDangerCredit), 'en'))).toBe(`Weather data by Open-Meteo.com · ${C3S_SHORT}`);
+      expect(render(createElement(FireDangerCredit), 'id')).toContain(`<span lang="en">${C3S_SHORT}</span>`);
+    } finally { vi.useRealTimers(); }
   });
 });
 
@@ -73,13 +96,13 @@ describe('the About page', () => {
       expect(html, lang).toContain('href="https://cloudless.eox.at"');
       expect(html, lang).toContain('href="https://eox.at"');
       expect(html, lang).toContain('href="https://creativecommons.org/licenses/by-nc-sa/4.0/"');
-      expect(html, lang).toContain(`<q lang="en">${C3S_NOTICE}</q>`);
+      expect(html, lang).toContain(`<q lang="en">${c3sNotice()}</q>`);
       expect(html, lang).toContain('<h2 id="sumber">');
       expect(text, lang).not.toMatch(/\{\w+\}/);
     }
     expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Bahaya kebakaran juga memakai data reanalisis ERA5 dari Copernicus Climate Change Service: ');
     expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: ');
-    expect(C3S_NOTICE).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
+    expect(c3sNotice(new Date('2026-11-04T05:00:00Z'))).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
   });
 
   it('says in its privacy section what the web server logs, why, and that it deletes it after 14 days', () => {
