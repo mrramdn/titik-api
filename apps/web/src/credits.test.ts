@@ -66,7 +66,7 @@ describe('the landing page\'s screenshots', () => {
   const credits = (lang: 'id' | 'en') => render(createElement(MemoryRouter, null, createElement(ScreenshotCredits)), lang);
 
   it('credit the base map and Open-Meteo in one linked line, in both languages', () => {
-    expect(textOf(credits('id'))).toBe('Gambar layar di halaman ini: peta dasar OpenFreeMap (membuka tab baru) © OpenMapTiles (membuka tab baru), '
+    expect(textOf(credits('id'))).toBe('Tangkapan layar di halaman ini: peta dasar OpenFreeMap (membuka tab baru) © OpenMapTiles (membuka tab baru), '
       + 'data © kontributor OpenStreetMap (membuka tab baru) · Data cuaca: Open-Meteo.com (CC BY 4.0 (membuka tab baru)) · semua sumber data dan lisensinya ada di halaman Tentang.');
     expect(textOf(credits('en'))).toBe('Screenshots on this page: base map OpenFreeMap (opens in a new tab) © OpenMapTiles (opens in a new tab), '
       + 'data © OpenStreetMap contributors (opens in a new tab) · Weather data by Open-Meteo.com (CC BY 4.0 (opens in a new tab)) · every data source and its licence is on the About page.');

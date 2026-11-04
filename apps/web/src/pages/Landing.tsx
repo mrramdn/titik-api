@@ -66,7 +66,7 @@ export const landingText = dict({
     areaAlt: 'Fakta kejadian: 11 titik panas, FRP maksimum 31,5 MW, lahan gambut, permukiman terdekat 910 m, dan indikasi luas area panas 123 ha dengan catatan bahwa itu bukan luas terbakar.',
     offlineTitle: 'Cek lapangan tanpa sinyal', offline: 'Laporan disimpan di ponsel dan terkirim sendiri saat sinyal kembali.',
     offlineAlt: 'Cek lapangan di ponsel tanpa sinyal: pesan bahwa laporan disimpan di ponsel dan terkirim saat ada sinyal, kejadian prioritas tinggi di Desa Talang Rimba, dan tombol Simpan, kirim saat ada sinyal.',
-    credits: 'Gambar layar di halaman ini: peta dasar {openfreemap} © {openmaptiles}, data © {osm} · {weather} ({licence}) · semua sumber data dan lisensinya ada di {sources}.',
+    credits: 'Tangkapan layar di halaman ini: peta dasar {openfreemap} © {openmaptiles}, data © {osm} · {weather} ({licence}) · semua sumber data dan lisensinya ada di {sources}.',
     osm: 'kontributor OpenStreetMap', creditsSources: 'halaman Tentang',
     honestTitle: 'Batas data dan layanan',
     honest1: 'Titik panas tidak selalu berarti kebakaran. Setiap titik panas perlu dicek di lapangan.',

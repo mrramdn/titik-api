@@ -144,6 +144,21 @@ describe('the field check page', () => {
     });
   });
 
+  it('tells a demo account that only the approximate distance to the hotspot is kept, in both languages', async () => {
+    const banner = () => [...page().host.querySelectorAll('.banner')].map(b => b.textContent).find(text => text?.startsWith('Akun demo') || text?.startsWith('Demo accounts'));
+    await open();
+    await until(() => Boolean(banner()));
+    expect(banner()).toBe('Akun demo dipakai bersama: catatan dan foto terlihat oleh pengunjung lain dan dihapus pukul 03.00 WIB. '
+      + 'Posisi GPS-mu tidak disimpan, hanya perkiraan jaraknya ke titik panas, misalnya sekitar 4 km.');
+    await view!.unmount();
+    view = null;
+    localStorage.setItem('titikapi.lang', 'en');
+    await open();
+    await until(() => Boolean(banner()));
+    expect(banner()).toBe('Demo accounts are shared: notes and photos are visible to other visitors and are deleted at 03:00 WIB. '
+      + 'Your GPS position is not stored, only its approximate distance to the hotspot, such as about 4 km.');
+  });
+
   it('still sends a visitor without an account to /masuk', async () => {
     localStorage.removeItem('titikapi.user');
     api.state.session = null;
