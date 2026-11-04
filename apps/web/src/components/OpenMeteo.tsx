@@ -7,8 +7,8 @@ import { dict, useT } from '../i18n';
 export const OPEN_METEO_URL = 'https://open-meteo.com/';
 /** CC BY 4.0, the licence of Open-Meteo's data, which its terms ask to link. */
 export const CC_BY_URL = 'https://creativecommons.org/licenses/by/4.0/';
-/** For the map's attribution control while the fire danger cells show. */
-export const OPEN_METEO_ATTRIBUTION = `<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)`;
+/** For the map's attribution control while the fire danger cells show: Open-Meteo and its licence, both linked. */
+export const OPEN_METEO_ATTRIBUTION = `<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> (<a href="${CC_BY_URL}" target="_blank" rel="noopener">CC BY 4.0</a>)`;
 
 const wibYear = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta', year: 'numeric' });
 /**

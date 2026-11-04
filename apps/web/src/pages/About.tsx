@@ -1,7 +1,7 @@
 import { Fragment, useEffect, type ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import { Shell } from '../components/Shell';
-import { c3sNotice } from '../components/OpenMeteo';
+import { c3sNotice, CC_BY_URL, OPEN_METEO_URL } from '../components/OpenMeteo';
 import { SIPONGI_URL } from '../components/shell/freshness';
 import { dict, useLang, useT } from '../i18n';
 import { EOX_CLOUDLESS_URL, EOX_LICENCE_URL, EOX_URL } from '../map/layers';
@@ -67,7 +67,7 @@ export const aboutText = dict({
     source4: 'Permukiman dan kawasan industri dari © kontributor OpenStreetMap, ODbL.',
     source5: 'Peta dasar OpenFreeMap, © OpenMapTiles. Citra satelit harian dari NASA EOSDIS GIBS. Citra detail Sentinel-2 cloudless 2023, lisensi {eoxLicence}: {eox}',
     source6: 'Citra HD dari Esri World Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community.',
-    source7: 'Data cuaca untuk bahaya kebakaran dan angin di kejadian dari Open-Meteo.com, CC BY 4.0. Bahaya kebakaran juga memakai data reanalisis ERA5 dari Copernicus Climate Change Service: {c3s}',
+    source7: 'Data cuaca untuk bahaya kebakaran dan angin di kejadian dari {openMeteo}, {ccBy}. Bahaya kebakaran juga memakai data reanalisis ERA5 dari Copernicus Climate Change Service: {c3s}',
     contest: 'Hackathon JOINTS UGM 2026, tema Sustainability, subtema 4. Tim Close AI, Universitas Bina Nusantara.',
   },
   en: {
@@ -130,7 +130,7 @@ export const aboutText = dict({
     source4: 'Settlements and industrial areas from © OpenStreetMap contributors, ODbL.',
     source5: 'Base map OpenFreeMap, © OpenMapTiles. Daily satellite imagery from NASA EOSDIS GIBS. Detailed imagery Sentinel-2 cloudless 2023, licensed {eoxLicence}: {eox}',
     source6: 'HD imagery from Esri World Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community.',
-    source7: 'Weather data for fire danger and the wind at incidents from Open-Meteo.com, CC BY 4.0. The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: {c3s}',
+    source7: 'Weather data for fire danger and the wind at incidents from {openMeteo}, {ccBy}. The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: {c3s}',
     contest: 'Hackathon JOINTS UGM 2026, theme Sustainability, subtheme 4. Team Close AI, Universitas Bina Nusantara.',
   },
 });
@@ -184,6 +184,8 @@ export function AboutDoc() {
     lance: out(LANCE_DISCLAIMER_URL, t('lance')), sipongi: out(SIPONGI_URL, 'SiPongi+'), spartan: out(SPARTAN_URL, 'BMKG SPARTAN'),
     esri: out(ESRI_TERMS_URL, t('esri')), contact: out(contactUrl[lang], t('contact')),
     eox: eoxCredit, eoxLicence: out(EOX_LICENCE_URL, 'CC BY-NC-SA 4.0'), c3s: <q lang="en">{c3sNotice()}</q>,
+    // Open-Meteo's terms ask for a link to its site and to the licence of its data.
+    openMeteo: out(OPEN_METEO_URL, 'Open-Meteo.com'), ccBy: out(CC_BY_URL, 'CC BY 4.0'),
   };
   return (
     <article className="doc">

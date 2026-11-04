@@ -32,9 +32,10 @@ describe('credits on the map', () => {
     expect(sentinelUnderEsri().attribution).toBe(EOX_ATTRIBUTION);
   });
 
-  it('credits the fire danger cells to Open-Meteo, linked, and to Copernicus for the ERA5 data they start from', () => {
+  it('credits the fire danger cells to Open-Meteo and its licence, both linked, and to Copernicus for the ERA5 data they start from', () => {
     const now = new Date('2026-11-04T05:00:00Z');
-    expect(riskAttribution(now)).toContain(`<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)`);
+    expect(riskAttribution(now)).toContain(`<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> `
+      + `(<a href="${CC_BY_URL}" target="_blank" rel="noopener">CC BY 4.0</a>)`);
     expect(textOf(riskAttribution(now))).toBe(`Open-Meteo.com (CC BY 4.0) · ${C3S_SHORT}`);
   });
 });
@@ -103,6 +104,16 @@ describe('the About page', () => {
     expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Bahaya kebakaran juga memakai data reanalisis ERA5 dari Copernicus Climate Change Service: ');
     expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: ');
     expect(c3sNotice(new Date('2026-11-04T05:00:00Z'))).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
+  });
+
+  it('links Open-Meteo and the CC BY 4.0 licence in its line on the weather data, in both languages', () => {
+    const line = { id: 'Data cuaca untuk bahaya kebakaran dan angin di kejadian dari Open-Meteo.com, CC BY 4.0.', en: 'Weather data for fire danger and the wind at incidents from Open-Meteo.com, CC BY 4.0.' };
+    for (const lang of ['id', 'en'] as const) {
+      const item = /<li>[^<]*<a[^>]*>Open-Meteo\.com<\/a>[^]*?<\/li>/.exec(render(createElement(AboutDoc), lang))?.[0] ?? '';
+      expect(textOf(item), lang).toContain(line[lang]);
+      expect([...item.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map(match => `${match[2]} ${match[1]}`), lang)
+        .toEqual([`Open-Meteo.com ${OPEN_METEO_URL}`, `CC BY 4.0 ${CC_BY_URL}`]);
+    }
   });
 
   it('says in its privacy section what the web server logs, why, and that it deletes it after 14 days', () => {
