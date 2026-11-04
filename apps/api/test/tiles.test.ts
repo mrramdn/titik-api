@@ -184,17 +184,20 @@ test('the tile limit of 3000 a minute counts an IPv6 client by its /64', async (
   assert.equal(await remaining('203.0.113.9'), 2999);
 });
 
-test('the tile cache drops the least recently used tiles once it holds too many bytes', () => {
-  const cache = new TileCache(3 * (1000 + 256));
+test('the tile cache drops the least recently used tiles once it holds too many bytes, each counted with the 416 bytes its entry holds', () => {
+  // 416: what an entry held besides its body on Node 26, the cache at its limit and dropping its oldest.
+  const cache = new TileCache(3 * (1000 + 416));
   const body = () => Buffer.alloc(1000);
   cache.set('a', body(), 60_000); cache.set('b', body(), 60_000); cache.set('c', body(), 60_000);
   assert.ok(cache.get('a'), 'a is used again, b is now the oldest');
   cache.set('d', body(), 60_000);
   assert.equal(cache.get('b'), undefined);
   assert.ok(cache.get('a') && cache.get('c') && cache.get('d'));
-  assert.equal(cache.totalBytes, 3 * 1256);
+  assert.equal(cache.totalBytes, 3 * 1416);
   cache.clear();
   assert.equal(cache.totalBytes, 0);
+  cache.set('empty', Buffer.alloc(0), 60_000);
+  assert.equal(cache.totalBytes, 416, 'an empty tile costs its entry');
 });
 
 test('a cached tile owns memory of its own size, so a small one keeps no slab of the shared buffer pool alive', () => {
@@ -209,7 +212,7 @@ test('a cached tile owns memory of its own size, so a small one keeps no slab of
     assert.deepEqual([kept.byteOffset, kept.buffer.byteLength, kept.length], [0, 180, 180], key);
     assert.ok(kept.equals(body), `${key} keeps its bytes`);
   }
-  assert.equal(cache.totalBytes, 2 * (180 + 256));
+  assert.equal(cache.totalBytes, 2 * (180 + 416));
   // A body that owns all of its memory is kept as it is, an empty tile too.
   const whole = Buffer.allocUnsafeSlow(300).fill(1);
   cache.set('whole', whole, 60_000);
@@ -227,7 +230,7 @@ test('expired tiles leave without being asked for: at the least recently used en
   now += 2_000;
   cache.set('c', body(), 3_600_000);
   assert.equal(cache.count, 2, 'a expired at the least recently used end and went with the next set');
-  assert.equal(cache.totalBytes, 2 * 356);
+  assert.equal(cache.totalBytes, 2 * 516);
   // d expires behind b and c, which are fresh: it stays until the sweep.
   cache.set('d', body(), 1_000);
   now += 30_000;
@@ -236,7 +239,7 @@ test('expired tiles leave without being asked for: at the least recently used en
   now += 30_000;
   cache.set('f', body(), 3_600_000);
   assert.equal(cache.count, 4, 'b c e f: a minute on, the sweep took d');
-  assert.equal(cache.totalBytes, 4 * 356);
+  assert.equal(cache.totalBytes, 4 * 516);
   assert.ok(cache.get('b') && cache.get('f'));
   now += 3_600_000;
   assert.equal(cache.get('b'), undefined, 'a tile asked for after it expired is gone too');

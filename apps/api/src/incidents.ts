@@ -91,10 +91,17 @@ export async function archiveDate(db: Database, value: unknown) {
 
 /** How often the tile cache looks through all its entries for expired ones. */
 const SWEEP_MS = 60_000;
+/**
+ * What a cached tile holds besides its body: its key, its entry, the Buffer and its memory, and its share of the map.
+ * Measured on Node 26 with the cache at its limit and dropping its oldest: 377 bytes for an empty tile, 391 to 416 for
+ * tiles of 64 to 512 bytes, 345 for a kilobyte. The largest is counted, so the limit stays above what the cache holds.
+ */
+export const TILE_ENTRY_BYTES = 416;
 
 /**
  * Cut vector tiles, each kept until it expires, the least recently used dropped first once they hold more than `limit`
- * bytes together (an empty tile counts a little too, so many of them cannot grow the map without bound).
+ * bytes together, each counted with what its entry holds besides its body (so many empty tiles cannot grow the map
+ * without bound either).
  *
  * pg hands a bytea over as a slice of Node's shared buffer pool (64 KiB slabs on Node 24), and a cached slice keeps its
  * whole slab alive: small tiles held about five times the limit in memory. A body that does not own all of its memory
@@ -106,7 +113,7 @@ export class TileCache {
   private bytes = 0;
   private sweptAt: number;
   constructor(private readonly limit: number, private readonly now: () => number = Date.now) { this.sweptAt = now(); }
-  private cost = (body: Buffer) => body.length + 256;
+  private cost = (body: Buffer) => body.length + TILE_ENTRY_BYTES;
   private remove(key: string, entry: { body: Buffer }) {
     this.entries.delete(key);
     this.bytes -= this.cost(entry.body);
