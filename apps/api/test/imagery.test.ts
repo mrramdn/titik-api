@@ -186,6 +186,8 @@ test('a share is counted per IPv4 address and per IPv6 /64, which one client can
   assert.equal(networkKey('2001:db8::1'), '2001:db8:0:0::/56');
   assert.equal(networkKey('203.0.113.9'), null);
   assert.equal(networkKey('::ffff:203.0.113.9'), null);
+  // A request whose client has gone has no address; its key must not throw in the rate limit.
+  assert.deepEqual([addressKey(undefined), networkKey(undefined)], ['', null]);
 });
 
 test('a tile goes to Esri as z/y/x with the key and comes back as its bytes and type, private, without a cookie', async () => {

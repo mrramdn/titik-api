@@ -116,9 +116,12 @@ export function fromApp(headers: FastifyRequest['headers'], origins: Iterable<st
   return false;
 }
 
-/** An IPv4 address as it is (also IPv6-mapped), or the eight groups of an IPv6 address as numbers. */
-function parseAddress(ip: string): { ipv4: string } | { groups: number[] } {
-  const address = ip.trim().toLowerCase().replace(/%.*$/, '');
+/**
+ * An IPv4 address as it is (also IPv6-mapped), or the eight groups of an IPv6 address as numbers. A request whose client
+ * has gone has no address, and counts as ''.
+ */
+function parseAddress(ip: string | undefined): { ipv4: string } | { groups: number[] } {
+  const address = (ip ?? '').trim().toLowerCase().replace(/%.*$/, '');
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address)?.[1];
   if (mapped) return { ipv4: mapped };
   if (!address.includes(':')) return { ipv4: address };
@@ -134,13 +137,13 @@ function parseAddress(ip: string): { ipv4: string } | { groups: number[] } {
  * What a share is counted for: an IPv4 address as it is (also IPv6-mapped), an IPv6 address by its /64 network, which
  * one client can fill with addresses of its own.
  */
-export function addressKey(ip: string): string {
+export function addressKey(ip: string | undefined): string {
   const address = parseAddress(ip);
   return 'ipv4' in address ? address.ipv4 : `${address.groups.slice(0, 4).map(group => group.toString(16)).join(':')}::/64`;
 }
 
 /** The /56 network of an IPv6 address, which an ISP often gives one customer, so 256 /64s; null for an IPv4 address. */
-export function networkKey(ip: string): string | null {
+export function networkKey(ip: string | undefined): string | null {
   const address = parseAddress(ip);
   if ('ipv4' in address) return null;
   const [a = 0, b = 0, c = 0, d = 0] = address.groups;
