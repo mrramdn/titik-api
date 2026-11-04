@@ -64,6 +64,13 @@ describe('small grey text', () => {
     }
   });
 
+  it('meets AA in --chrome-text-3 on the three dark surfaces, and on a hovered or chosen role row', () => {
+    for (const background of [dark, darkRaised, over('var(--chrome-800)')]) expect(contrast(over('var(--chrome-text-3)', background), background)).toBeGreaterThanOrEqual(4.5);
+    const chosen = colorOf('./styles/shell.css', '.rolelist-item.on .rolelist-text small');
+    expect(contrast(over(chosen, subtle), subtle)).toBeGreaterThanOrEqual(4.5);
+    expect(colorOf('./styles/shell.css', '.rolelist-item:hover:not(:disabled) .rolelist-text small')).toBe(chosen);
+  });
+
   it('keeps the dark sidebar\'s muted and empty lines at least as clear as before the change', () => {
     // #8a837c, the old --text-3, measured 4.95:1 there; the new one would measure 3.78:1.
     for (const selector of ['.dark .muted', '.dark .empty']) {

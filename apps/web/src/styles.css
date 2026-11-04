@@ -6,7 +6,7 @@
   --chrome-line: rgb(255 255 255 / 0.08);
   --chrome-text: #f3efea;
   --chrome-text-2: rgb(243 239 234 / 0.68);
-  --chrome-text-3: rgb(243 239 234 / 0.48);
+  --chrome-text-3: rgb(243 239 234 / 0.54);
   --surface-bg: #f6f6f4;
   --surface-card: #ffffff;
   --surface-subtle: #efeeeb;
@@ -47,7 +47,7 @@ h1, h2, h3, p { margin: 0; }
 .label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-3); }
 .dark .label, .label.on-dark { color: var(--chrome-text-3); }
 .muted { color: var(--text-3); }
-/* --text-3 is a grey for light surfaces: on the dark sidebar it measures 3.78:1, and --chrome-text-3 a hair under 4.5:1. */
+/* --text-3 is a grey for light surfaces: on the dark sidebar it measures 3.78:1. Use --chrome-text-2 or -3 there. */
 .dark .muted { color: var(--chrome-text-2); }
 .title-28 { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.4px; }
 .title-24 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.3px; }

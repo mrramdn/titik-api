@@ -65,6 +65,8 @@
 .rolelist-text { display: grid; gap: 1px; min-width: 0; }
 .rolelist-text b { font-weight: 500; }
 .rolelist-text small { font-size: 12px; line-height: 16px; color: var(--text-3); }
+/* On the grey of a hovered or chosen row --text-3 measures 4.21:1. */
+.rolelist-item:hover:not(:disabled) .rolelist-text small, .rolelist-item.on .rolelist-text small { color: var(--text-2); }
 .rolelist-error { padding: 4px 10px; font-size: 12px; line-height: 16px; color: #9a3b0a; }
 .acct-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 10px; border-top: 1px solid var(--surface-line); font-size: 13px; color: var(--text-2); }
 .acct-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
