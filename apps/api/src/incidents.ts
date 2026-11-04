@@ -505,6 +505,80 @@ export const tileLimits: TileLimits = { running: 4, waiting: 64, waitMs: 10_000,
 /** Bytes held by the tile cache, for the tests. */
 export const tileCacheBytes = () => tiles.totalBytes;
 
+/**
+ * Refusals of a gate: each kept nowhere and to be asked for again in two seconds, counted in a warning at most once a
+ * minute that names no address.
+ */
+function refusals(app: FastifyInstance, warning: string, answers: Record<'busy' | 'perAddress', { status: 429 | 503; code: string; message: string }>) {
+  let refused = { busy: 0, perAddress: 0 }, warnedAt = -Infinity;
+  return (reply: FastifyReply, reason: 'busy' | 'perAddress') => {
+    refused[reason]++;
+    if (Date.now() - warnedAt >= 60_000) {
+      app.log.warn(refused, warning);
+      warnedAt = Date.now();
+      refused = { busy: 0, perAddress: 0 };
+    }
+    const { status, code, message } = answers[reason];
+    return reply.code(status).header('Retry-After', '2').header('Cache-Control', 'no-store').send({ error: { code, message } });
+  };
+}
+/** The client has gone (a map cancels the tiles that leave its view): nobody reads this, and nothing was refused. */
+const gone = (reply: FastifyReply) => reply.code(499).send();
+
+/**
+ * GET routes open to visitors or to the passwordless demo accounts whose queries grow with what they are asked, and that
+ * answer from no cache. On a copy of the production data, at their heaviest: the incident list 0.3–0.6 s (an archive
+ * week, 500 rows), the counts 0.2 s and the regency bubbles 0.13 s (an archive week), the village search 0.15 s and a
+ * village 0.15 s, the demo BPBD dashboard 0.09 s (seven days), its recap 0.26 s of queries and its export 0.3 s. Three
+ * visitors asking for lists within the general limit took all ten connections, and /health waited 20 seconds. Left out:
+ * /archive/days and /risk, which answer from a cache that visitors cannot empty (a miss costs 0.29 s once per ten
+ * minutes, and 0.03 s per archive day), and an incident's own page.
+ */
+export const heavyReads = ['/api/v1/incidents', '/api/v1/summary', '/api/v1/regions/summary', '/api/v1/villages', '/api/v1/villages/:id',
+  '/api/v1/dashboard', '/api/v1/recap', '/api/v1/export/groundcheck.csv'];
+/**
+ * Limits on those reads, which share the pool with everything else: with the tile gate's four, at least three of the
+ * ten connections stay free for /health, sign-in, field reports and the rest.
+ */
+export interface ReadLimits {
+  /** Heavy reads running at once. */
+  running: number;
+  /** Heavy reads waiting for one of those places, in order; past this a read is 503. */
+  waiting: number;
+  /** The longest a read waits, in milliseconds, before it is 503. */
+  waitMs: number;
+  /**
+   * Heavy reads one address (an IPv6 address by its /64) has at the gate, running or waiting there; past this a read is
+   * 503 at once. A page asks for at most six at a time.
+   */
+  perAddress: number;
+}
+export const readLimits: ReadLimits = { running: 3, waiting: 32, waitMs: 10_000, perAddress: 8 };
+
+/** Puts every route of `heavyReads` registered after it behind one gate. */
+export function installReadGate(app: FastifyInstance, options: Partial<ReadLimits> = {}) {
+  const limits: ReadLimits = { ...readLimits, ...options };
+  const gate = new Gate(limits.running, limits.waiting);
+  // An address's places have no line: past them the read is refused at once, so a backlog never builds behind the gate.
+  const places = new Places({ perAddress: limits.perAddress, perNetwork: Infinity, queuedPerAddress: 0, queuedPerNetwork: 0, queued: 0, alwaysQueued: 0 });
+  const busy = { status: 503, code: 'BUSY', message: 'Server sedang sibuk. Coba lagi beberapa detik lagi.' } as const;
+  const refuse = refusals(app, 'Heavy reads refused: their queries are at their limits', { busy, perAddress: busy });
+  app.addHook('onRoute', route => {
+    if (!heavyReads.includes(route.url) || ![route.method].flat().every(method => method === 'GET' || method === 'HEAD')) return;
+    const handler = route.handler;
+    route.handler = async function (this: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
+      const address = addressKey(request.ip), deadline = Date.now() + limits.waitMs;
+      const place = await places.enter(address, null, deadline, request.signal);
+      if (place !== 'ok') return place === 'gone' ? gone(reply) : refuse(reply, 'perAddress');
+      try {
+        const turn = await gate.enter(deadline, request.signal);
+        if (turn !== 'ok') return turn === 'gone' ? gone(reply) : refuse(reply, 'busy');
+        try { return await handler.call(this, request, reply); } finally { gate.leave(); }
+      } finally { places.leave(address, null); }
+    };
+  });
+}
+
 /** Passes of one satellite over an incident: detections less than 30 minutes apart belong to one pass. */
 function passes(detections: { satellite: string; acq_at: Date }[]) {
   const last = new Map<string, { kind: 'detected'; at: string; satellite: string; count: number; end: number }>();
@@ -601,19 +675,10 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
     waiting.set(mine, flight);
     return ride(flight, signal);
   }
-  // A refused tile is kept nowhere, and the map may ask again in two seconds. One warning a minute at most, no address.
-  let refused = { busy: 0, perAddress: 0 }, warnedAt = -Infinity;
-  function refuse(reply: FastifyReply, status: 429 | 503) {
-    refused[status === 503 ? 'busy' : 'perAddress']++;
-    if (Date.now() - warnedAt >= 60_000) {
-      app.log.warn(refused, 'Map tiles refused: uncached tile queries are at their limits');
-      warnedAt = Date.now();
-      refused = { busy: 0, perAddress: 0 };
-    }
-    return reply.code(status).header('Retry-After', '2').header('Cache-Control', 'no-store').send({ error: status === 503
-      ? { code: 'BUSY', message: 'Server sedang sibuk memuat peta. Coba lagi beberapa detik lagi.' }
-      : { code: 'RATE_LIMITED', message: 'Terlalu banyak ubin peta diminta sekaligus. Tunggu sebentar, lalu muat ulang peta.' } });
-  }
+  const refuse = refusals(app, 'Map tiles refused: uncached tile queries are at their limits', {
+    busy: { status: 503, code: 'BUSY', message: 'Server sedang sibuk memuat peta. Coba lagi beberapa detik lagi.' },
+    perAddress: { status: 429, code: 'RATE_LIMITED', message: 'Terlalu banyak ubin peta diminta sekaligus. Tunggu sebentar, lalu muat ulang peta.' },
+  });
 
   // Panning through the archive asks for many tiles: tiles have their own limit per address instead of the general
   // one (a route with its own limit is counted only there), so a busy map never locks the lists and forms. An IPv6
@@ -639,9 +704,8 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
         : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
       return ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
     }));
-    // The client has gone (a map cancels the tiles that leave its view): nobody reads this, and nothing was refused.
-    if (body === 'gone') return reply.code(499).send();
-    if (typeof body === 'number') return refuse(reply, body);
+    if (body === 'gone') return gone(reply);
+    if (typeof body === 'number') return refuse(reply, body === 503 ? 'busy' : 'perAddress');
     reply.header('Content-Type', 'application/vnd.mapbox-vector-tile')
       .header('Cache-Control', scope === 'demo' ? 'private, max-age=60' : `public, max-age=${ttl / 1000}`);
     return body;

@@ -39,17 +39,16 @@ export function installRecap(app: FastifyInstance, pool: pg.Pool) {
     const scope = `JOIN villages v ON v.id = i.village_id
       WHERE i.first_detected_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Jakarta') AND i.first_detected_at < (($1::date + 1)::timestamp AT TIME ZONE 'Asia/Jakarta')
       ${province ? 'AND v.province = $2' : ''}`;
-    const [totals, regencies, villages, checks, tasks] = await Promise.all([
-      pool.query(`SELECT ${stats(viewer)} FROM incidents i ${scope}`, params),
-      pool.query(`SELECT v.regency AS name, min(v.province) AS province, ${stats(viewer)} FROM incidents i ${scope}
-        GROUP BY v.regency ORDER BY open_high DESC, incidents DESC, v.regency`, params),
-      pool.query(`SELECT v.id, min(v.name) AS name, min(v.district) AS district, min(v.regency) AS regency, ${stats(viewer)} FROM incidents i ${scope}
-        GROUP BY v.id ORDER BY incidents DESC, detections DESC, min(v.name) LIMIT 15`, params),
-      pool.query(`SELECT r.status, count(*)::integer AS count FROM verifications r JOIN incidents i ON i.id = r.incident_id JOIN villages v ON v.id = i.village_id
-        WHERE ${within('r.observed_at')}${s.rows('r')} ${province ? 'AND v.province = $2' : ''} GROUP BY r.status`, params),
-      pool.query(`SELECT a.status, count(*)::integer AS count FROM assignments a JOIN incidents i ON i.id = a.incident_id JOIN villages v ON v.id = i.village_id
-        WHERE (${within('a.created_at')} OR ${within('a.closed_at')})${s.rows('a')} ${province ? 'AND v.province = $2' : ''} GROUP BY a.status`, params),
-    ]);
+    // One query at a time: the recap holds one place at the gate for heavy reads, so it uses one connection, not five.
+    const totals = await pool.query(`SELECT ${stats(viewer)} FROM incidents i ${scope}`, params);
+    const regencies = await pool.query(`SELECT v.regency AS name, min(v.province) AS province, ${stats(viewer)} FROM incidents i ${scope}
+      GROUP BY v.regency ORDER BY open_high DESC, incidents DESC, v.regency`, params);
+    const villages = await pool.query(`SELECT v.id, min(v.name) AS name, min(v.district) AS district, min(v.regency) AS regency, ${stats(viewer)} FROM incidents i ${scope}
+      GROUP BY v.id ORDER BY incidents DESC, detections DESC, min(v.name) LIMIT 15`, params);
+    const checks = await pool.query(`SELECT r.status, count(*)::integer AS count FROM verifications r JOIN incidents i ON i.id = r.incident_id JOIN villages v ON v.id = i.village_id
+      WHERE ${within('r.observed_at')}${s.rows('r')} ${province ? 'AND v.province = $2' : ''} GROUP BY r.status`, params);
+    const tasks = await pool.query(`SELECT a.status, count(*)::integer AS count FROM assignments a JOIN incidents i ON i.id = a.incident_id JOIN villages v ON v.id = i.village_id
+      WHERE (${within('a.created_at')} OR ${within('a.closed_at')})${s.rows('a')} ${province ? 'AND v.province = $2' : ''} GROUP BY a.status`, params);
     const t = totals.rows[0];
     return { data: {
       date, province,

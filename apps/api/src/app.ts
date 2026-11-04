@@ -10,7 +10,7 @@ import rateLimit from '@fastify/rate-limit';
 import type pg from 'pg';
 import { createPool } from './db.js';
 import { installAuth } from './auth.js';
-import { installIncidents, type TileLimits } from './incidents.js';
+import { installIncidents, installReadGate, type ReadLimits, type TileLimits } from './incidents.js';
 import { installAlerts } from './alerts.js';
 import { installVerifications } from './verifications.js';
 import { installDashboard } from './dashboard.js';
@@ -27,8 +27,9 @@ import { uploadsDirectory } from './uploads.js';
 
 interface Options {
   pool?: pg.Pool; uploadsDir?: string; webDir?: string; origins?: string[]; production?: boolean; logger?: boolean; trustProxy?: string | false; pushSender?: Sender; demoLogin?: boolean;
-  /** Limits on map tiles that miss the cache; the tests make them small. */
+  /** Limits on map tiles that miss the cache, and on the heavy reads; the tests make them small. */
   tiles?: Partial<TileLimits>;
+  reads?: Partial<ReadLimits>;
   /** Open-Meteo for the wind at an incident; the tests answer it themselves. */
   weatherFetch?: typeof fetch;
   /** The wind lookups' budget of calls to Open-Meteo, and their clock; the tests set their own. */
@@ -92,6 +93,8 @@ export async function createApp(options: Options = {}) {
     reply.header('X-Frame-Options', 'DENY');
     reply.header('Permissions-Policy', 'geolocation=(self), camera=(self)');
   });
+  // Before the routes it guards: it wraps them as they are added.
+  installReadGate(app, options.reads);
   installAuth(app, pool, origins, production, options.demoLogin);
   installIncidents(app, pool, options.tiles);
   installAlerts(app, pool, options.pushSender);
