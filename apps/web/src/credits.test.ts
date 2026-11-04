@@ -59,4 +59,9 @@ describe('the About page', () => {
     expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: ');
     expect(C3S_NOTICE).toBe('Generated using or contains modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.');
   });
+
+  it('says in its privacy section what the web server logs, why, and that it deletes it after 14 days', () => {
+    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Server web mencatat alamat IP dan alamat yang diakses pada setiap permintaan, untuk keamanan dan untuk membatasi beban, lalu menghapus catatan itu secara otomatis setelah 14 hari.');
+    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The web server records the IP address and the requested address of each request, for security and load limits, and deletes these records automatically after 14 days.');
+  });
 });

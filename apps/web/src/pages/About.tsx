@@ -58,6 +58,7 @@ export const aboutText = dict({
     privacy1: 'Nama pelapor, catatan, dan foto hanya terlihat oleh pengguna yang masuk. Publik melihat status dan waktu cek.',
     privacy2: 'Data lokasi di dalam foto (EXIF) dibuang. Koordinat laporan hanya berasal dari GPS yang dipilih pelapor untuk dikirim.',
     privacy3: 'Titik Api tidak menampilkan pemilik lahan atau perusahaan. Status "bakar terkendali" mencatat apa yang terlihat di lapangan.',
+    privacy4: 'Server web mencatat alamat IP dan alamat yang diakses pada setiap permintaan, untuk keamanan dan untuk membatasi beban, lalu menghapus catatan itu secara otomatis setelah 14 hari.',
     sourcesTitle: 'Sumber data dan lisensi',
     source1: 'Titik panas dari NASA FIRMS, VIIRS 375 m NRT (NOAA-21, NOAA-20, dan S-NPP sampai 2 November 2026) dan MODIS Collection 6.1 NRT (Terra, Aqua).',
     sourceFirms: 'We acknowledge the use of data and/or imagery from NASA\'s Fire Information for Resource Management System (FIRMS), part of NASA\'s Earth Science Data and Information System (ESDIS).',
@@ -120,6 +121,7 @@ export const aboutText = dict({
     privacy1: 'Reporter names, notes and photos are visible only to signed-in users. The public sees the status and the check time.',
     privacy2: 'Location data inside photos (EXIF) is removed. Report coordinates come only from the GPS fix the reporter chooses to send.',
     privacy3: 'Titik Api does not show land owners or companies. The "controlled burn" status records what was seen in the field.',
+    privacy4: 'The web server records the IP address and the requested address of each request, for security and load limits, and deletes these records automatically after 14 days.',
     sourcesTitle: 'Data sources and licences',
     source1: 'Hotspots from NASA FIRMS, VIIRS 375 m NRT (NOAA-21, NOAA-20, and S-NPP until 2 November 2026) and MODIS Collection 6.1 NRT (Terra, Aqua).',
     sourceFirms: 'We acknowledge the use of data and/or imagery from NASA\'s Fire Information for Resource Management System (FIRMS), part of NASA\'s Earth Science Data and Information System (ESDIS).',
@@ -138,7 +140,7 @@ const steps: [Key, Key][] = [['howSatTitle', 'howSat'], ['howModisTitle', 'howMo
   ['howAssignTitle', 'howAssign'], ['howCheckTitle', 'howCheck'], ['howDashTitle', 'howDash']];
 const accuracy: Key[] = ['accuracy1', 'accuracy2', 'accuracy3', 'accuracy4', 'accuracy5', 'accuracy6', 'accuracy7'];
 const limits: Key[] = ['limit1', 'limit2', 'limit3', 'limit4', 'limit5'];
-const privacy: Key[] = ['privacy1', 'privacy2', 'privacy3'];
+const privacy: Key[] = ['privacy1', 'privacy2', 'privacy3', 'privacy4'];
 const terms: Key[] = ['terms1', 'terms2', 'terms3', 'terms4', 'terms5', 'terms6'];
 
 const LANCE_DISCLAIMER_URL = 'https://www.earthdata.nasa.gov/data/projects/lance/disclaimer';
