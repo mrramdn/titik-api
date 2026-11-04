@@ -310,6 +310,13 @@ const tileSql = {
 
 /** Live hotspot tiles change with every ingest; archive days and shapes do not. */
 const LIVE_TTL = 120_000, ARCHIVE_TTL = 3_600_000;
+/** The windows the map offers (a day, three days, a week): any other value would only add tiles nobody else asks for. */
+const TILE_HOURS = [24, 72, 168];
+const tileHours = (value: unknown) => {
+  const hours = value === undefined || value === '' ? 24 : Number(value);
+  requireCondition(TILE_HOURS.includes(hours), 400, 'INVALID_INPUT', 'Rentang waktu peta harus 24, 72, atau 168 jam. Muat ulang peta.');
+  return hours;
+};
 const tiles = new TileCache(32 * 1024 * 1024);
 let archiveDays: { at: number; body: unknown } | null = null;
 /**
@@ -348,7 +355,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     const z = Number(params.z), x = Number(params.x), y = Number(String(params.y).replace(/\.mvt$/, ''));
     requireCondition([z, x, y].every(Number.isInteger) && z >= 0 && z <= 16 && x >= 0 && y >= 0 && x < 2 ** z && y < 2 ** z, 400, 'INVALID_INPUT', 'Ubin peta tidak valid. Muat ulang peta.');
     const hotspots = layer === 'kejadian' || layer === 'deteksi';
-    const hours = hotspots ? hoursParam(query.hours, 24, 168) : 0;
+    const hours = hotspots ? tileHours(query.hours) : 0;
     const tanggal = hotspots ? await archiveDate(pool, query.tanggal) : null;
     const ttl = hotspots && !tanggal ? LIVE_TTL : ARCHIVE_TTL;
     // Everyone gets the real scope. A demo session asks for its own view of field checks and tasks with &lihat=demo;

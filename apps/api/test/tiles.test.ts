@@ -1,6 +1,47 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { FastifyInstance } from 'fastify';
+import { createApp } from '../src/app.js';
 import { TileCache } from '../src/incidents.js';
+import { emptyDatabase, testPool } from './fixtures.js';
+
+const pool = testPool();
+let directory: string;
+const open: FastifyInstance[] = [];
+async function tileApp() {
+  // No ArcGIS key, whatever the environment holds: these tests never reach Esri.
+  const { app } = await createApp({ pool, uploadsDir: join(directory, 'uploads'), webDir: join(directory, 'web'), logger: false, imagery: { key: undefined } });
+  open.push(app);
+  return app;
+}
+const tile = (app: FastifyInstance, path: string, remoteAddress = '127.0.0.1') => app.inject({ method: 'GET', url: `/api/v1/tiles/${path}`, remoteAddress });
+
+before(async () => {
+  directory = await mkdtemp(join(tmpdir(), 'titikapi-tiles-'));
+  await emptyDatabase(pool);
+});
+after(async () => {
+  for (const app of open) await app.close();
+  await pool.end();
+  if (directory) await rm(directory, { recursive: true, force: true });
+});
+
+test('hotspot tiles come for the windows the map offers, 24, 72 or 168 hours; any other is 400', async () => {
+  const app = await tileApp();
+  for (const layer of ['kejadian', 'deteksi']) {
+    for (const hours of ['24', '72', '168']) assert.equal((await tile(app, `${layer}/9/408/264.mvt?hours=${hours}`)).statusCode, 200, `${layer} ${hours}`);
+    assert.equal((await tile(app, `${layer}/9/408/264.mvt`)).statusCode, 200, `${layer} without hours: a day`);
+    for (const hours of ['137', '48', '1', '169', '0', '24.0001', 'abc']) {
+      const refused = await tile(app, `${layer}/9/408/264.mvt?hours=${hours}`);
+      assert.equal(refused.statusCode, 400, `${layer} ${hours}`);
+      assert.deepEqual(refused.json().error, { code: 'INVALID_INPUT', message: 'Rentang waktu peta harus 24, 72, atau 168 jam. Muat ulang peta.' });
+    }
+  }
+  assert.equal((await tile(app, 'desa/9/408/264.mvt?hours=137')).statusCode, 200, 'shapes take no window');
+});
 
 test('the tile cache drops the least recently used tiles once it holds too many bytes', () => {
   const cache = new TileCache(3 * (1000 + 256));
