@@ -19,6 +19,10 @@ interface Session {
 }
 const SessionContext = createContext<Session | null>(null);
 const cacheKey = 'titikapi.user';
+/** A session check that takes longer gives up, like one without a signal: a server that hangs says nothing either. */
+const CHECK_TIMEOUT_MS = 10_000;
+/** A session check without an answer is asked again after this long, and as soon as the browser is back online. */
+const RETRY_MS = 30_000;
 
 function cached(): User | null {
   try { return JSON.parse(localStorage.getItem(cacheKey) ?? 'null'); } catch { return null; }
@@ -41,19 +45,41 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // Counts the sign-ins and sign-outs that went through: a session check answered after one of them tells of the
   // session cookie before it, and is left out.
   const changes = useRef(0);
+  // Session checks in a row that got no answer; while there is one, the check is asked again (see below).
+  const [unanswered, setUnanswered] = useState(0);
   const check = useCallback((first: boolean) => {
     const at = changes.current;
-    return api<{ data: User | null }>('/auth/me')
-      .then(async response => { if (changes.current !== at) return; await settle(response.data); setChecked(true); })
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), CHECK_TIMEOUT_MS);
+    return api<{ data: User | null }>('/auth/me', { signal: timeout.signal })
+      .then(async response => {
+        if (changes.current !== at) return;
+        setUnanswered(0);
+        await settle(response.data);
+        setChecked(true);
+      })
       .catch(error => {
         if (changes.current !== at) return;
-        // Without a signal the last known account stays, so a volunteer in the field can still file reports; the
-        // outbox sends them under it once the signal is back.
-        if (error instanceof ApiError && error.status === 0) { if (first) { setOffline(true); setOutboxAccount(cached()?.id ?? null); } }
-        else return settle(null);
-      });
+        // Only an answer says who is signed in; without one (no signal, a timeout, a server error during a deploy, too
+        // many requests) the session cookie may well be valid. The last known account stays, for the screen and for
+        // the outbox, so a volunteer can still file reports and they go out under it. If the session did end, the
+        // outbox's first report meets a 401 and the check is asked again.
+        if (first) {
+          if (error instanceof ApiError && error.status === 0) setOffline(true);
+          setOutboxAccount(cached()?.id ?? null);
+        }
+        setUnanswered(count => count + 1);
+      })
+      .finally(() => clearTimeout(timer));
   }, [settle]);
   useEffect(() => { void check(true).finally(() => setReady(true)); }, [check]);
+  useEffect(() => {
+    if (!unanswered) return;
+    const again = () => { void check(false); };
+    const timer = setTimeout(again, RETRY_MS);
+    window.addEventListener('online', again);
+    return () => { clearTimeout(timer); window.removeEventListener('online', again); };
+  }, [unanswered, check]);
   // A waiting report met a 401: the session ended while this browser still shows the account. Asked again, the server
   // says who is signed in now (nobody, most likely), and the screen follows, so the volunteer can sign in again. Once
   // a minute at most.
@@ -80,6 +106,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const response = await api<{ data: { user: User } }>('/auth/demo', { method: 'POST', json: { role, client: 'web' } });
       changes.current++;
+      setUnanswered(0);
       await settle(response.data.user);
       setChecked(true);
       return response.data.user;
@@ -90,6 +117,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const response = await api<{ data: { user: User } }>('/auth/login', { method: 'POST', json: { email, password, client: 'web' } });
       changes.current++;
+      setUnanswered(0);
       await settle(response.data.user);
       setChecked(true);
       return response.data.user;
@@ -101,6 +129,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Answered (signed out, or there was no session to end): the server has said nobody is signed in here.
       const answered = await api('/auth/logout', { method: 'POST' }).then(() => true, error => error instanceof ApiError && error.status === 401);
       changes.current++;
+      // A check asked again later must not sign back in an account the visitor left (a logout without a signal leaves
+      // the session on the server).
+      setUnanswered(0);
       await settle(null);
       if (answered) setChecked(true);
     } finally { release(); }
