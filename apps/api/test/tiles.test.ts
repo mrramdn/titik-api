@@ -170,7 +170,7 @@ test('one tile asked for many times at once runs one query', async () => {
   const app = await tileApp({}, db);
   clearTileCache();
   const release = await holdRegencies();
-  // More than one address's places: the rest wait their turn and then find the tile in the cache.
+  // More than one address's places: the rest wait for the same query.
   const asked = Array.from({ length: 20 }, () => tile(app, 'kabupaten/5/25/15.mvt'));
   try {
     await until(async () => (await tileQueries()) === 1, 'the tile query');
@@ -183,6 +183,52 @@ test('one tile asked for many times at once runs one query', async () => {
   assert.ok(answers.every(response => response.statusCode === 200));
   assert.ok(answers.every(response => response.rawPayload.equals(answers[0]!.rawPayload)));
   assert.equal(counted.queries, 1);
+});
+
+test('visitors behind one address who ask for a tile already being cut wait for its query without taking a place', async () => {
+  // One place and no line: venue Wi-Fi or mobile CGNAT, where many visitors open the same cold view at once.
+  const { db, counted } = countingPool();
+  const app = await tileApp({ running: 1, waitMs: 5_000, perAddress: 1, queuedPerAddress: 0, queued: 0 }, db);
+  clearTileCache();
+  const release = await holdRegencies();
+  const behindOne = '198.51.100.250';
+  const first = tile(app, 'kabupaten/5/28/15.mvt', behindOne);
+  let others: Promise<LightMyRequestResponse>[];
+  try {
+    await until(async () => (await tileQueries()) === 1, 'the tile query');
+    others = Array.from({ length: 9 }, () => tile(app, 'kabupaten/5/28/15.mvt', behindOne));
+    await sleep(100);
+    // A tile nobody is cutting yet still needs a place, and the address has none left.
+    refused(await tile(app, 'kabupaten/5/29/15.mvt', behindOne), 429, 'RATE_LIMITED');
+  } finally {
+    await release();
+  }
+  assert.deepEqual([await first, ...(await Promise.all(others))].map(response => response.statusCode), Array(10).fill(200));
+  assert.equal(counted.queries, 1);
+});
+
+test('requests of one address for a tile its earlier request waits to start wait with it; another address starts its own', async () => {
+  const { db, counted } = countingPool();
+  const app = await tileApp({ running: 2, waitMs: 5_000, perAddress: 1, queuedPerAddress: 1 }, db);
+  clearTileCache();
+  const release = await holdRegencies();
+  const a = '203.0.113.70', b = '203.0.113.71';
+  const first = tile(app, 'kabupaten/5/0/15.mvt', a);
+  let answers: Promise<LightMyRequestResponse>[];
+  try {
+    await until(async () => (await tileQueries()) === 1, 'the first tile query');
+    // The first of these takes the address's one place in line; the other five wait with it.
+    answers = Array.from({ length: 6 }, () => tile(app, 'kabupaten/5/1/15.mvt', a));
+    await sleep(100);
+    refused(await tile(app, 'kabupaten/5/2/15.mvt', a), 429, 'RATE_LIMITED');
+    // Another address does not wait in that line: it starts the query with a place of its own, and the line joins it.
+    answers.push(tile(app, 'kabupaten/5/1/15.mvt', b));
+    await until(async () => (await tileQueries()) === 2, 'the second address\'s query');
+  } finally {
+    await release();
+  }
+  assert.deepEqual([await first, ...(await Promise.all(answers))].map(response => response.statusCode), Array(8).fill(200));
+  assert.equal(counted.queries, 2, 'each tile cut once');
 });
 
 test('a clear of the demo tiles during a public tile\'s query leaves that query shared and its tile kept', async () => {

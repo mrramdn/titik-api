@@ -460,23 +460,44 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
     lane.leave();
     if (lane.idle) lanes.delete(address);
   }
-  // Requests for a tile that is being cut wait for that query instead of starting their own.
-  const flights = new Map<string, Promise<Buffer | null>>();
-  /** The tile from the query already cutting it, or from a new one through the gate; null when the gate refused. */
-  function cut(key: string, scope: Scope, ttl: number, deadline: number, query: () => Promise<Buffer>) {
-    const started = generationOf(scope), id = `${started} ${key}`;
-    let flight = flights.get(id);
-    if (!flight) {
-      flight = (async () => {
-        if ((await gate.enter(deadline)) !== 'ok') return null;
+  /** A tile, or how to refuse it: 429 past the address's line, 503 when the gate is full or the wait ran out. */
+  type Cut = Buffer | 429 | 503;
+  // Requests for a tile take no place when they can wait for a query that will cut it: one that holds its place
+  // (`cutting`, by generation and key), or one their own address asked for that still waits for a place (`waiting`, by
+  // address too). Waiting for another address's request would put them at the back of that address's line.
+  const cutting = new Map<string, Promise<Cut>>();
+  const waiting = new Map<string, Promise<Cut>>();
+  /**
+   * A tile that missed the cache: from a query already on its way, or from a new one. Only a new query takes a place,
+   * one of its address's at the gate, waiting its turn for one if need be, and holds it until it ends.
+   */
+  function uncached(ip: string | undefined, key: string, scope: Scope, ttl: number, query: () => Promise<Buffer>): Promise<Cut> {
+    const started = generationOf(scope), id = `${started} ${key}`, address = addressKey(ip), mine = `${address} ${id}`;
+    const known = cutting.get(id) ?? waiting.get(mine);
+    if (known) return known;
+    const deadline = Date.now() + limits.waitMs;
+    let flight!: Promise<Cut>;
+    flight = (async () => {
+      const place = await enterLane(address, deadline);
+      if (waiting.get(mine) === flight) waiting.delete(mine);
+      if (place !== 'ok') return place === 'full' ? 429 : 503;
+      // While it waited for its place, the tile may have been cut, or a request from another address may have started on it.
+      const ready = tiles.get(key) ?? cutting.get(id);
+      if (ready) { leaveLane(address); return ready; }
+      cutting.set(id, flight);
+      try {
+        if ((await gate.enter(deadline)) !== 'ok') return 503;
         try {
           const body = await query();
           if (generationOf(scope) === started) tiles.set(key, body, ttl);
           return body;
         } finally { gate.leave(); }
-      })().finally(() => flights.delete(id));
-      flights.set(id, flight);
-    }
+      } finally {
+        leaveLane(address);
+        if (cutting.get(id) === flight) cutting.delete(id);
+      }
+    })();
+    waiting.set(mine, flight);
     return flight;
   }
   // A refused tile is kept nowhere, and the map may ask again in two seconds. One warning a minute at most, no address.
@@ -510,23 +531,14 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
     const scope: Scope = layer === 'kejadian' && query.lihat === 'demo' && request.user?.demo ? 'demo' : 'real';
     const ttl = (hotspots && !tanggal) || scope === 'demo' ? LIVE_TTL : ARCHIVE_TTL;
     const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}/${scope}`;
-    let body = tiles.get(key);
-    if (!body) {
-      // A miss costs a query on the shared pool. The address takes one of its places at the gate, or waits its turn for
-      // one; then the request joins the query already cutting this tile, or starts one through the gate.
-      const address = addressKey(request.ip), deadline = Date.now() + limits.waitMs;
-      const place = await enterLane(address, deadline);
-      if (place !== 'ok') return refuse(reply, place === 'full' ? 429 : 503);
-      try {
-        body = tiles.get(key) ?? (await cut(key, scope, ttl, deadline, async () => {
-          const sqlParams: unknown[] = [z, x, y];
-          const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
-            : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
-          return ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
-        })) ?? undefined;
-      } finally { leaveLane(address); }
-      if (!body) return refuse(reply, 503);
-    }
+    // A miss costs a query on the shared pool.
+    const body = tiles.get(key) ?? (await uncached(request.ip, key, scope, ttl, async () => {
+      const sqlParams: unknown[] = [z, x, y];
+      const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
+        : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
+      return ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
+    }));
+    if (typeof body === 'number') return refuse(reply, body);
     reply.header('Content-Type', 'application/vnd.mapbox-vector-tile')
       .header('Cache-Control', scope === 'demo' ? 'private, max-age=60' : `public, max-age=${ttl / 1000}`);
     return body;
