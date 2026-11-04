@@ -95,7 +95,7 @@ test('hotspot tiles come for the windows the map offers, 24, 72 or 168 hours; an
 });
 
 test('with tile queries held, misses past the gate get 503 at once or when the wait runs out, nothing is kept, and /health answers at once', async () => {
-  assert.deepEqual(tileLimits, { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200 }, 'the limits in production');
+  assert.deepEqual(tileLimits, { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200, alwaysQueued: 24 }, 'the limits in production');
   const app = await tileApp({ running: 2, waiting: 3, waitMs: 1_000 });
   clearTileCache();
   const release = await holdRegencies();
@@ -151,20 +151,23 @@ test('one address has its places at the gate; its further tiles wait their turn,
   assert.deepEqual((await Promise.all(served)).map(response => response.statusCode), [200, 200, 200, 200, 200]);
 });
 
-test('the line for places is shared by every address up to its size, and a tile still waiting at the deadline gets 503', async () => {
-  const app = await tileApp({ running: 1, waiting: 64, waitMs: 400, perAddress: 1, queuedPerAddress: 5, queued: 1 });
+test('the line for places is shared by every address up to its size, save a few for each address; a tile still waiting at the deadline gets 503', async () => {
+  const app = await tileApp({ running: 1, waiting: 64, waitMs: 400, perAddress: 1, queuedPerAddress: 5, queued: 2, alwaysQueued: 1 });
   clearTileCache();
   const release = await holdRegencies();
   const first = tile(app, 'kabupaten/5/20/15.mvt', '203.0.113.1');
   try {
     await until(async () => (await tileQueries()) === 1, 'the first tile query');
-    // The first address's next tile takes the one place in the line; the second address's first waits at the gate.
-    const inLine = tile(app, 'kabupaten/5/21/15.mvt', '203.0.113.1');
-    const atGate = tile(app, 'kabupaten/5/22/15.mvt', '203.0.113.2');
+    // The first address fills the line shared by every address; the second address's first tile waits at the gate.
+    const inLine = [21, 22].map(x => tile(app, `kabupaten/5/${x}/15.mvt`, '203.0.113.1'));
+    const atGate = tile(app, 'kabupaten/5/23/15.mvt', '203.0.113.2');
     await sleep(100);
-    refused(await tile(app, 'kabupaten/5/23/15.mvt', '203.0.113.2'), 429, 'RATE_LIMITED');
-    refused(await inLine, 503, 'BUSY');
-    refused(await atGate, 503, 'BUSY');
+    refused(await tile(app, 'kabupaten/5/24/15.mvt', '203.0.113.1'), 429, 'RATE_LIMITED');
+    // With nothing in line yet, the second address may join the full line, once.
+    const joined = tile(app, 'kabupaten/5/25/15.mvt', '203.0.113.2');
+    await sleep(100);
+    refused(await tile(app, 'kabupaten/5/26/15.mvt', '203.0.113.2'), 429, 'RATE_LIMITED');
+    for (const waited of [...inLine, atGate, joined]) refused(await waited, 503, 'BUSY');
   } finally {
     await release();
   }

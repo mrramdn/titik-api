@@ -197,6 +197,8 @@ export class Gate {
   constructor(private readonly places: number, private readonly queue: number) {}
   get free() { return this.holders < this.places; }
   get idle() { return this.holders === 0 && this.line.length === 0; }
+  /** How many wait in line. */
+  get waiting() { return this.line.length; }
   enter(deadline: number, signal?: AbortSignal): Promise<Admission> {
     if (signal?.aborted) return Promise.resolve('gone');
     if (this.holders < this.places) { this.holders++; return Promise.resolve('ok'); }
@@ -438,14 +440,19 @@ export interface TileLimits {
   perAddress: number;
   /**
    * Its further uncached tiles wait for one of those places, at most this many per address and `queued` from all
-   * addresses together; past either a tile is 429. A map view on a desktop screen asks for 16 to 48 tiles at once, and
-   * about a hundred as the map opens, and MapLibre never asks again for a refused tile: refused at once, they would
-   * leave holes in the map.
+   * addresses together (save `alwaysQueued`); past either a tile is 429. A map view on a desktop screen asks for 16 to
+   * 48 tiles at once, and about a hundred as the map opens, and MapLibre never asks again for a refused tile: refused at
+   * once, they would leave holes in the map.
    */
   queuedPerAddress: number;
   queued: number;
+  /**
+   * An address with fewer than this many tiles in the line may join it even when the line is full: two addresses
+   * filling it must not leave every other map with holes past its places.
+   */
+  alwaysQueued: number;
 }
-export const tileLimits: TileLimits = { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200 };
+export const tileLimits: TileLimits = { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200, alwaysQueued: 24 };
 /** Bytes held by the tile cache, for the tests. */
 export const tileCacheBytes = () => tiles.totalBytes;
 
@@ -475,7 +482,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
     let lane = lanes.get(address);
     if (!lane) lanes.set(address, (lane = new Gate(limits.perAddress, limits.queuedPerAddress)));
     if (lane.free) return lane.enter(deadline, signal);
-    if (queued >= limits.queued) return 'full';
+    if (queued >= limits.queued && lane.waiting >= limits.alwaysQueued) return 'full';
     queued++;
     try { return await lane.enter(deadline, signal); } finally { queued--; }
   }
