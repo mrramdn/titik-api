@@ -20,7 +20,7 @@ import { installStatus } from './status.js';
 import { installShare } from './share.js';
 import { installRisk } from './weather.js';
 import { installWind, type WindOptions } from './wind.js';
-import { installImagery, type ImageryOptions } from './imagery.js';
+import { addressKey, installImagery, type ImageryOptions } from './imagery.js';
 import { ApiError } from './errors.js';
 import type { Sender } from './push.js';
 import { uploadsDirectory } from './uploads.js';
@@ -70,8 +70,10 @@ export async function createApp(options: Options = {}) {
   await mkdir(uploadsDir, { recursive: true });
   await app.register(cookie);
   await app.register(cors, { origin: [...origins], credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] });
-  // The plugin throws what the builder returns, so it must carry its own status. Only API calls count.
+  // The plugin throws what the builder returns, so it must carry its own status. Only API calls count. Every limit, the
+  // routes' own included (sign-in, imagery), counts an IPv6 client by its /64, which it can fill with addresses of its own.
   await app.register(rateLimit, { max: request => (request.method === 'GET' ? 900 : 300), timeWindow: '1 minute', allowList: request => !request.url.startsWith('/api/'),
+    keyGenerator: request => addressKey(request.ip),
     errorResponseBuilder: (_request, context) => new ApiError(context.statusCode, 'RATE_LIMITED', 'Terlalu banyak permintaan. Tunggu satu menit, lalu ulangi.') });
   await app.register(multipart, { limits: { fileSize: 6 * 1024 * 1024, files: 1, fields: 12, fieldSize: 4096 } });
   await app.register(staticFiles, { root: uploadsDir, prefix: '/uploads/', index: false, dotfiles: 'deny', setHeaders(reply) {

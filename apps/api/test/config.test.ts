@@ -48,6 +48,21 @@ test('responses send the origin, never the path, to other sites', async () => {
   }
 });
 
+test('every limit counts an IPv6 client by its /64: the general one and the sign-in one', async () => {
+  const first = await get('/api/v1/health', '2001:db8:77:1::1');
+  const remaining = Number(first.headers['x-ratelimit-remaining']);
+  const same = await get('/api/v1/health', '2001:db8:77:1:ffff:ffff:ffff:fffe');
+  assert.equal(Number(same.headers['x-ratelimit-remaining']), remaining - 1, 'another address of the same /64 shares the count');
+  const other = await get('/api/v1/health', '2001:db8:77:2::1');
+  assert.equal(Number(other.headers['x-ratelimit-remaining']), Number(first.headers['x-ratelimit-limit']) - 1, 'another /64 counts on its own');
+  const login = (k: number) => app.inject({ method: 'POST', url: '/api/v1/auth/login', remoteAddress: `2001:db8:77:3::${(k + 1).toString(16)}`,
+    payload: { email: 'nobody@titikapi.test', password: 'wrong' } });
+  for (let k = 0; k < 30; k++) assert.notEqual((await login(k)).statusCode, 429, `sign-in ${k + 1}`);
+  const refused = await login(30);
+  assert.equal(refused.statusCode, 429, 'the 31st sign-in from the same /64, each from an address of its own');
+  assert.equal(refused.json().error.code, 'RATE_LIMITED');
+});
+
 test('map tiles have their own limit of 3000 a minute and do not use up the general one', async () => {
   // A client of its own, so the requests of the other tests do not count.
   const client = '192.0.2.10';
