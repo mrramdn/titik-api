@@ -93,7 +93,8 @@ const hourKey = (day: string, hour: number) => `${day}T${String(hour).padStart(2
  * (start_date/end_date for the archive, past_days/forecast_days for the forecast). The archive has nothing after
  * `archiveUntil`, like ERA5 a few days behind. Every URL is recorded.
  */
-export function fakeOpenMeteo(today: string, archiveUntil: string, value: (source: 'archive' | 'forecast', lat: number, time: string) => number[], urls: string[]) {
+export function fakeOpenMeteo(today: string, archiveUntil: string, value: (source: 'archive' | 'forecast', lat: number, time: string, lon: number) => number[],
+  urls: string[]) {
   return (async (input: string | URL | Request) => {
     const url = new URL(String(input));
     urls.push(url.toString());
@@ -107,7 +108,7 @@ export function fakeOpenMeteo(today: string, archiveUntil: string, value: (sourc
       for (let day = first; day <= last; day = addDays(day, 1)) {
         for (let hour = 0; hour < 24; hour++) {
           hourly.time!.push(hourKey(day, hour));
-          const values = archive && day > archiveUntil ? names.map(() => null) : value(archive ? 'archive' : 'forecast', lat, hourKey(day, hour));
+          const values = archive && day > archiveUntil ? names.map(() => null) : value(archive ? 'archive' : 'forecast', lat, hourKey(day, hour), lons[index]!);
           names.forEach((name, k) => hourly[name]!.push(values[k]));
         }
       }

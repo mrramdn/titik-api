@@ -11,6 +11,10 @@
 // recompute from the stored codes of the day before, so model analysis replaces yesterday's forecast. Requests stay
 // well inside Open-Meteo's free tier (10,000 calls a day; more than two weeks of data for one location counts as
 // several calls). A request that fails keeps the last values of its cells and is reported in one log line.
+//
+// A run works through the cells in blocks of at most 50, each fetched, computed and saved in its own transaction
+// before the next. So a spin-up holds one block in memory however long it reaches back, and a run cut short keeps the
+// blocks it saved: the next one spins up only the cells left.
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { createPool } from './db.js';
@@ -57,6 +61,8 @@ export interface WeatherOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Where a run with failed requests reports, in one line. */
   log?: (message: string) => void;
+  /** Cells per block, MAX_LOCATIONS by default (a spin-up block holds whole archive requests); the tests try others. */
+  blockSize?: number;
 }
 export interface WeatherResult { skipped: boolean; cells: number; rows: number; requests: number; failed: number; spinUp: number }
 
@@ -171,7 +177,14 @@ function merge(archive: Series | undefined, forecast: Series | undefined): Serie
   return merged;
 }
 
+/** Saves the rows of one block in one transaction. */
 async function save(client: pg.PoolClient, rows: WeatherRow[], fetchedAt: Date) {
+  await client.query('BEGIN');
+  try { await insertRows(client, rows, fetchedAt); await client.query('COMMIT'); }
+  catch (error) { await client.query('ROLLBACK'); throw error; }
+}
+
+async function insertRows(client: pg.PoolClient, rows: WeatherRow[], fetchedAt: Date) {
   for (let start = 0; start < rows.length; start += 5000) {
     const batch = rows.slice(start, start + 5000);
     const values = (key: keyof WeatherRow) => batch.map(row => row[key]);
@@ -190,7 +203,7 @@ async function save(client: pg.PoolClient, rows: WeatherRow[], fetchedAt: Date) 
 
 /**
  * Fetches the weather and recomputes the FWI codes of every cell, from the stored codes of the day before the first
- * day fetched again (or from the start values on the first run). One run at a time (advisory lock).
+ * day fetched again (or from the start values on the first run), block by block. One run at a time (advisory lock).
  */
 export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {}): Promise<WeatherResult> {
   const fetchImpl = options.fetch ?? fetch;
@@ -221,55 +234,60 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
         const key = `${start.day}|${archive}`;
         groups.set(key, [...(groups.get(key) ?? []), cell]);
       }
-      const series = new Map<number, Series>();
       const failures: string[] = [];
       // Each request waits out the pause the one before it asked for.
       let pause = 0;
-      const request = async (url: string, chunk: Cell[], pauseAfter: number) => {
+      const request = async (url: string, count: number, pauseAfter: number) => {
         if (pause) await sleep(pause);
         pause = pauseAfter;
         result.requests++;
-        try { return parseLocations(await getJson(url, fetchImpl, sleep), chunk.length); }
+        try { return parseLocations(await getJson(url, fetchImpl, sleep), count); }
         catch (error) { result.failed++; failures.push((error as Error).message); return null; }
       };
       for (const [key, group] of groups) {
         const [startDay, archive] = [key.split('|')[0]!, key.endsWith('true')];
-        const archived = new Map<number, Series>();
-        let pastDays = Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000)));
-        if (archive) {
-          const days = Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000);
-          const weight = Math.max(1, days / 14);
-          const size = Math.max(1, Math.min(MAX_LOCATIONS, Math.floor(ARCHIVE_CALLS_PER_REQUEST / weight)));
-          const archivePause = options.archivePauseMs ?? Math.ceil(((size * weight) / ARCHIVE_CALLS_PER_MINUTE) * 60_000);
-          let lastDay: string | null = null;
-          for (let k = 0; k < group.length; k += size) {
-            const chunk = group.slice(k, k + size);
-            const answer = await request(archiveUrl(chunk, startDay, addDays(today, -1)), chunk, archivePause);
-            answer?.forEach((hours, index) => {
-              archived.set(chunk[index]!.id, hours);
-              const latest = [...hours.keys()].at(-1)?.slice(0, 10);
-              if (latest && (!lastDay || latest < lastDay)) lastDay = latest;
+        const days = Math.round((Date.parse(today) - Date.parse(startDay)) / 86_400_000);
+        const weight = Math.max(1, days / 14);
+        const size = Math.max(1, Math.min(MAX_LOCATIONS, Math.floor(ARCHIVE_CALLS_PER_REQUEST / weight)));
+        const archivePause = options.archivePauseMs ?? Math.ceil(((size * weight) / ARCHIVE_CALLS_PER_MINUTE) * 60_000);
+        // Blocks of at most MAX_LOCATIONS cells, one forecast request each. A block that reaches into the archive holds
+        // whole archive requests, so blocks add no archive request (a spin-up of seven months: 48 cells, 12 requests of 4).
+        const most = options.blockSize ?? MAX_LOCATIONS;
+        const block = archive ? Math.max(1, Math.floor(most / size)) * size : most;
+        for (let b = 0; b < group.length; b += block) {
+          const blockCells = group.slice(b, b + block);
+          const archived = new Map<number, Series>();
+          let pastDays = Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, days));
+          if (archive) {
+            let lastDay: string | null = null;
+            for (let k = 0; k < blockCells.length; k += size) {
+              const chunk = blockCells.slice(k, k + size);
+              const answer = await request(archiveUrl(chunk, startDay, addDays(today, -1)), chunk.length, archivePause);
+              answer?.forEach((hours, index) => {
+                archived.set(chunk[index]!.id, hours);
+                const latest = [...hours.keys()].at(-1)?.slice(0, 10);
+                if (latest && (!lastDay || latest < lastDay)) lastDay = latest;
+              });
+            }
+            // The Forecast API covers from the last day the archive has for every cell of the block (92 days at most).
+            pastDays = lastDay ? Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, Math.round((Date.parse(today) - Date.parse(lastDay)) / 86_400_000))) : MAX_PAST_DAYS;
+          }
+          const series = new Map<number, Series>();
+          for (let k = 0; k < blockCells.length; k += MAX_LOCATIONS) {
+            const chunk = blockCells.slice(k, k + MAX_LOCATIONS);
+            const answer = await request(forecastUrl(chunk, pastDays), chunk.length, options.pauseMs ?? FORECAST_PAUSE_MS);
+            chunk.forEach((cell, index) => {
+              if (answer || archived.has(cell.id)) series.set(cell.id, merge(archived.get(cell.id), answer?.[index]));
             });
           }
-          // The Forecast API covers from the last day the archive has for every cell of the group (92 days at most).
-          pastDays = lastDay ? Math.min(MAX_PAST_DAYS, Math.max(REFETCH_DAYS, Math.round((Date.parse(today) - Date.parse(lastDay)) / 86_400_000))) : MAX_PAST_DAYS;
-        }
-        for (let k = 0; k < group.length; k += MAX_LOCATIONS) {
-          const chunk = group.slice(k, k + MAX_LOCATIONS);
-          const answer = await request(forecastUrl(chunk, pastDays), chunk, options.pauseMs ?? FORECAST_PAUSE_MS);
-          chunk.forEach((cell, index) => {
-            if (answer || archived.has(cell.id)) series.set(cell.id, merge(archived.get(cell.id), answer?.[index]));
-          });
+          const rows = blockCells.flatMap(cell => (series.has(cell.id) ? computeDays(cell, series.get(cell.id)!, starts.get(cell.id)!, today) : []));
+          if (rows.length) {
+            await save(client, rows, now);
+            clearRiskCache();
+          }
+          result.rows += rows.length;
         }
       }
-      const rows = cells.flatMap(cell => (series.has(cell.id) ? computeDays(cell, series.get(cell.id)!, starts.get(cell.id)!, today) : []));
-      if (rows.length) {
-        await client.query('BEGIN');
-        try { await save(client, rows, now); await client.query('COMMIT'); }
-        catch (error) { await client.query('ROLLBACK'); throw error; }
-        clearRiskCache();
-      }
-      result.rows = rows.length;
       if (failures.length) {
         options.log?.(`Open-Meteo: ${result.failed} of ${result.requests} weather requests failed (${[...new Set(failures)].join('; ')}); their cells keep the last values.`);
       }

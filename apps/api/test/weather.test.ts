@@ -185,3 +185,38 @@ test('the weather scheduler is off with an interval of 0', () => {
   assert.equal(typeof stop, 'function');
   stop();
 });
+
+// Weather that differs from cell to cell and hour to hour, with decimals and showers, as Open-Meteo answers.
+const varied = (source: 'archive' | 'forecast', lat: number, time: string, lon: number) => {
+  const hour = Number(time.slice(11, 13)), day = Number(time.slice(8, 10)), place = Math.abs(lon * 7 + lat * 13) % 5;
+  return [26.3 + hour / 3.7 + place / 2 + (source === 'forecast' ? 0.4 : 0), 88.5 - hour * 1.9 - place, 4.1 + ((day + Math.round(place)) % 7) * 0.9,
+    Math.round(day * 37 + lon * 10) % 360, (hour + day + Math.round(place * 3)) % 11 === 0 ? 2.7 + place : 0];
+};
+const allRows = async () => (await pool.query(`SELECT cell_id, to_char(day, 'YYYY-MM-DD') AS day, temp_c, rh_pct, wind_kmh, wind_from_deg, rain24h_mm, rain_day_mm,
+  dry_days, ffmc, dmc, dc, isi, bui, fwi, forecast, fetched_at FROM weather_daily ORDER BY cell_id, day`)).rows;
+
+test('a spin-up block by block saves the same rows as one block of every cell, and fetches the same archive', async () => {
+  // Two months back: 14 locations per archive request, so blocks of 42 cells, and of 14 with a block size of 1.
+  const spinUpStart = addDays(today, -60), now = new Date();
+  const cells = (await pool.query('SELECT count(*)::int AS n FROM weather_cells')).rows[0].n;
+  const spinUp = async (blockSize?: number) => {
+    await pool.query('TRUNCATE weather_daily');
+    const urls: string[] = [];
+    const result = await updateWeather(pool, { fetch: fakeOpenMeteo(today, addDays(today, -5), varied, urls), now, spinUpStart, sleep: async () => {}, blockSize });
+    return { result, urls, kinds: urls.map(url => (url.includes('archive-api') ? 'A' : 'F')).join(''), rows: await allRows() };
+  };
+  const whole = await spinUp(1000), blocks = await spinUp(), small = await spinUp(1);
+  assert.deepEqual([whole.result.spinUp, whole.result.failed, whole.result.rows], [cells, 0, cells * 63]);
+  assert.equal(whole.rows.length, cells * 63);
+  assert.deepEqual(blocks.rows, whole.rows, 'blocks of 42 cells');
+  assert.deepEqual(small.rows, whole.rows, 'blocks of 14 cells');
+  // The same archive requests in the same order; each block asks for its forecast once its archive is in.
+  const archive = (urls: string[]) => urls.filter(url => url.includes('archive-api'));
+  assert.equal(archive(whole.urls).length, Math.ceil(cells / 14));
+  assert.deepEqual(archive(blocks.urls), archive(whole.urls));
+  assert.deepEqual(archive(small.urls), archive(whole.urls));
+  assert.equal(whole.kinds, `${'A'.repeat(Math.ceil(cells / 14))}${'F'.repeat(Math.ceil(cells / 50))}`);
+  assert.match(blocks.kinds, /^(AAAF)+(A{1,3}F)?$/);
+  assert.equal(blocks.kinds.split('F').length - 1, Math.ceil(cells / 42));
+  assert.match(small.kinds, /^(AF)+$/);
+});
