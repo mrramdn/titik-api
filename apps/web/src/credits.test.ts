@@ -1,11 +1,13 @@
 import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LangProvider } from './i18n';
-import { C3S_NOTICE, OPEN_METEO_URL } from './components/OpenMeteo';
+import { C3S_NOTICE, CC_BY_URL, OPEN_METEO_URL } from './components/OpenMeteo';
 import { EOX_ATTRIBUTION, sentinelUnderEsri } from './map/layers';
 import { RISK_ATTRIBUTION } from './map/risk';
 import { AboutDoc, aboutText } from './pages/About';
+import { OPENFREEMAP_URL, OPENMAPTILES_URL, OSM_COPYRIGHT_URL, ScreenshotCredits } from './pages/Landing';
 
 /** EOX's credit for the 2023 layer as cloudless.eox.at/license-non-commercial gives it. */
 const EOX_2023 = 'EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2023)';
@@ -33,6 +35,26 @@ describe('credits on the map', () => {
   it('credits the fire danger cells to Open-Meteo, linked, and to Copernicus for the ERA5 data they start from', () => {
     expect(RISK_ATTRIBUTION).toContain(`<a href="${OPEN_METEO_URL}" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0)`);
     expect(textOf(RISK_ATTRIBUTION)).toBe(`Open-Meteo.com (CC BY 4.0) · ${C3S_SHORT}`);
+  });
+});
+
+describe('the landing page\'s screenshots', () => {
+  const credits = (lang: 'id' | 'en') => render(createElement(MemoryRouter, null, createElement(ScreenshotCredits)), lang);
+
+  it('credit the base map and Open-Meteo in one linked line, in both languages', () => {
+    expect(textOf(credits('id'))).toBe('Gambar layar di halaman ini: peta dasar OpenFreeMap (membuka tab baru) © OpenMapTiles (membuka tab baru), '
+      + 'data © kontributor OpenStreetMap (membuka tab baru) · Data cuaca: Open-Meteo.com (CC BY 4.0 (membuka tab baru)) · semua sumber data dan lisensinya ada di halaman Tentang.');
+    expect(textOf(credits('en'))).toBe('Screenshots on this page: base map OpenFreeMap (opens in a new tab) © OpenMapTiles (opens in a new tab), '
+      + 'data © OpenStreetMap contributors (opens in a new tab) · Weather data by Open-Meteo.com (CC BY 4.0 (opens in a new tab)) · every data source and its licence is on the About page.');
+  });
+
+  it('link OpenStreetMap\'s copyright page, OpenMapTiles, OpenFreeMap, Open-Meteo and its licence, and the About page\'s sources', () => {
+    for (const lang of ['id', 'en'] as const) {
+      const hrefs = [...credits(lang).matchAll(/href="([^"]+)"/g)].map(match => match[1]);
+      expect(hrefs, lang).toEqual([OPENFREEMAP_URL, OPENMAPTILES_URL, OSM_COPYRIGHT_URL, OPEN_METEO_URL, CC_BY_URL, '/tentang#sumber']);
+    }
+    expect(OSM_COPYRIGHT_URL).toBe('https://www.openstreetmap.org/copyright');
+    expect(CC_BY_URL).toBe('https://creativecommons.org/licenses/by/4.0/');
   });
 });
 

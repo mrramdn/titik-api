@@ -77,6 +77,8 @@
 .lp-feature img { display: block; width: 100%; height: auto; margin-bottom: 4px; border-radius: var(--radius-md); border: 1px solid var(--surface-line); background: var(--surface-subtle); }
 .lp-feature h3 { font-size: 15px; }
 .lp-feature p { color: var(--text-2); line-height: 21px; }
+/* What the screenshots show, credited once for the page (ScreenshotCredits); the links are .credit. */
+.lp-credits { max-width: 52rem; margin-top: 28px; font-size: 13px; line-height: 19px; color: var(--text-2); }
 
 /* limits */
 .lp-honest { display: grid; gap: 14px; max-width: 52rem; padding: 20px; border-radius: var(--radius-lg); border: 1px solid var(--surface-line); background: var(--surface-card); }

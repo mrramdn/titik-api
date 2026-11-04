@@ -11,6 +11,7 @@ import { Shell } from '../components/Shell';
 import { LogoMark } from '../components/Logo';
 import { Banner, useApi, useDataVersion } from '../components/ui';
 import { useLoad } from '../components/bpbd/data';
+import { CC_BY_URL, OpenMeteoCredit } from '../components/OpenMeteo';
 import { clockOffset, readFreshness, SIPONGI_URL } from '../components/shell/freshness';
 import { useFormat } from '../format';
 import { dict, useLang, useT } from '../i18n';
@@ -65,6 +66,8 @@ export const landingText = dict({
     areaAlt: 'Fakta kejadian: 11 titik panas, FRP maksimum 31,5 MW, lahan gambut, permukiman terdekat 910 m, dan indikasi luas area panas 123 ha dengan catatan bahwa itu bukan luas terbakar.',
     offlineTitle: 'Cek lapangan tanpa sinyal', offline: 'Laporan disimpan di ponsel dan terkirim sendiri saat sinyal kembali.',
     offlineAlt: 'Cek lapangan di ponsel tanpa sinyal: pesan bahwa laporan disimpan di ponsel dan terkirim saat ada sinyal, kejadian prioritas tinggi di Desa Talang Rimba, dan tombol Simpan, kirim saat ada sinyal.',
+    credits: 'Gambar layar di halaman ini: peta dasar {openfreemap} © {openmaptiles}, data © {osm} · {weather} ({licence}) · semua sumber data dan lisensinya ada di {sources}.',
+    osm: 'kontributor OpenStreetMap', creditsSources: 'halaman Tentang',
     honestTitle: 'Batas data dan layanan',
     honest1: 'Titik panas tidak selalu berarti kebakaran. Setiap titik panas perlu dicek di lapangan.',
     honest2: 'Kebakaran bisa terlewat di bawah awan, asap tebal, atau kanopi, dan di antara dua lintasan satelit.',
@@ -124,6 +127,8 @@ export const landingText = dict({
     areaAlt: 'Incident facts: 11 hotspots, maximum FRP 31.5 MW, peatland, nearest settlement 910 m, and an indicated hot area of 123 ha with the note that it is not burned area.',
     offlineTitle: 'Field check without signal', offline: 'Reports are saved on the phone and sent once the signal returns.',
     offlineAlt: 'A field check on a phone without signal: a note that the report is saved on the phone and sent when there is signal, a high-priority incident in Talang Rimba village, and the button to save and send it when there is signal.',
+    credits: 'Screenshots on this page: base map {openfreemap} © {openmaptiles}, data © {osm} · {weather} ({licence}) · every data source and its licence is on the {sources}.',
+    osm: 'OpenStreetMap contributors', creditsSources: 'About page',
     honestTitle: 'Limits of the data and the service',
     honest1: 'A hotspot is not always a fire. Every hotspot needs a field check.',
     honest2: 'Fires can be missed under cloud, thick smoke or canopy, and between two satellite passes.',
@@ -145,6 +150,10 @@ type Key = keyof typeof landingText.id;
 export const REPO_URL = 'https://github.com/mrramdn/titik-api';
 export const CONTACT_URL = { id: 'https://www.mrramdn.com/id/contact', en: 'https://www.mrramdn.com/en/contact' } as const;
 export const STACK = ['Fastify', 'TypeScript', 'PostgreSQL + PostGIS', 'React', 'MapLibre', 'PWA', 'Docker'];
+/** Who the base map in the screenshots comes from (OpenFreeMap's positron style: OpenMapTiles over OpenStreetMap data). */
+export const OPENFREEMAP_URL = 'https://openfreemap.org/';
+export const OPENMAPTILES_URL = 'https://www.openmaptiles.org/';
+export const OSM_COPYRIGHT_URL = 'https://www.openstreetmap.org/copyright';
 
 /** Real screenshots under public/landing/ (e2e/landing.mjs), with their pixel size for the width and height attributes. */
 interface Shot { src: string; width: number; height: number; small?: string }
@@ -192,6 +201,27 @@ function linked(sentence: string, links: Record<string, ReactNode>) {
     const name = /^\{(\w+)\}$/.exec(part)?.[1];
     return <Fragment key={index}>{name && name in links ? links[name] : part}</Fragment>;
   });
+}
+
+/**
+ * One credits line for what the screenshots show, under the last of them: the base map (OpenFreeMap, © OpenMapTiles,
+ * data © OpenStreetMap contributors linked to its copyright page; a pictured map's own credit hides behind its (i)
+ * button, and OSM asks static images for a visible one, once per page) and Open-Meteo's weather with its licence,
+ * which its terms ask to link next to its data. Every other source, and the Copernicus notice behind the fire danger,
+ * is on the About page it links to. No screenshot shows satellite imagery. Plain underlined links: an icon after each
+ * name would crowd the line.
+ */
+export function ScreenshotCredits() {
+  const t = useT(landingText);
+  const credit = (href: string, label: string) => (
+    <a className="credit" href={href} target="_blank" rel="noopener noreferrer">{label}<span className="visually-hidden"> {t('newTab')}</span></a>
+  );
+  return (
+    <p className="lp-credits">{linked(t('credits'), {
+      openfreemap: credit(OPENFREEMAP_URL, 'OpenFreeMap'), openmaptiles: credit(OPENMAPTILES_URL, 'OpenMapTiles'), osm: credit(OSM_COPYRIGHT_URL, t('osm')),
+      weather: <OpenMeteoCredit />, licence: credit(CC_BY_URL, 'CC BY 4.0'), sources: <Link to="/tentang#sumber" className="credit">{t('creditsSources')}</Link>,
+    })}</p>
+  );
 }
 
 function Picture({ shot, alt, eager = false, sizes }: { shot: Shot; alt: string; eager?: boolean; sizes?: string }) {
@@ -357,6 +387,7 @@ function Landing() {
                 </li>
               ))}
             </ul>
+            <ScreenshotCredits />
           </div>
         </section>
 
