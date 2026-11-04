@@ -316,14 +316,28 @@ async function refreshIndicatedArea(client: pg.PoolClient | pg.Pool, ids: string
 
 /**
  * Rescores every incident detected in the last `days` WIB days and recomputes its indicated area, for example after
- * the scoring rules change.
+ * the scoring rules change. It holds the ingest lock while it works: it waits for an ingest that is running (`onWait`
+ * hears of it) rather than give up, and an ingest that starts meanwhile is skipped, as when two ingests meet.
  */
-export async function refreshRecent(pool: pg.Pool, days = 8) {
-  const ids = (await pool.query(`SELECT id FROM incidents WHERE first_detected_at > now() - make_interval(days => $1)`, [days])).rows.map(row => row.id as string);
-  await refreshIncidents(pool, ids);
-  clearTileCache();
-  clearStatusCache();
-  return ids.length;
+export async function refreshRecent(pool: pg.Pool, days = 8, onWait?: () => void) {
+  const client = await pool.connect();
+  try {
+    if (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])).rows[0].ok) {
+      onWait?.();
+      await client.query('SELECT pg_advisory_lock($1)', [LOCK]);
+    }
+    try {
+      const ids = (await client.query(`SELECT id FROM incidents WHERE first_detected_at > now() - make_interval(days => $1)`, [days])).rows.map(row => row.id as string);
+      await refreshIncidents(client, ids);
+      clearTileCache();
+      clearStatusCache();
+      return ids.length;
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -477,7 +491,8 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     await migrate(pool);
     await loadReference(pool);
     if (process.argv[2] === 'refresh') {
-      console.log(`Rescored ${await refreshRecent(pool, Number(process.argv[3] ?? 8))} incidents.`);
+      const rescored = await refreshRecent(pool, Number(process.argv[3] ?? 8), () => console.log('An ingest is running. Rescoring starts when it has finished.'));
+      console.log(`Rescored ${rescored} incidents.`);
     } else if (process.argv[2] === 'recluster') {
       const result = await recluster(pool, Number(process.argv[3] ?? 8));
       console.log(result ? JSON.stringify(result) : 'An ingest is running. Run this again when it has finished.');

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/app.js';
-import { refreshIncidents } from '../src/ingest.js';
+import { ingest, refreshIncidents, refreshRecent } from '../src/ingest.js';
 import { addDays, wibDay } from '../src/geo.js';
 import { bigVillage, emptyDatabase, insertDetection, insertIncident, signIn, testPool, wibMidnight } from './fixtures.js';
 
@@ -98,4 +98,37 @@ test('the daily recap and the CSV export leave the indicated areas out: added up
   assert.equal(csv.statusCode, 200);
   const header = csv.body.replace('﻿', '').split('\r\n')[0]!;
   assert.doesNotMatch(header, /luas|area|ha\b/, 'the export follows the groundcheck form; an area there would read as burned area');
+});
+
+test('a rescore of recent days (the backfill after a deploy) waits for a running ingest and holds the ingest lock while it works', async () => {
+  const INGEST_LOCK = 41572026;
+  // The ingest lock in this database: how many sessions hold it and how many wait for it.
+  const lock = async () => (await pool.query(`SELECT count(*) FILTER (WHERE granted)::int AS held, count(*) FILTER (WHERE NOT granted)::int AS waiting
+    FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`, [INGEST_LOCK])).rows[0];
+  const until = async (what: string, ok: () => Promise<boolean>) => {
+    for (let tries = 0; !(await ok()); tries++) { assert.ok(tries < 250, what); await new Promise(resolve => setTimeout(resolve, 20)); }
+  };
+  const peat = { isPeat: () => false };
+  const ingestRun = await pool.connect(), rowHolder = await pool.connect();
+  try {
+    await ingestRun.query('SELECT pg_advisory_lock($1)', [INGEST_LOCK]);
+    let waited = false, done = false;
+    const rescoring = refreshRecent(pool, 8, () => { waited = true; }).then(count => { done = true; return count; });
+    await until('the rescore waits for the ingest lock', async () => (await lock()).waiting === 1);
+    assert.deepEqual([waited, done], [true, false], 'it waits instead of giving up');
+    // A row lock on one of its incidents holds the rescore at its first update once it has the lock.
+    await rowHolder.query('BEGIN');
+    await rowHolder.query('SELECT id FROM incidents WHERE id = $1 FOR UPDATE', [incidents.A]);
+    await ingestRun.query('SELECT pg_advisory_unlock($1)', [INGEST_LOCK]);
+    await until('the rescore takes the ingest lock', async () => { const now = await lock(); return now.held === 1 && now.waiting === 0; });
+    assert.equal((await ingest(pool, { source: 'fixture', texts: {}, peat })).skipped, true, 'an ingest that starts meanwhile is skipped');
+    assert.equal(done, false);
+    await rowHolder.query('ROLLBACK');
+    assert.equal(await rescoring, 8, 'A to H: detected within the last 8 days');
+    assert.deepEqual(await lock(), { held: 0, waiting: 0 }, 'and lets go of the lock');
+  } finally {
+    ingestRun.release();
+    rowHolder.release();
+  }
+  assert.equal(await area(incidents.A!), ha((600 * Math.cos((at(0).lat * Math.PI) / 180) + 400) * 400), 'the areas are worked out the same again');
 });
