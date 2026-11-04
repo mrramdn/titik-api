@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router';
 import { Info, Search, X } from 'lucide-react';
-import { defaultFilters, incidentQuery, tanggalParam, type ArchiveDays, type Incident, type IncidentFilters, type IncidentSort, type Level, type StatusFilter } from '../api';
+import { incidentQuery, tanggalParam, type ArchiveDays, type Incident, type IncidentFilters, type IncidentSort, type Level, type StatusFilter } from '../api';
 import { Shell } from '../components/Shell';
 import { PriorityMark, StatusLine, useApi, useDataVersion } from '../components/ui';
 import { useLoad } from '../components/bpbd/data';
 import { signOutFlag, useRoleSwitch } from '../components/shell/roles';
 import { MapView } from '../map/LazyMapView';
 import type { Selected } from '../map/MapView';
-import { inArchive, quietSuggestion, tanggalFromSearch, windowStart, withTanggal } from '../map/archive';
+import { inArchive, quietSuggestion, windowStart, withTanggal } from '../map/archive';
 import { ArchiveBanner, ArchivePicker, ArchiveSwitch } from '../map/ArchiveControls';
+import { initialFilters, storeFilters } from '../map/filterStorage';
 import { clearedFilters, narrowed, prepareRows, summarize } from '../map/list';
 import { riskLinkDay } from '../map/risk';
 import { dict, useT } from '../i18n';
@@ -64,18 +65,10 @@ export interface Ctx {
 }
 export const useScreen = () => useOutletContext<Ctx>();
 
-const filterKey = 'titikapi.filters';
-function storedFilters(): IncidentFilters {
-  try { return { ...defaultFilters, ...JSON.parse(sessionStorage.getItem(filterKey) ?? '{}') }; } catch { return defaultFilters; }
-}
-/** The stored filters; an archive date in the address (/peta?tanggal=2026-10-23) wins over the stored one, `live` over both. */
-function initialFilters(search: string, live: boolean): IncidentFilters {
-  const stored = storedFilters();
-  const tanggal = live ? '' : tanggalFromSearch(search);
-  return tanggal === null ? stored : { ...stored, tanggal };
-}
-
-/** The map stays mounted while the sidebar switches between the list and an incident. */
+/**
+ * The map stays mounted while the sidebar switches between the list and an incident, and keeps its archive date
+ * meanwhile. It opens on the date in the address only (see filterStorage.ts).
+ */
 export function MapScreen() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -93,8 +86,7 @@ export function MapScreen() {
     signedOutAt.current = location.key;
     void signOut().finally(() => navigate(location.pathname, { replace: true, state: null }));
   }, [location.key]);
-  const setFilters = (next: IncidentFilters) => { setFiltersState(next); try { sessionStorage.setItem(filterKey, JSON.stringify(next)); } catch { /* private mode */ } };
-  useEffect(() => { if (riskDay !== null) setFilters(filters); }, []);
+  const setFilters = (next: IncidentFilters) => { setFiltersState(next); storeFilters(next); };
   // A regency from the other province makes no sense once the province changes.
   useEffect(() => { if (filters.regency && regencies.length && !regencies.some(r => r.name === filters.regency)) setFilters({ ...filters, regency: '' }); }, [province, regencies.length]);
   // The archive's days. An older server has none (404): the archive stays hidden and an archive date falls back to live

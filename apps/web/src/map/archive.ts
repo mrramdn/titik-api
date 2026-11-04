@@ -1,6 +1,7 @@
 // Archive mode: the map screen shows one past WIB day of real satellite data (GET /archive/days lists the days). The
-// date sits in the list filters (kept in sessionStorage) and in the address as ?tanggal=, so an archive view can be
-// shared. Field status and tasks are not replayed: they show as they are now.
+// date sits in the list filters and in the address as ?tanggal=, so an archive view can be shared; the address is the
+// only place a map screen takes it from when it opens (see filterStorage.ts). Field status and tasks are not
+// replayed: they show as they are now.
 import type { ArchiveDay, ArchiveDays, Role } from '../api';
 import { isDate, shiftDate } from '../components/bpbd/data';
 import { hoursSinceMidnightWib } from './style';
