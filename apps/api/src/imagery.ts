@@ -3,7 +3,9 @@
 // every tile is fetched for the request that asked for it and goes out private to that browser. Only pages of this
 // app may ask, only zoom 11–18 over the two provinces, for display. Esri sets no cap on the free tier (2,000,000
 // tiles per billing cycle), so every request to Esri is first counted against our own daily and monthly caps. The
-// origin check only reads headers, which a script can send too, so one address may also take only a share of a day.
+// origin check only reads headers, which a script can send too, so one address may also take only a share of a day,
+// and the last quarter of the day is kept for addresses that have taken little: a few heavy ones would otherwise turn
+// HD imagery off for everyone until the day turns.
 import type { FastifyBaseLogger, FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { areaBoxes, type Box } from './firms.js';
@@ -23,6 +25,8 @@ const DAY_MS = 86_400_000;
 const MAX_AGE_SECONDS = 86_400;
 /** After imagery_usage could not be read, HD imagery stays off this long before the next try. */
 const RETRY_READ_MS = 10_000;
+/** From this share of the daily cap on, the rest of the day is kept for light users. */
+const RESERVE_FROM = 0.75;
 
 export interface ImageryOptions {
   /** ARCGIS_API_KEY. Without it the tile route answers 404 and GET /config says hdImagery false. */
@@ -36,6 +40,12 @@ export interface ImageryOptions {
    * daily cap; past it that address gets 429 until the day turns.
    */
   addressDailyCap: number;
+  /**
+   * The last quarter of the daily cap is kept for light users: once the day's count reaches 75% of the cap, an address
+   * that has caused this many requests today gets 429 until the day turns. An IPv6 client then also counts by its /56,
+   * so moving between the /64s of one /56 does not get round it.
+   */
+  reserveAddressCap: number;
   /** Day of the month (1–31) the Esri billing cycle starts, the sign-up day; in a shorter month, its last day. */
   cycleDay: number;
   /** Milliseconds between writes of the count to imagery_usage. */
@@ -51,7 +61,8 @@ export function envInteger(value: string | undefined, fallback: number, min: num
 
 /**
  * The monthly cap defaults to half the free tier, the daily one to a thirtieth of that. One address gets 5,000 a day:
- * a long look around close up takes one or two thousand, and it takes seven addresses to use up the day.
+ * a long look around close up takes one or two thousand. Seven such addresses could use up the day, so its last quarter
+ * is kept for addresses that have taken fewer than 300 tiles today.
  */
 export const imageryDefaults = (env: NodeJS.ProcessEnv = process.env): ImageryOptions => ({
   key: env.ARCGIS_API_KEY || undefined,
@@ -59,6 +70,7 @@ export const imageryDefaults = (env: NodeJS.ProcessEnv = process.env): ImageryOp
   monthlyCap: envInteger(env.ARCGIS_MONTHLY_TILE_CAP, 1_000_000, 0, 1_000_000_000),
   dailyCap: envInteger(env.ARCGIS_DAILY_TILE_CAP, 33_000, 0, 1_000_000_000),
   addressDailyCap: envInteger(env.ARCGIS_ADDRESS_DAILY_TILE_CAP, 5_000, 0, 1_000_000_000),
+  reserveAddressCap: 300,
   cycleDay: envInteger(env.ARCGIS_CYCLE_DAY, 1, 1, 31),
   flushMs: 30_000,
   now: Date.now,
@@ -104,21 +116,35 @@ export function fromApp(headers: FastifyRequest['headers'], origins: Iterable<st
   return false;
 }
 
-/**
- * What a share is counted for: an IPv4 address as it is (also IPv6-mapped), an IPv6 address by its /64 network, which
- * one client can fill with addresses of its own.
- */
-export function addressKey(ip: string): string {
+/** An IPv4 address as it is (also IPv6-mapped), or the eight groups of an IPv6 address as numbers. */
+function parseAddress(ip: string): { ipv4: string } | { groups: number[] } {
   const address = ip.trim().toLowerCase().replace(/%.*$/, '');
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address)?.[1];
-  if (mapped) return mapped;
-  if (!address.includes(':')) return address;
+  if (mapped) return { ipv4: mapped };
+  if (!address.includes(':')) return { ipv4: address };
   // An IPv4 tail stands for the last two groups.
   const groups = (part: string) => (part ? part.split(':').flatMap(group => (group.includes('.') ? ['0', '0'] : [group])) : []);
   const [head = '', tail] = address.split('::');
   const left = groups(head), right = tail === undefined ? [] : groups(tail);
   const full = tail === undefined ? left : [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
-  return `${full.slice(0, 4).map(group => (Number.parseInt(group, 16) || 0).toString(16)).join(':')}::/64`;
+  return { groups: full.map(group => Number.parseInt(group, 16) || 0) };
+}
+
+/**
+ * What a share is counted for: an IPv4 address as it is (also IPv6-mapped), an IPv6 address by its /64 network, which
+ * one client can fill with addresses of its own.
+ */
+export function addressKey(ip: string): string {
+  const address = parseAddress(ip);
+  return 'ipv4' in address ? address.ipv4 : `${address.groups.slice(0, 4).map(group => group.toString(16)).join(':')}::/64`;
+}
+
+/** The /56 network of an IPv6 address, which an ISP often gives one customer, so 256 /64s; null for an IPv4 address. */
+export function networkKey(ip: string): string | null {
+  const address = parseAddress(ip);
+  if ('ipv4' in address) return null;
+  const [a = 0, b = 0, c = 0, d = 0] = address.groups;
+  return `${[a, b, c, d & 0xff00].map(group => group.toString(16)).join(':')}::/56`;
 }
 
 /**
@@ -219,8 +245,10 @@ class Budget {
   private saving: Promise<void> | null = null;
   private warnedCycle = '';
   private refusedDay = '';
+  private reserveDay = '';
 
-  constructor(private pool: pg.Pool, private log: FastifyBaseLogger, private options: Pick<ImageryOptions, 'monthlyCap' | 'dailyCap' | 'cycleDay' | 'now'>) {}
+  constructor(private pool: pg.Pool, private log: FastifyBaseLogger,
+    private options: Pick<ImageryOptions, 'monthlyCap' | 'dailyCap' | 'reserveAddressCap' | 'cycleDay' | 'now'>) {}
 
   /** Requests counted today (UTC) and since the start of this billing cycle. */
   usage() {
@@ -265,11 +293,18 @@ class Budget {
     return today < this.options.dailyCap && cycle < this.options.monthlyCap;
   }
 
+  /** True once today's count has reached 75% of the daily cap: the rest of the day is kept for light users. */
+  inReserve() { return this.usage().today >= RESERVE_FROM * this.options.dailyCap; }
+
   /** Counts one request to Esri, or refuses it at a cap (logged once a day). */
   async take(): Promise<boolean> {
-    if (!(await this.ready())) return false;
+    return (await this.ready()) && this.takeNow();
+  }
+
+  /** take() once ready() has said true: in the same step as the checks before it. */
+  takeNow(): boolean {
     const { day, start, today, cycle } = this.usage();
-    const { dailyCap, monthlyCap } = this.options;
+    const { dailyCap, monthlyCap, reserveAddressCap } = this.options;
     if (today >= dailyCap || cycle >= monthlyCap) {
       if (this.refusedDay !== day) {
         this.refusedDay = day;
@@ -278,6 +313,10 @@ class Budget {
       return false;
     }
     this.unsaved.set(day, (this.unsaved.get(day) ?? 0) + 1);
+    if (today + 1 >= RESERVE_FROM * dailyCap && this.reserveDay !== day) {
+      this.reserveDay = day;
+      this.log.warn({ today: today + 1, dailyCap, reserveAddressCap }, 'Esri imagery has used 75% of the daily cap: the rest of the day is kept for addresses with fewer tiles today');
+    }
     if (cycle + 1 >= 0.75 * monthlyCap && this.warnedCycle !== start) {
       this.warnedCycle = start;
       this.log.warn({ cycle: cycle + 1, monthlyCap, cycleStart: start }, 'Esri imagery has used 75% of the monthly cap');
@@ -312,23 +351,35 @@ class Budget {
   }
 }
 
+/** One less for `key`; a count of none leaves no entry. */
+function lower(counts: Map<string, number>, key: string) {
+  const count = counts.get(key) ?? 0;
+  if (count > 1) counts.set(key, count - 1);
+  else counts.delete(key);
+}
+
 /**
- * Requests to Esri per address today (UTC). An address has an entry only while it holds a counted request, so there are
- * never more entries than the daily cap lets through.
+ * Requests to Esri today (UTC) per address, and per IPv6 /56 for the reserve. An address or network has an entry only
+ * while it holds a counted request, so there are never more entries than the daily cap lets through.
  */
 class Shares {
   private day = '';
   private used = new Map<string, number>();
+  private networks = new Map<string, number>();
   private warned = new Set<string>();
 
-  constructor(private log: FastifyBaseLogger, private options: Pick<ImageryOptions, 'addressDailyCap' | 'now'>) {}
+  constructor(private log: FastifyBaseLogger, private options: Pick<ImageryOptions, 'addressDailyCap' | 'reserveAddressCap' | 'now'>) {}
 
-  /** Counts one request for the address, or refuses it once the address has used its share of the day (logged once). */
-  take(address: string): boolean {
+  /**
+   * Counts one request for the address and its /56, or refuses it: 'share' once the address has used its share of the
+   * day (logged once), 'reserve' in the reserve once the address or its /56 has taken its part of the day.
+   */
+  take(address: string, network: string | null, reserve: boolean): 'ok' | 'share' | 'reserve' {
     const day = utcDay(this.options.now());
     if (day !== this.day) {
       this.day = day;
       this.used.clear();
+      this.networks.clear();
       this.warned.clear();
     }
     const used = this.used.get(address) ?? 0;
@@ -337,17 +388,19 @@ class Shares {
         this.warned.add(address);
         this.log.warn({ address, addressDailyCap: this.options.addressDailyCap }, 'Esri imagery stopped for one address: its daily share is used');
       }
-      return false;
+      return 'share';
     }
+    const inNetwork = network === null ? 0 : this.networks.get(network) ?? 0;
+    if (reserve && Math.max(used, inNetwork) >= this.options.reserveAddressCap) return 'reserve';
     this.used.set(address, used + 1);
-    return true;
+    if (network !== null) this.networks.set(network, inNetwork + 1);
+    return 'ok';
   }
 
   /** Gives back a request that did not go to Esri after all (a cap stopped it). */
-  giveBack(address: string) {
-    const used = this.used.get(address) ?? 0;
-    if (used > 1) this.used.set(address, used - 1);
-    else this.used.delete(address);
+  giveBack(address: string, network: string | null) {
+    lower(this.used, address);
+    if (network !== null) lower(this.networks, network);
   }
 }
 
@@ -398,10 +451,12 @@ export function installImagery(app: FastifyInstance, pool: pg.Pool, origins: Ite
     if (!fromApp(request.headers, origins)) return reply.code(403).send();
     const tile = parseTile(request.params);
     if (!tile) return reply.code(404).send();
-    const address = addressKey(request.ip);
-    if (!shares.take(address)) return reply.code(429).header('Retry-After', String(untilNextDay(now()))).send();
-    if (!(await budget.take())) {
-      shares.giveBack(address);
+    const address = addressKey(request.ip), network = networkKey(request.ip);
+    // Once the count is read, the caps and the shares are checked and the request counted in one step.
+    if (!(await budget.ready())) return reply.code(503).send();
+    if (shares.take(address, network, budget.inReserve()) !== 'ok') return reply.code(429).header('Retry-After', String(untilNextDay(now()))).send();
+    if (!budget.takeNow()) {
+      shares.giveBack(address, network);
       return reply.code(503).send();
     }
     const result = await fetchEsri(fetchImpl, `${SERVICE}/tile/${tile.z}/${tile.y}/${tile.x}?token=${encodeURIComponent(key)}`, MAX_TILE_BYTES, true);

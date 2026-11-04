@@ -7,7 +7,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { createApp } from '../src/app.js';
 import { migrate } from '../src/migrate.js';
 import {
-  addressKey, cleanAttribution, cycleStart, envInteger, FALLBACK_ATTRIBUTION, fromApp, imageryDefaults, parseTile, privateCacheControl, tileBounds, type ImageryOptions,
+  addressKey, cleanAttribution, cycleStart, envInteger, FALLBACK_ATTRIBUTION, fromApp, imageryDefaults, networkKey, parseTile, privateCacheControl, tileBounds, type ImageryOptions,
 } from '../src/imagery.js';
 import { signIn, testPool } from './fixtures.js';
 
@@ -160,6 +160,7 @@ test('caps and the cycle day come from the environment, with defaults; Esri\'s c
     { key: 'k', monthlyCap: 500_000, dailyCap: 0, addressDailyCap: 1200, cycleDay: 23, flushMs: 30_000 });
   assert.deepEqual(pickCaps(imageryDefaults({ ARCGIS_API_KEY: '', ARCGIS_MONTHLY_TILE_CAP: 'lots', ARCGIS_DAILY_TILE_CAP: '-1', ARCGIS_ADDRESS_DAILY_TILE_CAP: 'many', ARCGIS_CYCLE_DAY: '32' })),
     { key: undefined, monthlyCap: 1_000_000, dailyCap: 33_000, addressDailyCap: 5_000, cycleDay: 1, flushMs: 30_000 });
+  assert.equal(imageryDefaults({}).reserveAddressCap, 300);
   assert.equal(envInteger(' 12 ', 1, 1, 31), 12);
   assert.equal(envInteger('2.5', 1, 1, 31), 1);
   assert.equal(cleanAttribution('Source: Esri, Vantor,\n  Earthstar Geographics, and the GIS User Community'), 'Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community');
@@ -178,6 +179,13 @@ test('a share is counted per IPv4 address and per IPv6 /64, which one client can
   assert.equal(addressKey('2001:db8:85a3:2::1'), '2001:db8:85a3:2::/64');
   assert.equal(addressKey('64:ff9b::192.0.2.33'), '64:ff9b:0:0::/64', 'an IPv4 tail counts as two groups');
   assert.equal(addressKey('::1'), '0:0:0:0::/64');
+  // In the reserve an IPv6 client also counts by its /56: 256 /64s, what one customer often gets.
+  assert.equal(networkKey('2001:db8:85a3:1ff::1'), '2001:db8:85a3:100::/56');
+  assert.equal(networkKey('2001:db8:85a3:ff:ffff::1'), '2001:db8:85a3:0::/56');
+  assert.equal(networkKey('2001:DB8:85A3:ABCD::1%eth0'), '2001:db8:85a3:ab00::/56');
+  assert.equal(networkKey('2001:db8::1'), '2001:db8:0:0::/56');
+  assert.equal(networkKey('203.0.113.9'), null);
+  assert.equal(networkKey('::ffff:203.0.113.9'), null);
 });
 
 test('a tile goes to Esri as z/y/x with the key and comes back as its bytes and type, private, without a cookie', async () => {
@@ -402,6 +410,40 @@ test('one address takes at most its share of a day: 429 before Esri is asked, lo
   assert.equal((await from('203.0.113.9')).statusCode, 200, 'a new UTC day');
   await close(app);
   assert.deepEqual(await usage(), { '2026-11-16': 6, '2026-11-17': 1 }, 'a refused request costs nothing');
+});
+
+test('the last quarter of the day is kept for light users: from 75% on, an address with its 300 tiles today waits, an IPv6 client also by its /56', async () => {
+  await pool.query('DELETE FROM imagery_usage');
+  clock = Date.parse('2026-11-22T10:00:00Z');
+  const app = await imageryApp({ dailyCap: 20, addressDailyCap: 100, reserveAddressCap: 3 });
+  answer = {};
+  calls.length = 0;
+  const from = (remoteAddress: string) => app.inject({ method: 'GET', url: `/api/v1/imagery/${OKI}`, headers: sameOrigin, remoteAddress });
+  const warnings = () => logged('75% of the daily cap');
+  const before = warnings().length;
+  // Before the reserve the /64s of one /56 take tiles as usual, and they count for their /56 too.
+  for (const ip of ['2001:db8:abcd:ab01::1', '2001:db8:abcd:ab02::1']) assert.equal((await from(ip)).statusCode, 200, ip);
+  // One heavy address takes the day to 75%: 15 of 20.
+  for (let k = 0; k < 13; k++) assert.equal((await from('203.0.113.50')).statusCode, 200);
+  assert.equal(warnings().length, before + 1, 'logged once');
+  assert.equal(JSON.parse(warnings().at(-1)!).address, undefined, 'without an address');
+  const heavy = await from('203.0.113.50');
+  empty(heavy, 429);
+  assert.equal(heavy.headers['retry-after'], String(14 * 3600), 'until the next UTC day');
+  // A light address takes its part, then waits too.
+  for (let k = 0; k < 3; k++) assert.equal((await from('198.51.100.20')).statusCode, 200);
+  empty(await from('198.51.100.20'), 429);
+  // The /56 had taken two: one more from a /64 of its own, then even a fresh /64 inside it waits.
+  assert.equal((await from('2001:db8:abcd:ab03::1')).statusCode, 200);
+  empty(await from('2001:db8:abcd:abff::1'), 429);
+  assert.equal((await from('2001:db8:abcd:ac00::1')).statusCode, 200, 'another /56 is a light user of its own');
+  assert.equal(tileCalls(), 20, 'Esri is not asked for a refused tile');
+  empty(await from('192.0.2.1'), 503);
+  assert.equal(warnings().length, before + 1);
+  clock = Date.parse('2026-11-23T00:00:05Z');
+  assert.equal((await from('203.0.113.50')).statusCode, 200, 'a new UTC day');
+  await close(app);
+  assert.deepEqual(await usage(), { '2026-11-22': 20, '2026-11-23': 1 });
 });
 
 test('a tile the caps stop does not use up the share of its address', async () => {
