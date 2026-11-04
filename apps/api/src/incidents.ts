@@ -384,9 +384,14 @@ export async function repairVerificationSummaries(db: Database) {
     .rows.map(row => row.id as string);
 }
 
-export const hoursParam = (value: unknown, fallback: number, max: number) => {
+/**
+ * The windows the app offers, for lists, counts and the map alike: a day, three days, a week. Any other value would
+ * only add work nobody else asks for.
+ */
+const WINDOW_HOURS = [24, 72, 168];
+export const hoursParam = (value: unknown, fallback: number, message = 'Rentang waktu harus 24, 72, atau 168 jam. Muat ulang halaman.') => {
   const hours = value === undefined || value === '' ? fallback : Number(value);
-  requireCondition(Number.isInteger(hours) && hours >= 1 && hours <= max, 400, 'INVALID_INPUT', `Rentang waktu harus 1–${max} jam.`);
+  requireCondition(WINDOW_HOURS.includes(hours), 400, 'INVALID_INPUT', message);
   return hours;
 };
 export const optionalText = (value: unknown) => (value === undefined || value === '' ? null : String(value).slice(0, 80));
@@ -457,13 +462,7 @@ const tileSql = {
  * runs in a process of its own that cannot clear this cache: a demo tile is kept as briefly as a live one.
  */
 const LIVE_TTL = 120_000, ARCHIVE_TTL = 3_600_000;
-/** The windows the map offers (a day, three days, a week): any other value would only add tiles nobody else asks for. */
-const TILE_HOURS = [24, 72, 168];
-const tileHours = (value: unknown) => {
-  const hours = value === undefined || value === '' ? 24 : Number(value);
-  requireCondition(TILE_HOURS.includes(hours), 400, 'INVALID_INPUT', 'Rentang waktu peta harus 24, 72, atau 168 jam. Muat ulang peta.');
-  return hours;
-};
+const tileHours = (value: unknown) => hoursParam(value, 24, 'Rentang waktu peta harus 24, 72, atau 168 jam. Muat ulang peta.');
 const tiles = new TileCache(32 * 1024 * 1024);
 /**
  * Counts the clears: `all` every clear, `demo` the clears of demo tiles only. A tile cut before a clear of its scope may
@@ -683,7 +682,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
   // been sent to yet; regencies without incidents in the window are left out.
   app.get('/api/v1/regions/summary', async request => {
     const query = object(request.query ?? {});
-    const hours = hoursParam(query.hours, 24, 168);
+    const hours = hoursParam(query.hours, 24);
     const params: unknown[] = [];
     const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     const where = regionFilter(query, params);
@@ -702,7 +701,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
 
   app.get('/api/v1/summary', async request => {
     const query = object(request.query ?? {});
-    const hours = hoursParam(query.hours, 24, 168);
+    const hours = hoursParam(query.hours, 24);
     const params: unknown[] = [];
     const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     const where = regionFilter(query, params);
@@ -753,7 +752,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
   // The incident list for the map sidebar, the volunteer and the agency queues, with the same filters as the map.
   app.get('/api/v1/incidents', async request => {
     const query = object(request.query ?? {});
-    const hours = hoursParam(query.hours, 72, 168);
+    const hours = hoursParam(query.hours, 72);
     const params: unknown[] = [];
     const window = timeWindow(params, hours, await archiveDate(pool, query.tanggal));
     let where = regionFilter(query, params);

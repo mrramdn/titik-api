@@ -63,8 +63,8 @@ test('an archive day ends at the next WIB midnight: the last second is in, midni
   const ids = (rows: { id: string }[]) => rows.map(row => row.id).sort();
   const names = (...keys: string[]) => keys.map(key => incidents[key]!).sort();
   assert.deepEqual(ids(await json(`/incidents?hours=24&tanggal=${day}`)), names('edge', 'start'));
-  assert.deepEqual(ids(await json(`/incidents?hours=48&tanggal=${day}`)), names('edge', 'start', 'before'));
-  assert.deepEqual(ids(await json(`/incidents?hours=1&tanggal=${day}`)), names('edge'));
+  assert.deepEqual(ids(await json(`/incidents?hours=72&tanggal=${day}`)), names('edge', 'start', 'before'));
+  assert.deepEqual(ids(await json(`/incidents?hours=168&tanggal=${day}`)), names('edge', 'start', 'before', 'old'));
   assert.deepEqual(ids(await json(`/incidents?hours=24&tanggal=${addDays(day, 1)}`)), names('next'));
   const summary = await json(`/summary?hours=24&tanggal=${day}`);
   assert.deepEqual([summary.incidents, summary.detections, summary.villages], [2, 3, 1], 'two incidents; three detections inside villages (one MODIS)');
@@ -73,6 +73,21 @@ test('an archive day ends at the next WIB midnight: the last second is in, midni
   // Live data still counts back from now: every fixture lies within the last week.
   assert.equal((await json('/incidents?hours=168')).length, 5);
   assert.equal((await json('/summary?hours=168')).detections, 6);
+});
+
+test('lists and counts come for the windows the app offers, 24, 72 or 168 hours; any other is 400', async () => {
+  for (const path of ['/incidents', '/summary', '/regions/summary']) {
+    for (const hours of ['24', '72', '168']) {
+      assert.equal((await get(`${path}?hours=${hours}`)).statusCode, 200, `${path} ${hours}`);
+      assert.equal((await get(`${path}?hours=${hours}&tanggal=${day}`)).statusCode, 200, `${path} ${hours} on an archive day`);
+    }
+    assert.equal((await get(path)).statusCode, 200, `${path} without hours`);
+    for (const hours of ['48', '1', '167', '169', '0', '24.5', 'abc']) {
+      const refused = await get(`${path}?hours=${hours}&tanggal=${day}`);
+      assert.equal(refused.statusCode, 400, `${path} ${hours}`);
+      assert.deepEqual(refused.json().error, { code: 'INVALID_INPUT', message: 'Rentang waktu harus 24, 72, atau 168 jam. Muat ulang halaman.' });
+    }
+  }
 });
 
 test('a date that is not in the archive is refused: today, the future, before the first day, or not a date', async () => {
