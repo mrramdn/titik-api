@@ -14,7 +14,9 @@ export default defineConfig({
       filename: 'sw.ts',
       registerType: 'autoUpdate',
       injectRegister: false,
-      injectManifest: { globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
+      // mjs: MapLibre's worker script (assets/maplibre-gl-worker-*.mjs). Without it the map pane stays blank offline once
+      // the browser's HTTP cache has dropped that file.
+      injectManifest: { globPatterns: ['**/*.{js,mjs,css,html,svg,png,woff2,webmanifest}'], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
       manifest,
       devOptions: { enabled: false },
     }),
