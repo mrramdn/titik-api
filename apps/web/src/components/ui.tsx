@@ -169,7 +169,11 @@ export function DataVersionProvider({ children, intervalMs = 5 * 60_000 }: { chi
 export const useDataVersion = () => useContext(DataVersionContext);
 
 export interface Loaded<T> { data: T | null; error: string | null; loading: boolean; reload(): void }
-/** GET /api/v1{path}; reloads when the path changes, when reload() is called, or when `version` changes. */
+/**
+ * GET /api/v1{path}; reloads when the path changes, when reload() is called, or when `version` changes. A request
+ * no longer needed (the screen closed, or the path changed) is cancelled, so it leaves the server's line for heavy
+ * lists instead of holding one of the places this address has there.
+ */
 export function useApi<T>(path: string | null, version = 0): Loaded<T> {
   const [state, setState] = useState<{ data: T | null; error: string | null; loading: boolean }>({ data: null, error: null, loading: Boolean(path) });
   const [tick, setTick] = useState(0);
@@ -177,10 +181,11 @@ export function useApi<T>(path: string | null, version = 0): Loaded<T> {
   useEffect(() => {
     if (!path) return;
     let alive = true;
+    const request = new AbortController();
     setState(previous => ({ ...previous, loading: true }));
-    api<{ data: T }>(path).then(body => { if (alive) setState({ data: body.data, error: null, loading: false }); })
+    api<{ data: T }>(path, { signal: request.signal }).then(body => { if (alive) setState({ data: body.data, error: null, loading: false }); })
       .catch(error => { if (alive) setState(previous => ({ data: previous.data, error: describe(error), loading: false })); });
-    return () => { alive = false; };
+    return () => { alive = false; request.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, tick, version]);
   return { ...state, reload: () => setTick(value => value + 1) };
