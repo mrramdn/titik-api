@@ -199,6 +199,32 @@ test('the process sends at most 60 wind calls a minute and 2,000 a UTC day; past
   assert.equal(urls.length, 6);
 });
 
+test('older incidents may use half of each wind budget, a minute\'s and a day\'s; live ones may use all of it', async () => {
+  let clock = Date.now();
+  const lines: string[] = [];
+  const budgeted = (await createApp({ pool, uploadsDir: join(directory, 'uploads'), webDir: join(directory, 'web'), weatherFetch: fakeFetch,
+    wind: { perMinute: 4, perDay: 6, now: () => clock }, logStream: { write: line => { lines.push(line); } } })).app;
+  opened.push(budgeted);
+  clearWindCache();
+  mode = 'ok';
+  answer = { speed: 12, from: 170 };
+  urls.length = 0;
+  // Older incidents, each in a 0.1° cell and UTC day of its own.
+  const older: string[] = [];
+  for (let k = 1; k <= 4; k++) {
+    const time = new Date(clock - 72 * HOUR);
+    older.push(await insertIncident(pool, { villageId: place.villageId, first: time, last: time, lon: place.lon + 0.2 * k, lat: place.lat + 0.3 }));
+  }
+  const found = async (id: string) => (await windOf(budgeted, id)) !== null;
+  assert.deepEqual([await found(older[0]!), await found(older[1]!), await found(older[2]!)], [true, true, false], 'two older ones a minute of four calls');
+  assert.deepEqual([await found(cells[0]!), await found(cells[1]!), await found(cells[2]!)], [true, true, false], 'live ones take the rest of the minute');
+  clock += 61_000;
+  assert.deepEqual([await found(older[2]!), await found(older[3]!)], [true, false], 'three older ones a day of six calls');
+  assert.deepEqual([await found(cells[2]!), await found(cells[3]!)], [true, false], 'live ones take the rest of the day');
+  assert.equal(urls.length, 6);
+  assert.equal(lines.filter(line => line.includes('for older incidents stopped')).length, 1, 'logged once');
+});
+
 test('a failed lookup is not tried again for 10 minutes: an error status, a timeout, a network error or an unusable body', async () => {
   let clock = Date.now();
   const failing = await windApp({ now: () => clock });

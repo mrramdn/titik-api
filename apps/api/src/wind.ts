@@ -9,6 +9,8 @@
 // process sends at most 60 wind calls a minute and 2,000 a UTC day, a failed lookup is not tried again for 10 minutes,
 // and an HTTP 429 stops every wind lookup for 15. An older incident's hour comes with the whole UTC day of its 0.1° cell
 // in one call, kept a day as past hours do not change: walking through the archive costs one call per cell and day.
+// The archive offers about 9,500 cells and days, so older incidents may use only half of each budget: walking through
+// them never leaves the incidents burning now without wind until the day turns.
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { object, requireCondition } from './errors.js';
@@ -36,7 +38,10 @@ export const inSector = (bearing: number, toward: number, half = HALF_SECTOR) =>
 export interface WindOptions {
   /** Injected in the tests, which never reach the network. */
   fetch: typeof fetch;
-  /** Calls to Open-Meteo for winds per minute and per UTC day, across the process; past either the wind is left out. */
+  /**
+   * Calls to Open-Meteo for winds per minute and per UTC day, across the process; past either the wind is left out.
+   * Lookups for older incidents may use half of each, live ones all of it.
+   */
   perMinute: number;
   perDay: number;
   now: () => number;
@@ -70,8 +75,11 @@ type Series = Map<string, WindValue>;
 /** Winds fetched, by cell and hour (kept an hour) or by cell and day (kept a day); null for a failed lookup (10 minutes). */
 const cache = new ExpiringMap<Series | null>(MAX_WINDS);
 const pending = new Map<string, Promise<Series | null>>();
-/** Calls to Open-Meteo in the last minute and on the current UTC day, and the day whose budget ran out (logged once). */
-const sent = { recent: [] as number[], day: '', today: 0, warned: '' };
+/**
+ * Calls to Open-Meteo in the last minute and on the current UTC day, all of them and those for older incidents, and the
+ * days whose budget, or whose half for older incidents, ran out (each logged once).
+ */
+const sent = { recent: [] as number[], recentArchived: [] as number[], day: '', today: 0, archived: 0, warned: '', warnedArchived: '' };
 /** No lookup until then: Open-Meteo answered 429. */
 let pausedUntil = -Infinity;
 /** Counts the clears: a lookup that was in flight during one changes nothing after it. */
@@ -79,7 +87,7 @@ let generation = 0;
 /** Forgets the winds and failures, the calls counted, a pause, and what the lookups in flight would bring. */
 export const clearWindCache = () => {
   cache.clear(); pending.clear();
-  Object.assign(sent, { recent: [], day: '', today: 0, warned: '' });
+  Object.assign(sent, { recent: [], recentArchived: [], day: '', today: 0, archived: 0, warned: '', warnedArchived: '' });
   pausedUntil = -Infinity;
   generation++;
 };
@@ -112,11 +120,15 @@ async function fetchSeries(url: string, fetchImpl: typeof fetch): Promise<{ seri
 export function installWind(app: FastifyInstance, pool: pg.Pool, options: Partial<WindOptions> = {}) {
   const settings: WindOptions = { ...windDefaults(), ...options };
 
-  /** Counts a call to Open-Meteo, or refuses it past the minute's or the day's budget (the day's logged once). */
-  function takeCall(now: number) {
+  /**
+   * Counts a call to Open-Meteo, or refuses it past the minute's or the day's budget, or for an older incident past half
+   * of either (the days logged once).
+   */
+  function takeCall(now: number, live: boolean) {
     const day = utcDay(now);
-    if (sent.day !== day) Object.assign(sent, { day, today: 0 });
+    if (sent.day !== day) Object.assign(sent, { day, today: 0, archived: 0 });
     sent.recent = sent.recent.filter(at => at > now - MINUTE);
+    sent.recentArchived = sent.recentArchived.filter(at => at > now - MINUTE);
     if (sent.today >= settings.perDay) {
       if (sent.warned !== day) {
         sent.warned = day;
@@ -124,9 +136,18 @@ export function installWind(app: FastifyInstance, pool: pg.Pool, options: Partia
       }
       return false;
     }
-    if (sent.recent.length >= settings.perMinute) return false;
+    const halfDay = Math.floor(settings.perDay / 2);
+    if (!live && sent.archived >= halfDay) {
+      if (sent.warnedArchived !== day) {
+        sent.warnedArchived = day;
+        app.log.warn({ archivedPerDay: halfDay }, 'Open-Meteo wind lookups for older incidents stopped until the next UTC day: their half of the daily budget is used');
+      }
+      return false;
+    }
+    if (sent.recent.length >= settings.perMinute || (!live && sent.recentArchived.length >= Math.floor(settings.perMinute / 2))) return false;
     sent.recent.push(now);
     sent.today++;
+    if (!live) { sent.recentArchived.push(now); sent.archived++; }
     return true;
   }
 
@@ -144,7 +165,7 @@ export function installWind(app: FastifyInstance, pool: pg.Pool, options: Partia
     if (hit) return hit.value?.get(stamp) ?? null;
     let job = pending.get(key);
     if (!job) {
-      if (now < pausedUntil || !takeCall(now)) return null;
+      if (now < pausedUntil || !takeCall(now, live)) return null;
       const where = `latitude=${lat.toFixed(1)}&longitude=${lon.toFixed(1)}&hourly=wind_speed_10m,wind_direction_10m&timezone=GMT`;
       const url = live ? `${FORECAST_API}?${where}&start_hour=${stamp}&end_hour=${stamp}`
         : `${now - Date.parse(`${day}T00:00:00Z`) < 90 * DAY ? FORECAST_API : ARCHIVE_API}?${where}&start_date=${day}&end_date=${day}`;
