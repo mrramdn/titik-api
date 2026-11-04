@@ -19,7 +19,8 @@ import {
   sentinelUnderEsri, tileUrls,
 } from './layers';
 import { Legend } from './Legend';
-import { RISK_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
+import { RISK_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath, shownRiskDay } from './risk';
+import { todayWib } from '../components/bpbd/data';
 import { RiskCell, RiskDays } from './RiskParts';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
@@ -46,8 +47,8 @@ interface Props {
   selected?: Selected | null;
   focus?: GeoJSON.Geometry | null;
   initialLayers?: Partial<Record<LayerKey, boolean>>;
-  /** The fire danger day shown first: 0 today, 1 tomorrow, 2 the day after. */
-  initialRiskDay?: number;
+  /** The fire danger day (YYYY-MM-DD) shown first; without one the map shows today, or the archive day. */
+  initialRiskDate?: string | null;
   onSelect?: (id: string) => void;
   onVillage?: (id: string) => void;
   controls?: boolean;
@@ -93,7 +94,7 @@ const legendClosed = () => { try { return localStorage.getItem(legendKey) === 'c
 const rememberLegend = (closed: boolean) => { try { if (closed) localStorage.setItem(legendKey, 'closed'); else localStorage.removeItem(legendKey); } catch { /* private mode */ } };
 const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds, boundsMinZoom, selected, focus, initialLayers, initialRiskDay = 0, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
+export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds, boundsMinZoom, selected, focus, initialLayers, initialRiskDate = null, onSelect, onVillage, controls = true, legend = true, overview: bubbles = true, className }: Props) {
   const t = useT(text), f = useFormat();
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -130,8 +131,9 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const riskOn = layers.risiko && config?.current !== false;
   const risk = useApi<Risk>(riskOn ? riskPath(tanggal) : null, version);
   const riskData = riskOn && risk.data?.fetchedAt ? risk.data : null;
-  const [riskDay, setRiskDay] = useState(initialRiskDay);
-  const shownDay = Math.max(0, Math.min(riskDay, (riskData?.cells[0]?.days.length ?? 1) - 1));
+  // The day is kept as a date, so a newer answer (one more day, one less) keeps showing the same day.
+  const [riskDate, setRiskDate] = useState<string | null>(initialRiskDate);
+  const shownDay = shownRiskDay(riskData, riskDate, tanggal || todayWib());
   const [riskCell, setRiskCell] = useState<number | null>(null);
   const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}${tanggalParam(tanggal)}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
@@ -418,7 +420,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   return (
     <div className={`map-pane ${className ?? ''}`}>
       <div ref={container} className="map" role="region" aria-label={t('map')} />
-      {riskOn && <RiskDays risk={risk} day={shownDay} onDay={setRiskDay} />}
+      {riskOn && <RiskDays risk={risk} day={shownDay} onDay={index => setRiskDate(risk.data?.cells[0]?.days[index]?.date ?? null)} />}
       {host && createPortal(<>
         <button type="button" className={`mapctl-btn ${panel === 'layers' ? 'on' : ''}`} aria-label={t('layers')} title={t('layers')} aria-expanded={panel === 'layers'} onClick={() => toggle('layers')}><Layers size={18} /></button>
         <button type="button" className={`mapctl-btn ${panel === 'legend' ? 'on' : ''}`} aria-label={t('legend')} title={t('legend')} aria-expanded={panel === 'legend'} onClick={() => toggle('legend')}><List size={18} /></button>

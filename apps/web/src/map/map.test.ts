@@ -12,7 +12,7 @@ import {
 } from './layers';
 import { clearedFilters } from './list';
 import {
-  fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskAge, riskDayIndex, riskDayLabel, riskDetail, riskFeatures, riskFill, riskLinkDay,
+  fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskAge, riskDayIndex, riskDayLabel, riskDetail, riskFeatures, riskFill, riskLinkDate, shownRiskDay,
   riskOpacity, riskPath, riskText,
 } from './risk';
 
@@ -213,10 +213,11 @@ describe('fire danger (FWI)', () => {
   it('asks for three live days or one archive day, and reads the dashboard\'s link to tomorrow', () => {
     expect(riskPath('')).toBe('/risk');
     expect(riskPath('2026-10-23')).toBe('/risk?tanggal=2026-10-23');
-    expect(riskLinkDay({ riskDay: 1 })).toBe(1);
-    expect(riskLinkDay({ riskDay: -1 })).toBeNull();
-    expect(riskLinkDay({ signOut: true })).toBeNull();
-    expect(riskLinkDay(null)).toBeNull();
+    expect(riskLinkDate({ riskDate: '2026-11-04' })).toBe('2026-11-04');
+    expect(riskLinkDate({ riskDate: 1 })).toBeNull();
+    expect(riskLinkDate({ riskDate: 'besok' })).toBeNull();
+    expect(riskLinkDate({ signOut: true })).toBeNull();
+    expect(riskLinkDate(null)).toBeNull();
   });
 
   it('colours and names BMKG\'s four classes in both languages', () => {
@@ -289,6 +290,18 @@ describe('fire danger (FWI)', () => {
     expect(riskDayIndex(risk, '2026-11-04')).toBe(1);
     expect(riskDayIndex(risk, '2026-11-06')).toBe(-1);
     expect(riskDayIndex({ ...risk, cells: [] }, '2026-11-04')).toBe(-1);
+  });
+
+  it('opens on the chosen day, else today or the archive day, by date, so a kept copy opens on today and not on its first day', () => {
+    expect(shownRiskDay(risk, null, '2026-11-03')).toBe(0);
+    // The 3 Nov answer kept until 4 Nov: today is its second day.
+    expect(shownRiskDay(risk, null, '2026-11-04')).toBe(1);
+    // The dashboard's link to tomorrow, made from that answer or a newer one, finds its date.
+    expect(shownRiskDay(risk, '2026-11-05', '2026-11-04')).toBe(2);
+    // A date the answer lacks falls back to today, then to the first day.
+    expect(shownRiskDay(risk, '2026-11-06', '2026-11-04')).toBe(1);
+    expect(shownRiskDay(risk, null, '2026-11-09')).toBe(0);
+    expect(shownRiskDay(null, '2026-11-04', '2026-11-04')).toBe(0);
   });
 
   it('says how old the live forecast is once it passes 6 hours, never for an archive day', () => {

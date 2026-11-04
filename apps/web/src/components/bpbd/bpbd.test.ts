@@ -163,7 +163,7 @@ describe('tomorrow\'s fire danger card', () => {
 
   it('reads the day dated tomorrow and links the map to it', () => {
     expect(dangerCard(risk, '', 'id', '2026-11-03', soon)).toEqual({
-      summary: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Pulang Pisau 80%.', age: null, link: { riskDay: 1 },
+      summary: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Pulang Pisau 80%.', age: null, link: { riskDate: '2026-11-04' },
     });
     expect(dangerCard(risk, 'Sumatera Selatan', 'en', '2026-11-03', soon).summary).toBe('No regency has high or above danger in at least 10% of its area.');
   });
@@ -171,7 +171,7 @@ describe('tomorrow\'s fire danger card', () => {
   it('reads tomorrow from a copy kept a day ago by its date, and says how old it is', () => {
     // The 3 Nov answer read on 4 Nov 10.00 WIB: tomorrow is 5 Nov, the third day, not the second.
     const card = dangerCard(risk, '', 'id', '2026-11-04', Date.parse('2026-11-04T03:00:00Z'));
-    expect(card).toEqual({ summary: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Pulang Pisau 60%.', age: 'Dihitung 22 jam lalu', link: { riskDay: 2 } });
+    expect(card).toEqual({ summary: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Pulang Pisau 60%.', age: 'Dihitung 22 jam lalu', link: { riskDate: '2026-11-05' } });
   });
 
   it('says plainly when there is no forecast for tomorrow, without a link to the map', () => {

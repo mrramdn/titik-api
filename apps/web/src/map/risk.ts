@@ -84,13 +84,25 @@ export function riskAge(risk: Pick<Risk, 'archive' | 'fetchedAt'>, lang: Lang, n
 export const riskPath = (tanggal: string) => (tanggal ? `/risk?tanggal=${tanggal}` : '/risk');
 
 /**
- * Router state of a link that opens the map on live data with the fire danger layer on a given day: its place among
- * the grid's days (riskDayIndex), 0 the first.
+ * Router state of a link that opens the map on live data with the fire danger layer on, at a day (YYYY-MM-DD). The map
+ * looks the date up in its own answer, which may be newer than the one the link was made from.
  */
-export interface RiskLink { riskDay: number }
-export function riskLinkDay(state: unknown): number | null {
-  const day = (state as Partial<RiskLink> | null)?.riskDay;
-  return typeof day === 'number' && Number.isInteger(day) && day >= 0 ? day : null;
+export interface RiskLink { riskDate: string }
+export function riskLinkDate(state: unknown): string | null {
+  const date = (state as Partial<RiskLink> | null)?.riskDate;
+  return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+/**
+ * The place among the grid's days that the map shows: the chosen date, else `fallback` (the archive day or today in
+ * WIB), else the first day. A copy kept from an earlier day so still opens on today when it holds today.
+ */
+export function shownRiskDay(risk: Risk | null, chosen: string | null, fallback: string) {
+  for (const date of [chosen, fallback]) {
+    const index = risk && date ? riskDayIndex(risk, date) : -1;
+    if (index >= 0) return index;
+  }
+  return 0;
 }
 
 /** The fill colour and opacity of a grid cell by its class; a cell without one stays clear. */

@@ -49,8 +49,7 @@ export function dangerCard(data: Risk, province: string, lang: Lang, today = tod
   if (!data.fetchedAt) return { summary: w.noWeather, age: null, link: null };
   const tomorrow = shiftDate(today, 1);
   const known = data.regencies.some(regency => regency.days.some(day => day.date === tomorrow));
-  const index = riskDayIndex(data, tomorrow);
-  const link: RiskLink | null = known && index >= 0 ? { riskDay: index } : null;
+  const link: RiskLink | null = known && riskDayIndex(data, tomorrow) >= 0 ? { riskDate: tomorrow } : null;
   return { summary: known ? dangerSummary(highDanger(data, tomorrow, province), lang) : w.noTomorrow, age: riskAge(data, lang, now), link };
 }
 

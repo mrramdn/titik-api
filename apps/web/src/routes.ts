@@ -17,8 +17,8 @@ export const navActive = (to: string, pathname: string) => (to === MAP_PATH ? is
 
 /** Query parameters only the map screen reads. */
 export const MAP_QUERY = ['tanggal'];
-/** Navigation state only the map screen reads: the dashboard's fire danger link (riskDay) and the sign-out flag. */
-export const MAP_STATE = ['riskDay', 'signOut'];
+/** Navigation state only the map screen reads: the dashboard's fire danger link (riskDate) and the sign-out flag. */
+export const MAP_STATE = ['riskDate', 'signOut'];
 
 /**
  * Where a link made while the map lived at / goes now: /peta with the same query, or null when / means the landing

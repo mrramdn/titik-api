@@ -6,7 +6,7 @@ import { AppRoutes } from './AppRoutes';
 import { notFoundText } from './pages/NotFound';
 import { RegionProvider } from './region';
 import { signOutFlag } from './components/shell/roles';
-import { riskLinkDay } from './map/risk';
+import { riskLinkDate } from './map/risk';
 import { HOME_PATH, isMapPath, legacyMapTarget, mapPath, MAP_PATH, MAP_STATE, navActive } from './routes';
 import { homeFor, SessionProvider } from './session';
 
@@ -62,11 +62,11 @@ describe('old map links on /', () => {
   });
 
   it('go to /peta when their navigation state was meant for the map', () => {
-    expect(legacyMapTarget('', { riskDay: 1 })).toBe('/peta');
+    expect(legacyMapTarget('', { riskDate: '2026-11-04' })).toBe('/peta');
     expect(legacyMapTarget('', { [signOutFlag]: true })).toBe('/peta');
     expect(MAP_STATE).toContain(signOutFlag);
-    expect(riskLinkDay({ riskDay: 1 })).toBe(1);
-    expect(MAP_STATE).toContain('riskDay');
+    expect(riskLinkDate({ riskDate: '2026-11-04' })).toBe('2026-11-04');
+    expect(MAP_STATE).toContain('riskDate');
   });
 
   it('leave the landing page alone otherwise', () => {

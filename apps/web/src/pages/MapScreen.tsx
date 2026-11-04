@@ -12,7 +12,7 @@ import { inArchive, quietSuggestion, windowStart, withTanggal } from '../map/arc
 import { ArchiveBanner, ArchivePicker, ArchiveSwitch } from '../map/ArchiveControls';
 import { initialFilters, storeFilters } from '../map/filterStorage';
 import { clearedFilters, narrowed, prepareRows, summarize } from '../map/list';
-import { riskLinkDay } from '../map/risk';
+import { riskLinkDate } from '../map/risk';
 import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
 import { shortProvince, useRegion, type RegencyRef } from '../region';
@@ -73,8 +73,8 @@ export function MapScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   // The dashboard's fire danger card opens the map on live data with that layer on, at tomorrow.
-  const [riskDay] = useState(() => riskLinkDay(location.state));
-  const [filters, setFiltersState] = useState<IncidentFilters>(() => initialFilters(location.search, riskDay !== null));
+  const [riskDate] = useState(() => riskLinkDate(location.state));
+  const [filters, setFiltersState] = useState<IncidentFilters>(() => initialFilters(location.search, riskDate !== null));
   const [selected, setSelected] = useState<Selected | null>(null);
   const { bbox, regencies, findRegency, province } = useRegion();
   const { version } = useDataVersion();
@@ -110,7 +110,7 @@ export function MapScreen() {
         {archived && <ArchiveBanner tanggal={filters.tanggal} onLive={() => setFilters({ ...filters, tanggal: '' })} />}
         <aside className="sidebar dark"><Outlet context={context} /><DemoNote /></aside>
         <MapView hours={filters.hours} filters={{ levels: filters.levels, status: filters.status, peat: filters.peat }} version={version} tanggal={filters.tanggal}
-          initialLayers={riskDay !== null ? { risiko: true } : undefined} initialRiskDay={riskDay ?? 0}
+          initialLayers={riskDate !== null ? { risiko: true } : undefined} initialRiskDate={riskDate}
           bounds={(regency?.bbox as [number, number, number, number] | undefined) ?? bbox} boundsMinZoom={regency ? 8.4 : undefined}
           selected={selected} onSelect={id => navigate(`/kejadian/${id}`)} onVillage={id => navigate(`/desa/${id}`)} />
       </main>
