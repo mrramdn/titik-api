@@ -546,7 +546,7 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
       console.log(`Rescored ${rescored} incidents.`);
     } else if (process.argv[2] === 'recluster') {
       const result = await recluster(pool, Number(process.argv[3] ?? 8));
-      console.log(result ? JSON.stringify(result) : 'An ingest is running. Run this again when it has finished.');
+      console.log(result ? JSON.stringify(result) : 'An ingest or a rescore is running. Run this again when it has finished.');
     } else {
       const source = (process.argv[2] ?? 'live') as Source;
       const range = (process.argv[3] ?? '24h') as '24h' | '7d';
