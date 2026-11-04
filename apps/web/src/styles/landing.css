@@ -23,7 +23,7 @@
 .lp-actions .btn { height: 44px; padding: 0 16px; font-size: 15px; white-space: normal; text-align: center; line-height: 18px; }
 .lp-figure { margin: 28px 0 0; }
 .lp-figure img { display: block; width: 100%; height: auto; border-radius: var(--radius-lg); border: 1px solid var(--surface-line); background: #e8e6e1; box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 32px rgb(0 0 0 / 0.1); }
-/* Small text in --text-2: --text-3 measures 3.45:1 on the page and 3.74:1 on white, under the 4.5:1 that AA asks. */
+/* Small text in --text-2 (7.23:1 on the page): --text-3 only just passes the 4.5:1 that AA asks there (4.52:1). */
 .lp-figure figcaption { margin-top: 10px; font-size: 13px; line-height: 18px; color: var(--text-2); }
 
 /* sections */

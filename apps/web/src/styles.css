@@ -13,7 +13,8 @@
   --surface-line: #e6e4e0;
   --text: #191614;
   --text-2: #57514b;
-  --text-3: #8a837c;
+  /* Small grey text meets AA: 4.52:1 on --surface-bg, 4.69:1 on the #fbfaf8 hover rows, 4.89:1 on white. */
+  --text-3: #76706a;
   --priority-high: #e5381c;
   --priority-medium: #f08c00;
   --priority-low: #8e8a85;
@@ -46,6 +47,8 @@ h1, h2, h3, p { margin: 0; }
 .label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-3); }
 .dark .label, .label.on-dark { color: var(--chrome-text-3); }
 .muted { color: var(--text-3); }
+/* --text-3 is a grey for light surfaces: on the dark sidebar it measures 3.78:1, and --chrome-text-3 a hair under 4.5:1. */
+.dark .muted { color: var(--chrome-text-2); }
 .title-28 { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.4px; }
 .title-24 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.3px; }
 .heading-20 { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.2px; }
@@ -133,6 +136,7 @@ h1, h2, h3, p { margin: 0; }
 .banner-warn { background: rgb(232 89 12 / 0.1); color: #9a3b0a; }
 .banner-ok { background: rgb(47 158 68 / 0.1); color: #1f6e31; }
 .empty { padding: 24px 16px; text-align: center; color: var(--text-3); font-size: 13px; }
+.dark .empty { color: var(--chrome-text-2); }
 .hairline { height: 1px; background: var(--surface-line); border: 0; margin: 0; }
 .dark .hairline { background: var(--chrome-line); }
 .link { color: var(--info); font-weight: 500; }
@@ -190,8 +194,8 @@ h1, h2, h3, p { margin: 0; }
 
 .map-pane { position: relative; min-width: 0; min-height: 0; height: 100%; }
 .map { width: 100%; height: 100%; min-height: 240px; background: #e8e6e1; }
-/* The map's place while MapLibre downloads (map/LazyMapView.tsx). */
-.map-loading { display: grid; place-items: center; color: var(--text-3); font-size: 12px; line-height: 16px; }
+/* The map's place while MapLibre downloads (map/LazyMapView.tsx); on its grey --text-3 would measure 3.92:1. */
+.map-loading { display: grid; place-items: center; color: var(--text-2); font-size: 12px; line-height: 16px; }
 /* A part that downloads when needed and did not arrive (components/LoadBoundary.tsx). */
 .load-failed { display: grid; justify-items: center; gap: 10px; max-width: 24rem; margin: 0 auto; padding: 16px; text-align: center; color: var(--text-2); font-size: 13px; line-height: 18px; }
 .map-controls { position: absolute; top: 16px; right: 16px; display: grid; gap: 8px; z-index: 5; }
@@ -280,6 +284,8 @@ h1, h2, h3, p { margin: 0; }
 .radio { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--surface-line); flex: none; }
 .option.on { background: rgb(232 89 12 / 0.07); box-shadow: inset 3px 0 0 var(--status-smoke); }
 .option.on .radio { border: 5px solid var(--status-smoke); }
+/* A chosen option's tint brings --text-3 under 4.5:1 (4.21:1 on the field check's --surface-subtle). */
+.option.on .text small { color: var(--text-2); }
 .field { display: grid; gap: 6px; }
 .field textarea, .field input[type='text'], .field input[type='email'], .field input[type='password'], .field select, .input {
   font: inherit; color: var(--text); padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--surface-line); background: var(--surface-card); outline: none; width: 100%; }
