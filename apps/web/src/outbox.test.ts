@@ -1,6 +1,10 @@
 import 'fake-indexeddb/auto';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Sender } from './outbox';
+import { OutboxLines } from './components/Shell';
+import { LangProvider } from './i18n';
+import type { QueuedReport, Sender } from './outbox';
 
 type Outbox = typeof import('./outbox');
 /** The outbox as a page load finds it: no account known yet. The reports themselves stay in IndexedDB. */
@@ -162,5 +166,59 @@ describe('outbox', () => {
     await vi.waitFor(async () => expect(await outbox.queued()).toEqual([]));
     expect(posted).toEqual(['/api/v1/incidents/i/verifications']);
     stop();
+  });
+});
+
+describe('what each account sees of the outbox', () => {
+  const item = (clientUuid: string, userId: string | undefined, extra: Partial<QueuedReport> = {}): QueuedReport => ({
+    ...report(clientUuid, userId), queuedAt: '2026-11-04T01:42:00Z', attempts: 0, lastError: null, rejected: false, ...extra,
+  });
+  const items = [
+    item('mine', 'mpa-1'),
+    item('old', undefined),
+    item('theirs', 'mpa-2'),
+    item('theirs-refused', 'mpa-2', { rejected: true, lastError: 'Catatan pribadi mpa-2 ditolak.' }),
+    item('mine-refused', 'mpa-1', { rejected: true, lastError: 'Status tidak valid.' }),
+  ];
+  const lines = (viewer: string | null, options: { online?: boolean; signedOut?: boolean; lang?: string } = {}) => {
+    vi.stubGlobal('localStorage', { getItem: (key: string) => (key === 'titikapi.lang' ? options.lang ?? null : null), setItem() {}, removeItem() {} });
+    return renderToStaticMarkup(createElement(LangProvider, null,
+      createElement(OutboxLines, { items, viewer, online: options.online ?? true, signedOut: options.signedOut ?? false })));
+  };
+
+  it('counts its own reports (and those saved before accounts were recorded), and another account\'s as a number only', async () => {
+    const { outboxView } = outbox;
+    const view = outboxView(items, 'mpa-1');
+    expect(view.waiting.map(entry => entry.clientUuid)).toEqual(['mine', 'old']);
+    expect(view.rejected.map(entry => entry.clientUuid)).toEqual(['mine-refused']);
+    expect(view.others).toBe(1);
+    // A visitor files nothing: every waiting report waits for an account, the older ones too.
+    expect(outboxView(items, null)).toMatchObject({ waiting: [], rejected: [], others: 3 });
+  });
+
+  it('says in both languages that another account\'s report waits for that account, and shows nothing else of it', () => {
+    const html = lines('mpa-1');
+    expect(html).toContain('2 laporan menunggu sinyal sejak 08.42.');
+    expect(html).toContain('1 laporan ditolak: Status tidak valid.');
+    expect(html).toContain('1 laporan menunggu akun pengirimnya masuk lagi.');
+    expect(html).toContain('Kirim sekarang');
+    expect(html).not.toContain('Catatan pribadi');
+    const visitor = lines(null);
+    expect(visitor).toContain('3 laporan menunggu akun pengirimnya masuk lagi.');
+    expect(visitor).not.toContain('Kirim sekarang');
+    expect(lines(null, { lang: 'en' })).toContain('3 reports waiting for the accounts that filed them to sign in again.');
+    expect(lines('mpa-2', { lang: 'en' })).toContain('1 report waiting for the account that filed it to sign in again.');
+  });
+
+  it('asks the volunteer to sign in again after a 401, without a send button that could not send', () => {
+    const html = lines('mpa-1', { signedOut: true });
+    expect(html).toContain('2 laporan menunggu kamu masuk lagi.');
+    expect(html).not.toContain('Kirim sekarang');
+    expect(lines('mpa-1', { signedOut: true, lang: 'en' })).toContain('2 reports waiting for you to sign in again.');
+  });
+
+  it('shows nothing while online when nothing of the account waits and no other account\'s report does', () => {
+    expect(renderToStaticMarkup(createElement(OutboxLines, { items: [items[3]!], viewer: 'mpa-1', online: true, signedOut: false }))).toBe('');
+    expect(renderToStaticMarkup(createElement(OutboxLines, { items: [], viewer: null, online: false, signedOut: false }))).toContain('Tanpa sinyal.');
   });
 });

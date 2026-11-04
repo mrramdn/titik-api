@@ -4,7 +4,8 @@
 // empties when another account signs in (see accountData.ts).
 import { useEffect, useMemo, useState } from 'react';
 import { apiCacheName as cacheName } from '../../accountData';
-import { onOutboxChange, queued } from '../../outbox';
+import { onOutboxChange, outboxView, queued } from '../../outbox';
+import { useSession } from '../../session';
 
 const detailPath = (id: string) => `/api/v1/incidents/${id}`;
 const refetchAfterMs = 2 * 3600_000;
@@ -99,13 +100,14 @@ export function useOfflineReady(items: Prefetchable[], online: boolean): Set<str
   return ready;
 }
 
-/** Incidents with a report still waiting on this phone for a signal. */
+/** Incidents with a report of the signed-in account still waiting on this phone (another account's wait for it). */
 export function useWaitingReports(): Set<string> {
+  const viewer = useSession().user?.id ?? null;
   const [waiting, setWaiting] = useState<Set<string>>(new Set());
   useEffect(() => {
-    const load = () => { void queued().then(items => setWaiting(new Set(items.filter(item => !item.rejected).map(item => item.incidentId)))).catch(() => {}); };
+    const load = () => { void queued().then(items => setWaiting(new Set(outboxView(items, viewer).waiting.map(item => item.incidentId)))).catch(() => {}); };
     load();
     return onOutboxChange(load);
-  }, []);
+  }, [viewer]);
   return waiting;
 }

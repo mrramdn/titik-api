@@ -5,7 +5,7 @@ import type { Role } from '../api';
 import { dict, useT } from '../i18n';
 import { useFormat } from '../format';
 import { useSession } from '../session';
-import { flush, onOutboxChange, queued, type QueuedReport } from '../outbox';
+import { flush, onOutboxChange, outboxSignedOut, outboxView, queued, type QueuedReport } from '../outbox';
 import { shortProvince, useRegion } from '../region';
 import { LogoMark } from './Logo';
 import { useOnline } from './ui';
@@ -22,6 +22,8 @@ const text = dict({
     account: 'Akun', role: 'Peran', language: 'Bahasa', emailSignIn: 'Masuk dengan email', signOut: 'Keluar', demoAccount: 'Akun demo', close: 'Tutup', skip: 'Langsung ke isi',
     offline: 'Tanpa sinyal. Laporan disimpan di ponsel.', waitingOne: '{n} laporan menunggu sinyal sejak {time}.', waitingMany: '{n} laporan menunggu sinyal sejak {time}.',
     rejectedOne: '{n} laporan ditolak: {error}', rejectedMany: '{n} laporan ditolak: {error}', sendNow: 'Kirim sekarang',
+    signInOne: '{n} laporan menunggu kamu masuk lagi.', signInMany: '{n} laporan menunggu kamu masuk lagi.',
+    othersOne: '{n} laporan menunggu akun pengirimnya masuk lagi.', othersMany: '{n} laporan menunggu akun pengirimnya masuk lagi.',
   },
   en: {
     home: 'Titik Api, home', region: 'Region', allRegions: 'Sumsel + Kalteng', villages: '{n} villages',
@@ -29,6 +31,8 @@ const text = dict({
     account: 'Account', role: 'Role', language: 'Language', emailSignIn: 'Sign in with email', signOut: 'Sign out', demoAccount: 'Demo account', close: 'Close', skip: 'Skip to content',
     offline: 'No signal. Reports are saved on this phone.', waitingOne: '{n} report waiting for signal since {time}.', waitingMany: '{n} reports waiting for signal since {time}.',
     rejectedOne: '{n} report rejected: {error}', rejectedMany: '{n} reports rejected: {error}', sendNow: 'Send now',
+    signInOne: '{n} report waiting for you to sign in again.', signInMany: '{n} reports waiting for you to sign in again.',
+    othersOne: '{n} report waiting for the account that filed it to sign in again.', othersMany: '{n} reports waiting for the accounts that filed them to sign in again.',
   },
 });
 type Key = keyof typeof text.id;
@@ -46,18 +50,31 @@ const navItems: NavItem[] = [
 const navFor = (role: Role | undefined) => navItems.filter(item => !item.roles || (role && item.roles.includes(role))).slice(0, 4);
 
 function OutboxBar() {
-  const t = useT(text), f = useFormat();
+  const { user } = useSession();
   const [items, setItems] = useState<QueuedReport[]>([]);
+  const [signedOut, setSignedOut] = useState(outboxSignedOut);
   const online = useOnline();
-  useEffect(() => { const load = () => { void queued().then(setItems); }; load(); return onOutboxChange(load); }, []);
-  const waiting = items.filter(item => !item.rejected), rejected = items.filter(item => item.rejected);
-  if (!items.length && online) return null;
+  useEffect(() => { const load = () => { setSignedOut(outboxSignedOut()); void queued().then(setItems).catch(() => {}); }; load(); return onOutboxChange(load); }, []);
+  return <OutboxLines items={items} viewer={user?.id ?? null} online={online} signedOut={signedOut} />;
+}
+
+/**
+ * What waits on this phone, for the account signed in (`viewer`, null for a visitor): no signal, its reports waiting
+ * or refused. Reports another account filed wait for that account to sign in again (outbox.ts); they show as one line,
+ * their details stay theirs. `signedOut`: the server said the session ended (401).
+ */
+export function OutboxLines({ items, viewer, online, signedOut }: { items: QueuedReport[]; viewer: string | null; online: boolean; signedOut: boolean }) {
+  const t = useT(text), f = useFormat();
+  const { waiting, rejected, others } = outboxView(items, viewer);
+  if (!waiting.length && !rejected.length && !others && online) return null;
+  const count = (n: number, one: Key, many: Key, vars = {}) => t(n === 1 ? one : many, { n, ...vars });
   return (
     <div className="outbox" role="status">
       {!online && <strong className="warn">{t('offline')}</strong>}
-      {waiting.length > 0 && <span>{t(waiting.length === 1 ? 'waitingOne' : 'waitingMany', { n: waiting.length, time: f.time(waiting[0]!.queuedAt) })}</span>}
-      {rejected.length > 0 && <span className="bad">{t(rejected.length === 1 ? 'rejectedOne' : 'rejectedMany', { n: rejected.length, error: rejected[0]!.lastError ?? '' })}</span>}
-      {waiting.length > 0 && online && <button type="button" className="btn btn-dark btn-sm" onClick={() => void flush()}>{t('sendNow')}</button>}
+      {waiting.length > 0 && <span>{signedOut ? count(waiting.length, 'signInOne', 'signInMany') : count(waiting.length, 'waitingOne', 'waitingMany', { time: f.time(waiting[0]!.queuedAt) })}</span>}
+      {rejected.length > 0 && <span className="bad">{count(rejected.length, 'rejectedOne', 'rejectedMany', { error: rejected[0]!.lastError ?? '' })}</span>}
+      {others > 0 && <span>{count(others, 'othersOne', 'othersMany')}</span>}
+      {waiting.length > 0 && online && !signedOut && <button type="button" className="btn btn-dark btn-sm" onClick={() => void flush()}>{t('sendNow')}</button>}
     </div>
   );
 }
