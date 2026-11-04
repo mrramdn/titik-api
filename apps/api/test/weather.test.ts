@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { fwiDay, startMoisture } from '../src/fwi.js';
 import { addDays, wibDay } from '../src/geo.js';
-import { computeDays, ensureCells, parseLocations, startWeatherScheduler, updateWeather } from '../src/weather.js';
+import { computeDays, ensureCells, forecastUrl, parseLocations, startWeatherScheduler, updateWeather } from '../src/weather.js';
 import { emptyDatabase, fakeOpenMeteo, testPool } from './fixtures.js';
 
 const pool = testPool();
@@ -236,4 +236,72 @@ test('a spin-up block by block saves the same rows as one block of every cell, a
   assert.match(blocks.kinds, /^(AAAF)+(A{1,3}F)?$/);
   assert.equal(blocks.kinds.split('F').length - 1, Math.ceil(cells / 42));
   assert.match(small.kinds, /^(AF)+$/);
+});
+
+/** Whether another run could take the weather lock now (it is taken and given back at once). */
+async function lockFree() {
+  const probe = await pool.connect();
+  try {
+    const ok = (await probe.query('SELECT pg_try_advisory_lock(41572027) AS ok')).rows[0].ok as boolean;
+    if (ok) await probe.query('SELECT pg_advisory_unlock(41572027)');
+    return ok;
+  } finally { probe.release(); }
+}
+const savedCells = async () => (await pool.query('SELECT cell_id, count(*)::int AS n FROM weather_daily GROUP BY cell_id ORDER BY cell_id')).rows as { cell_id: number; n: number }[];
+
+test('a run told to stop in a pause returns within a second, lets go of the lock and its client, and keeps the blocks it saved', async () => {
+  await pool.query('TRUNCATE weather_daily');
+  // Three weeks back: blocks of 42 cells, one archive and one forecast request each, then a minute's pause.
+  const stopping = new AbortController(), urls: string[] = [];
+  const running = updateWeather(pool, { fetch: fakeOpenMeteo(today, addDays(today, -5), varied, urls), spinUpStart: addDays(today, -20), archivePauseMs: 0,
+    pauseMs: 60_000, signal: stopping.signal });
+  for (let tries = 0; (await savedCells()).length < 42; tries++) {
+    assert.ok(tries < 500, 'the first block is saved');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  const asked = Date.now();
+  stopping.abort();
+  const result = await running;
+  assert.ok(Date.now() - asked < 1000, `returned ${Date.now() - asked} ms after the stop`);
+  assert.deepEqual([result.stopped, result.skipped, result.requests, result.failed, result.rows], [true, false, 2, 0, 42 * 23]);
+  assert.equal(urls.length, 2, 'nothing was fetched after the stop');
+  assert.ok(await lockFree(), 'the lock is free');
+  assert.equal(pool.totalCount, pool.idleCount, 'the client is back in the pool');
+  const saved = await savedCells();
+  assert.equal(saved.length, 42);
+  assert.ok(saved.every(cell => cell.n === 23));
+});
+
+test('a spin-up stopped at a later block keeps the blocks before it; the next run spins up only the cells without rows', async () => {
+  await pool.query('TRUNCATE weather_daily');
+  const cells = (await pool.query('SELECT id, lon, lat FROM weather_cells ORDER BY id')).rows as { id: number; lon: number; lat: number }[];
+  const [first, second, third] = [cells.slice(0, 42), cells.slice(42, 84), cells.slice(84)];
+  // The second block's forecast fails: that block keeps its archive days, up to five days ago. The run is stopped while
+  // the third block's forecast is under way, as a deploy would stop it.
+  const stopping = new AbortController(), inner = fakeOpenMeteo(today, addDays(today, -5), varied, []);
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input) === forecastUrl(second, 10)) return new Response('busy', { status: 503 });
+    if (String(input) === forecastUrl(third, 10)) { stopping.abort(); throw init!.signal!.reason; }
+    return inner(input);
+  }) as typeof fetch;
+  const lines: string[] = [];
+  const stopped = await updateWeather(pool, { fetch: fetchImpl, spinUpStart: addDays(today, -20), sleep: async () => {}, signal: stopping.signal, log: line => lines.push(line) });
+  assert.deepEqual([stopped.stopped, stopped.spinUp, stopped.requests, stopped.failed], [true, cells.length, 6, 1]);
+  assert.match(lines.join('\n'), /1 of 6 weather requests failed \(Open-Meteo HTTP 503\)/);
+  assert.ok(await lockFree());
+  const saved = new Map((await savedCells()).map(cell => [cell.cell_id, cell.n]));
+  assert.ok(first.every(cell => saved.get(cell.id) === 23), 'the first block in full');
+  assert.ok(second.every(cell => saved.get(cell.id) === 16), 'the second up to the last archive day');
+  assert.ok(third.every(cell => !saved.has(cell.id)), 'nothing of the block under way');
+  const before = await allRows();
+
+  const urls: string[] = [];
+  const next = await updateWeather(pool, { fetch: fakeOpenMeteo(today, addDays(today, -5), varied, urls), spinUpStart: addDays(today, -20), sleep: async () => {} });
+  assert.deepEqual([next.stopped, next.spinUp, next.failed], [false, third.length, 0]);
+  const archive = urls.filter(url => url.includes('archive-api'));
+  assert.equal(archive.length, 1);
+  assert.deepEqual(new URL(archive[0]!).searchParams.get('latitude')!.split(',').map(Number), third.map(cell => cell.lat), 'only the cells without rows');
+  assert.ok((await savedCells()).every(cell => cell.n === 23), 'every cell up to today + 2');
+  const kept = (rows: any[]) => rows.filter(row => row.day <= addDays(today, -10));
+  assert.deepEqual(kept(await allRows()).filter(row => row.cell_id <= second.at(-1)!.id), kept(before), 'the saved days before the refetched ones stay');
 });

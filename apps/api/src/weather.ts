@@ -14,7 +14,9 @@
 //
 // A run works through the cells in blocks of at most 50, each fetched, computed and saved in its own transaction
 // before the next, and keeps of every answer only what the codes need. So a spin-up holds one block in memory however
-// long it reaches back, and a run cut short keeps the blocks it saved: the next one spins up only the cells left.
+// long it reaches back, and a run cut short keeps the blocks it saved: the next one spins up only the cells left. A
+// run told to stop (the server shutting down) ends at its next request, pause or save, and lets go of its client.
+import { setTimeout as delay } from 'node:timers/promises';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { createPool } from './db.js';
@@ -58,13 +60,24 @@ export interface WeatherOptions {
   /** Pause after a Forecast API request, and after an archive request (ms); by default 2 s and the archive pacing. */
   pauseMs?: number;
   archivePauseMs?: number;
-  sleep?: (ms: number) => Promise<void>;
+  /** Waits `ms`, by default less when `signal` stops the run; the tests count the waits instead. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Where a run with failed requests reports, in one line. */
   log?: (message: string) => void;
   /** Cells per block, MAX_LOCATIONS by default (a spin-up block holds whole archive requests); the tests try others. */
   blockSize?: number;
+  /**
+   * Stops the run: a request under way is cut off, a pause ends, and nothing more is fetched or saved. The blocks saved
+   * so far stay, the lock and the database client are let go, and the run returns with `stopped`.
+   */
+  signal?: AbortSignal;
 }
-export interface WeatherResult { skipped: boolean; cells: number; rows: number; requests: number; failed: number; spinUp: number }
+export interface WeatherResult { skipped: boolean; stopped: boolean; cells: number; rows: number; requests: number; failed: number; spinUp: number }
+
+/** Ends a run whose signal asked it to stop. */
+class Stopped extends Error {}
+/** Waits `ms`, or less when `signal` stops the run. */
+const wait = (ms: number, signal?: AbortSignal) => delay(ms, undefined, { signal }).catch(() => {});
 
 interface Cell { id: number; lon: number; lat: number }
 interface Hour { temp: number; rh: number; wind: number; from: number; rain: number }
@@ -202,20 +215,23 @@ export function parseLocations(body: unknown, count: number): Series[] {
 
 /**
  * One GET with a 20 s timeout and up to three retries, with growing waits, on 429 and 5xx. A timeout or a network
- * error is not retried: the same heavy request would only count again; the next run asks once more.
+ * error is not retried: the same heavy request would only count again; the next run asks once more. `signal` cuts the
+ * request and the waits short.
  */
-async function getJson(url: string, fetchImpl: typeof fetch, sleep: (ms: number) => Promise<void>) {
+async function getJson(url: string, fetchImpl: typeof fetch, sleep: NonNullable<WeatherOptions['sleep']>, signal?: AbortSignal) {
   for (let attempt = 0; ; attempt++) {
     let response: Response;
     try {
-      response = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), headers: { 'user-agent': userAgent } });
+      const timeout = AbortSignal.timeout(20_000);
+      response = await fetchImpl(url, { signal: signal ? AbortSignal.any([timeout, signal]) : timeout, headers: { 'user-agent': userAgent } });
     } catch (error) {
       throw new Error(`Open-Meteo ${(error as Error).message}`);
     }
     if (response.ok) return response.json() as Promise<unknown>;
     const retry = response.status === 429 || response.status >= 500;
     if (!retry || attempt >= RETRY_WAITS.length) throw new Error(`Open-Meteo HTTP ${response.status}`);
-    await sleep(RETRY_WAITS[attempt]!);
+    await sleep(RETRY_WAITS[attempt]!, signal);
+    signal?.throwIfAborted();
   }
 }
 
@@ -290,11 +306,13 @@ async function insertRows(client: pg.PoolClient, rows: WeatherRow[], fetchedAt: 
  */
 export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {}): Promise<WeatherResult> {
   const fetchImpl = options.fetch ?? fetch;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const sleep = options.sleep ?? wait;
+  const { signal } = options;
   const now = options.now ?? new Date();
   const today = wibDay(now);
   const client = await pool.connect();
-  const result: WeatherResult = { skipped: false, cells: 0, rows: 0, requests: 0, failed: 0, spinUp: 0 };
+  const result: WeatherResult = { skipped: false, stopped: false, cells: 0, rows: 0, requests: 0, failed: 0, spinUp: 0 };
+  const failures: string[] = [];
   try {
     if (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])).rows[0].ok) return { ...result, skipped: true };
     try {
@@ -317,15 +335,19 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
         const key = `${start.day}|${archive}`;
         groups.set(key, [...(groups.get(key) ?? []), cell]);
       }
-      const failures: string[] = [];
       // Each request waits out the pause the one before it asked for.
       let pause = 0;
       const request = async (url: string, count: number, pauseAfter: number) => {
-        if (pause) await sleep(pause);
+        if (pause) await sleep(pause, signal);
         pause = pauseAfter;
+        if (signal?.aborted) throw new Stopped();
         result.requests++;
-        try { return parseLocations(await getJson(url, fetchImpl, sleep), count); }
-        catch (error) { result.failed++; failures.push((error as Error).message); return null; }
+        try { return parseLocations(await getJson(url, fetchImpl, sleep, signal), count); }
+        catch (error) {
+          // A request cut off by the stop is no failure: the run ends here.
+          if (signal?.aborted) throw new Stopped();
+          result.failed++; failures.push((error as Error).message); return null;
+        }
       };
       for (const [key, group] of groups) {
         const [startDay, archive] = [key.split('|')[0]!, key.endsWith('true')];
@@ -364,6 +386,7 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
             });
           }
           const rows = blockCells.flatMap(cell => (series.has(cell.id) ? computeDays(cell, series.get(cell.id)!, starts.get(cell.id)!, today) : []));
+          if (signal?.aborted) throw new Stopped();
           if (rows.length) {
             await save(client, rows, now);
             clearRiskCache();
@@ -371,13 +394,16 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
           result.rows += rows.length;
         }
       }
-      if (failures.length) {
-        options.log?.(`Open-Meteo: ${result.failed} of ${result.requests} weather requests failed (${[...new Set(failures)].join('; ')}); their cells keep the last values.`);
-      }
-      return result;
+    } catch (error) {
+      if (!(error instanceof Stopped)) throw error;
+      result.stopped = true;
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {});
     }
+    if (failures.length) {
+      options.log?.(`Open-Meteo: ${result.failed} of ${result.requests} weather requests failed (${[...new Set(failures)].join('; ')}); their cells keep the last values.`);
+    }
+    return result;
   } finally {
     client.release();
   }
@@ -498,23 +524,28 @@ export function installRisk(app: FastifyInstance, pool: pg.Pool) {
 
 /**
  * Updates the weather inside the API process every WEATHER_INTERVAL_MINUTES (180 by default; 0 switches it off),
- * the first time 30 seconds after start. A failure is logged and never stops the process. Returns a stop function.
+ * the first time 30 seconds after start. A failure is logged and never stops the process. Returns a stop function: it
+ * ends the schedule and a run under way, and resolves once that run has let go of its database client (app.close()
+ * waits for every client).
  */
 export function startWeatherScheduler(pool: pg.Pool, log: FastifyBaseLogger, minutes = Number(process.env.WEATHER_INTERVAL_MINUTES ?? 180)) {
-  if (!minutes || minutes <= 0) return () => {};
+  if (!minutes || minutes <= 0) return async () => {};
+  const stopping = new AbortController();
   let timer: NodeJS.Timeout | undefined;
-  let stopped = false;
+  let running: Promise<void> | undefined;
   const tick = async () => {
     try {
-      const result = await updateWeather(pool, { log: message => log.warn(message) });
-      if (!result.skipped) log.info(result, 'Weather update finished');
+      const result = await updateWeather(pool, { log: message => log.warn(message), signal: stopping.signal });
+      if (result.stopped) log.info(result, 'Weather update stopped');
+      else if (!result.skipped) log.info(result, 'Weather update finished');
     } catch (error) {
       log.error({ err: error }, 'Weather update failed');
     }
-    if (!stopped) timer = setTimeout(tick, minutes * 60_000);
+    if (!stopping.signal.aborted) timer = setTimeout(run, minutes * 60_000);
   };
-  timer = setTimeout(tick, 30_000);
-  return () => { stopped = true; clearTimeout(timer); };
+  const run = () => { running = tick(); };
+  timer = setTimeout(run, 30_000);
+  return async () => { stopping.abort(); clearTimeout(timer); await running; };
 }
 
 // node dist/weather.js update fetches the weather now and recomputes the fire danger codes.

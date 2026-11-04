@@ -21,5 +21,12 @@ const stopWeather = startWeatherScheduler(pool, app.log);
 })();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, async () => { stop(); stopWeather(); await app.close(); process.exit(0); });
+  process.on(signal, async () => {
+    stop();
+    // app.close() waits for every database client. A weather run under way lets go of its own at its next request,
+    // pause or save: up to 5 s for that, well inside the 10 s Docker gives before it kills the process.
+    await Promise.race([stopWeather(), new Promise(resolve => setTimeout(resolve, 5_000))]);
+    await app.close();
+    process.exit(0);
+  });
 }
