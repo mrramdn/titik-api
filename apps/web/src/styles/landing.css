@@ -101,7 +101,8 @@
 .lp-foot a { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; color: var(--chrome-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--chrome-text-3); }
 .lp-foot a:hover { text-decoration-color: currentColor; }
 .lp-foot a:focus-visible { outline: 2px solid var(--chrome-text); outline-offset: 2px; border-radius: 4px; }
-/* --chrome-text-3 measures 4.49:1 here, just under the 4.5:1 of AA: the demo and emergency note gets --chrome-text-2. */
+/* The demo and emergency note keeps the footer's --chrome-text-2 (7.88:1 on --chrome-950); --chrome-text-3 at 54%
+   measures 5.38:1 here, as on the sidebar, so it would also meet AA. */
 .lp-foot p { font-size: 13px; line-height: 18px; color: var(--chrome-text-2); }
 
 @media (min-width: 560px) {
