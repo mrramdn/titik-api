@@ -35,6 +35,7 @@ const text = dict({
     sent: 'Laporan terkirim', sentBody: 'Dicek pukul {time} WIB. BPBD/Daops melihatnya di dasbor.',
     queued: 'Menunggu sinyal, dikirim otomatis', queuedBody: 'Dicek pukul {time} WIB. Laporan tersimpan di ponsel ini dan terkirim saat ada sinyal, dengan waktu cek ini.',
     signIn: 'Sesi berakhir, masuk lagi untuk mengirim', signInBody: 'Dicek pukul {time} WIB. Laporan tersimpan di ponsel ini dan terkirim setelah akun ini masuk lagi, dengan waktu cek ini.',
+    signInAgain: 'Masuk lagi',
     rejected: 'Laporan ditolak server', rejectedBody: '{reason} Periksa isian lalu kirim ulang dari halaman kejadian.',
   },
   en: {
@@ -57,6 +58,7 @@ const text = dict({
     sent: 'Report sent', sentBody: 'Checked at {time} WIB. BPBD/Daops see it on the dashboard.',
     queued: 'Waiting for signal, sent automatically', queuedBody: 'Checked at {time} WIB. The report is saved on this phone and goes out when there is signal, with this check time.',
     signIn: 'Session ended: sign in again to send', signInBody: 'Checked at {time} WIB. The report is saved on this phone and goes out once this account signs in again, with this check time.',
+    signInAgain: 'Sign in again',
     rejected: 'The server refused the report', rejectedBody: '{reason} Check the form and send it again from the incident page.',
   },
 });
@@ -138,7 +140,7 @@ function TargetCard({ detail, position, gpsError }: { detail: IncidentDetail; po
 }
 
 /** `signIn`: kept like `queued`, but the server said the session ended (401), so it waits for a sign-in, not a signal. */
-type Result = { state: 'sent' | 'queued' | 'signIn' | 'rejected'; at: string; clientUuid: string; reason?: string };
+type Result = { state: 'sent' | 'queued' | 'signIn' | 'rejected'; at: string; clientUuid: string; incidentId: string; reason?: string };
 /** A report still in the outbox waits for a sign-in after a 401, else for a signal. */
 const waitingState = (): Result['state'] => (outboxSignedOut() ? 'signIn' : 'queued');
 
@@ -178,7 +180,32 @@ export function VerifyPage() {
     });
   }, [result]);
 
-  if (ready && !user) return <Navigate to="/masuk" replace />;
+  // A report filed here keeps its result on screen whoever is signed in by then. A 401 on its way out makes the session
+  // ask the server again, and the answer (nobody) would otherwise send the volunteer to /masuk before they read that
+  // the report waits for them; the redirect also waits while the report is being saved and sent.
+  if (result) {
+    const tone = result.state === 'sent' ? 'ok' : 'warn';
+    return (
+      <Frame>
+        <main className="page narrow">
+          <div className={`banner banner-${tone} v-result`} role="status">
+            {result.state === 'sent' ? <CircleCheck size={22} aria-hidden="true" /> : result.state === 'rejected' ? <TriangleAlert size={22} aria-hidden="true" /> : <Clock size={22} aria-hidden="true" />}
+            <div>
+              <strong className="heading-16">{t(result.state)}</strong>
+              <span>{result.state === 'rejected' ? t('rejectedBody', { reason: result.reason ?? '' }) : t(result.state === 'sent' ? 'sentBody' : result.state === 'signIn' ? 'signInBody' : 'queuedBody', { time: f.time(result.at) })}</span>
+            </div>
+          </div>
+          <div className="v-stack">
+            {result.state === 'signIn'
+              ? <Link to="/masuk" className="btn btn-primary btn-block">{t('signInAgain')}</Link>
+              : <Link to="/tugas" className="btn btn-primary btn-block">{t('toTasks')}</Link>}
+            <Link to={`/kejadian/${result.incidentId}`} className="btn btn-secondary btn-block">{t('viewIncident')}</Link>
+          </div>
+        </main>
+      </Frame>
+    );
+  }
+  if (ready && !user && !busy) return <Navigate to="/masuk" replace />;
   if (user && user.role !== 'mpa' && user.role !== 'admin') return <Frame><main className="page narrow"><Banner tone="warn">{t('roleOnly')}</Banner></main></Frame>;
   const d = incident.data;
   if (!d) {
@@ -204,30 +231,9 @@ export function VerifyPage() {
       rememberCheck(d.id, { at: observedAt, status });
       if (navigator.onLine !== false) await flush();
       const item = (await queued()).find(entry => entry.clientUuid === clientUuid);
-      setResult({ clientUuid, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : waitingState(), reason: item?.lastError ?? undefined });
+      setResult({ clientUuid, incidentId: d.id, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : waitingState(), reason: item?.lastError ?? undefined });
     } finally { setBusy(false); }
   };
-
-  if (result) {
-    const tone = result.state === 'sent' ? 'ok' : 'warn';
-    return (
-      <Frame>
-        <main className="page narrow">
-          <div className={`banner banner-${tone} v-result`} role="status">
-            {result.state === 'sent' ? <CircleCheck size={22} aria-hidden="true" /> : result.state === 'rejected' ? <TriangleAlert size={22} aria-hidden="true" /> : <Clock size={22} aria-hidden="true" />}
-            <div>
-              <strong className="heading-16">{t(result.state)}</strong>
-              <span>{result.state === 'rejected' ? t('rejectedBody', { reason: result.reason ?? '' }) : t(result.state === 'sent' ? 'sentBody' : result.state === 'signIn' ? 'signInBody' : 'queuedBody', { time: f.time(result.at) })}</span>
-            </div>
-          </div>
-          <div className="v-stack">
-            <Link to="/tugas" className="btn btn-primary btn-block">{t('toTasks')}</Link>
-            <Link to={`/kejadian/${d.id}`} className="btn btn-secondary btn-block">{t('viewIncident')}</Link>
-          </div>
-        </main>
-      </Frame>
-    );
-  }
 
   return (
     <Frame>
