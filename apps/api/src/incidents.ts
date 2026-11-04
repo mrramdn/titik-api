@@ -258,17 +258,37 @@ export async function getIncident(db: Database, idOrCode: string, scope: Scope) 
 }
 
 /**
- * Keeps an incident's verification summaries in step with its reports: first_verified_at and latest_status from real
- * field checks (the public's), first_verified_any_at and latest_status_any from all of them (a demo session's).
+ * An incident's verification summaries as SQL over the field checks of incident `i`: first_verified_at and latest_status
+ * from real field checks (the public's), first_verified_any_at and latest_status_any from all of them (a demo session's).
  */
+const summaries = Object.entries({
+  first_verified_at: '(SELECT min(observed_at) FROM verifications WHERE incident_id = i.id AND NOT is_demo)',
+  latest_status: '(SELECT status FROM verifications WHERE incident_id = i.id AND NOT is_demo ORDER BY observed_at DESC, received_at DESC LIMIT 1)',
+  first_verified_any_at: '(SELECT min(observed_at) FROM verifications WHERE incident_id = i.id)',
+  latest_status_any: '(SELECT status FROM verifications WHERE incident_id = i.id ORDER BY observed_at DESC, received_at DESC LIMIT 1)',
+});
+const setSummaries = summaries.map(([column, sql]) => `${column} = ${sql}`).join(', ');
+
+/** Keeps an incident's verification summaries in step with its reports. */
 export async function refreshVerificationSummary(db: Database, ids: string[]) {
   if (!ids.length) return;
-  await db.query(`UPDATE incidents i SET
-      first_verified_at = (SELECT min(observed_at) FROM verifications WHERE incident_id = i.id AND NOT is_demo),
-      latest_status = (SELECT status FROM verifications WHERE incident_id = i.id AND NOT is_demo ORDER BY observed_at DESC, received_at DESC LIMIT 1),
-      first_verified_any_at = (SELECT min(observed_at) FROM verifications WHERE incident_id = i.id),
-      latest_status_any = (SELECT status FROM verifications WHERE incident_id = i.id ORDER BY observed_at DESC, received_at DESC LIMIT 1)
-    WHERE i.id = ANY($1::uuid[])`, [ids]);
+  await db.query(`UPDATE incidents i SET ${setSummaries} WHERE i.id = ANY($1::uuid[])`, [ids]);
+}
+
+/**
+ * Works out again the summaries of every incident whose stored ones do not follow from its field checks, for example
+ * where an older version counted a demo check in the public summary or a summary outlived the checks behind it. Only
+ * incidents with a summary or a check are looked at, found first so the update itself stays on a few rows. Returns the
+ * ids it changed.
+ */
+export async function repairVerificationSummaries(db: Database) {
+  const candidates = (await db.query(`SELECT id FROM incidents
+      WHERE first_verified_at IS NOT NULL OR latest_status IS NOT NULL OR first_verified_any_at IS NOT NULL OR latest_status_any IS NOT NULL
+    UNION SELECT incident_id FROM verifications`)).rows.map(row => row.id as string);
+  if (!candidates.length) return [];
+  const stale = summaries.map(([column, sql]) => `i.${column} IS DISTINCT FROM ${sql}`).join(' OR ');
+  return (await db.query(`UPDATE incidents i SET ${setSummaries} WHERE i.id = ANY($1::uuid[]) AND (${stale}) RETURNING i.id`, [candidates]))
+    .rows.map(row => row.id as string);
 }
 
 export const hoursParam = (value: unknown, fallback: number, max: number) => {

@@ -10,10 +10,11 @@ import { join } from 'node:path';
 import type { FastifyInstance, InjectOptions } from 'fastify';
 import sharp from 'sharp';
 import { createApp } from '../src/app.js';
-import { demoAccounts, resetDemo } from '../src/demo.js';
+import { demoAccounts, demoSquads, resetDemo } from '../src/demo.js';
 import { statusLabel, wibDay } from '../src/geo.js';
 import { clearTileCache } from '../src/incidents.js';
 import { refreshIncidents } from '../src/ingest.js';
+import { reconcileDemoScope } from '../src/reconcile.js';
 import { roughDistanceSql } from '../src/verifications.js';
 import { account, bigVillage, emptyDatabase, insertDetection, insertIncident, testPool, tileOf, wibMidnight, type Account } from './fixtures.js';
 import { readTile } from './mvt.js';
@@ -423,4 +424,62 @@ test('the reset takes back what old demo false alarms taught the triage, and nev
   const publicH = await data(`/incidents/${incidents.H}`);
   assert.deepEqual([publicH.score, publicH.level, publicH.nearStatic, publicH.latestStatus], [taught.H.score, taught.H.level, true, 'alarm_palsu']);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM static_sources WHERE kind = 'alarm_palsu'")).rows[0].n, 3, 'the real ones of E, H and L');
+});
+
+test('rows the judged version wrote after a rollback go back to the demo scope at start-up, and the reset clears what its reset left', async () => {
+  // M, N, P and Q on a row 4 km south of the others, detected half an hour ago.
+  const centre = tileCentre(tile.z, tile.x, tile.y), lat = centre.lat - 0.04, first = new Date(Date.now() - 1800_000);
+  for (const [k, name] of ['M', 'N', 'P', 'Q'].entries()) {
+    points[name] = { lon: centre.lon + 0.006 * (k - 2), lat };
+    incidents[name] = await insertIncident(pool, { villageId: village.id, first, last: first, ...points[name]!, level: 'tinggi', score: 70 });
+  }
+  const observed = new Date(Date.now() - 600_000), squad = demoSquads[0].id;
+  // The judged version knows nothing of the demo scope. M: a task from the demo BPBD account takes is_demo's default.
+  await pool.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, note) VALUES ($1, $2, $3, 'Tugas dari versi lama')`, [incidents.M, squad, demoAccounts[2].id]);
+  // N: a demo check keeps the visitor's position, accuracy and exact distance, and fills the public summary only.
+  await pool.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, latitude, longitude, accuracy_m, distance_m, observed_at, is_demo)
+    VALUES ($1, $2, $3, 'api_aktif', $4, $5, 7, 1234, $6, true)`, [incidents.N, demoMpaId, randomUUID(), lat + 0.011, points.N!.lon, observed]);
+  await pool.query(`UPDATE incidents SET first_verified_at = $2, latest_status = 'api_aktif' WHERE id = $1`, [incidents.N, observed]);
+  // P: its reset deleted a demo check and kept the demo session's summary of it. P also has a task it took for real, and
+  // a visitor gave P a demo task on this version before the start-up check ran.
+  await pool.query(`UPDATE incidents SET first_verified_any_at = $2, latest_status_any = 'asap_bara' WHERE id = $1`, [incidents.P, observed]);
+  const old = (await pool.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, created_at) VALUES ($1, $2, $3, now() - interval '1 hour') RETURNING id`,
+    [incidents.P, demoSquads[1].id, demoAccounts[2].id])).rows[0].id;
+  const fresh = (await pool.query(`INSERT INTO assignments (incident_id, assignee_id, assigned_by, is_demo) VALUES ($1, $2, $3, true) RETURNING id`,
+    [incidents.P, squad, demoAccounts[2].id])).rows[0].id;
+  // Q: a real check, with no summary for demo sessions.
+  await pool.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, observed_at) VALUES ($1, $2, $3, 'bakar_terkendali', $4)`,
+    [incidents.Q, real.mpa.id, randomUUID(), observed]);
+  await pool.query(`UPDATE incidents SET first_verified_at = $2, latest_status = 'bakar_terkendali' WHERE id = $1`, [incidents.Q, observed]);
+  clearTileCache();
+  const visitorIds = async (status: string) => (await data(`/incidents?hours=24&status=${status}`) as any[]).map(row => row.id as string);
+  assert.ok((await visitorIds('assigned')).includes(incidents.M!) && (await visitorIds('checked')).includes(incidents.N!), 'visitors take them for real');
+  const verified = (await data('/summary?hours=24')).verified;
+
+  assert.deepEqual(await reconcileDemoScope(pool), { tasks: 2, checks: 1, incidents: 3 });
+  assert.deepEqual(await reconcileDemoScope(pool), { tasks: 0, checks: 0, incidents: 0 }, 'nothing is left to put right');
+  const visitorAssigned = await visitorIds('assigned');
+  assert.ok(!visitorAssigned.includes(incidents.M!) && !visitorAssigned.includes(incidents.P!) && !(await visitorIds('checked')).includes(incidents.N!));
+  const task = async (id: string) => (await pool.query('SELECT status, is_demo FROM assignments WHERE id = $1', [id])).rows[0];
+  assert.deepEqual([await task(old), await task(fresh)], [{ status: 'dibatalkan', is_demo: true }, { status: 'ditugaskan', is_demo: true }],
+    'one open demo task per incident: the old one is cancelled');
+  assert.equal((await data('/summary?hours=24')).verified, verified - 1);
+  assert.equal((await data(`/incidents/${incidents.M}`, demo.bpbd)).assignment.assignee.id, squad, 'demo sessions still see the task');
+  const summary = async (name: string) => (await pool.query(`SELECT first_verified_at, latest_status, first_verified_any_at, latest_status_any FROM incidents
+    WHERE id = $1`, [incidents[name]])).rows[0];
+  assert.deepEqual(await summary('N'), { first_verified_at: null, latest_status: null, first_verified_any_at: observed, latest_status_any: 'api_aktif' });
+  assert.deepEqual(await summary('P'), { first_verified_at: null, latest_status: null, first_verified_any_at: null, latest_status_any: null });
+  assert.deepEqual(await summary('Q'), { first_verified_at: observed, latest_status: 'bakar_terkendali', first_verified_any_at: observed, latest_status_any: 'bakar_terkendali' });
+  const n = await centroidOf('N');
+  assert.deepEqual((await pool.query('SELECT latitude, longitude, accuracy_m, distance_m FROM verifications WHERE incident_id = $1', [incidents.N])).rows[0],
+    { latitude: n.lat, longitude: n.lon, accuracy_m: null, distance_m: 1000 }, 'the demo check as demo checks are stored now');
+
+  // Its reset ran again before the roll-forward: P has a demo summary and M a public one, with no check behind either.
+  await pool.query(`UPDATE incidents SET first_verified_any_at = $2, latest_status_any = 'asap_bara' WHERE id = $1`, [incidents.P, observed]);
+  await pool.query(`UPDATE incidents SET first_verified_at = $2, latest_status = 'asap_bara' WHERE id = $1`, [incidents.M, observed]);
+  await resetDemo(pool, uploads);
+  for (const name of ['M', 'N', 'P']) {
+    assert.deepEqual(await summary(name), { first_verified_at: null, latest_status: null, first_verified_any_at: null, latest_status_any: null }, name);
+  }
+  assert.equal((await summary('Q')).latest_status_any, 'bakar_terkendali', 'the real check stays');
 });

@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { reconcileDemoScope } from './reconcile.js';
 import { startScheduler } from './scheduler.js';
 import { seed } from './seed.js';
 import { startWeatherScheduler } from './weather.js';
@@ -10,14 +11,21 @@ await app.listen({ port: Number(process.env.PORT ?? 3000), host: process.env.HOS
 // health check passes while FIRMS downloads. Production seeds only when SEED_DEMO=true.
 const seedDemo = process.env.SEED_DEMO === 'true' || (!process.env.SEED_DEMO && process.env.NODE_ENV !== 'production');
 let stop = () => {};
-// Fire weather from Open-Meteo every few hours, the first time 30 seconds after start; it never holds up the server.
-const stopWeather = startWeatherScheduler(pool, app.log);
+let stopWeather = async () => {};
 (async () => {
   if (seedDemo) {
     try { if (await seed(pool)) app.log.info('Demo accounts created'); }
     catch (error) { app.log.error({ err: error }, 'Seeding failed'); }
   }
+  // Rows an older version wrote the old way (after a rollback and a roll-forward) go back to the demo scope before the
+  // schedulers start. Silent when there is nothing to put right.
+  try {
+    const fixed = await reconcileDemoScope(pool);
+    if (fixed.tasks || fixed.checks || fixed.incidents) app.log.warn(fixed, 'Demo rows written the old way put right');
+  } catch (error) { app.log.error({ err: error }, 'Demo scope check failed'); }
   stop = startScheduler(pool, app.log);
+  // Fire weather from Open-Meteo every few hours, the first time 30 seconds after this; it never holds up the server.
+  stopWeather = startWeatherScheduler(pool, app.log);
 })();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

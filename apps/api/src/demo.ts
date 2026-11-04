@@ -3,7 +3,7 @@ import argon2 from 'argon2';
 import type pg from 'pg';
 import { createPool, transaction } from './db.js';
 import { alertSubscribers, refreshIncidents } from './ingest.js';
-import { clearTileCache, refreshVerificationSummary } from './incidents.js';
+import { clearTileCache, refreshVerificationSummary, repairVerificationSummaries } from './incidents.js';
 import { demoDomain } from './models.js';
 import { deleteUploads, uploadsDirectory } from './uploads.js';
 
@@ -66,8 +66,7 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
     }
     // Demo field checks and tasks: those of these accounts and any other row marked as demo.
     const demoChecks = 'is_demo OR user_id = ANY($1::uuid[])';
-    const checks = (await client.query(`SELECT incident_id, photo_url, photo_thumb_url FROM verifications WHERE ${demoChecks}`, [ids])).rows;
-    const touched = [...new Set(checks.map(row => row.incident_id as string))];
+    const checks = (await client.query(`SELECT photo_url, photo_thumb_url FROM verifications WHERE ${demoChecks}`, [ids])).rows;
     // Demo false alarms filed before demo checks stopped teaching the triage left a fixed heat source. The detections it
     // may have flagged (every detection of its incident, and later ones within its radius) are found before it goes.
     // Nothing else is worked out again: a real false alarm flags every detection of its incident however far, so
@@ -90,7 +89,10 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
         AND NOT EXISTS (SELECT 1 FROM verifications v WHERE v.incident_id = d.incident_id AND v.status = 'alarm_palsu' AND NOT v.is_demo)
       RETURNING d.incident_id`, [flagged])).rows;
     const rescore = [...new Set(unflagged.map(row => row.incident_id as string | null).filter((id): id is string => Boolean(id)))];
-    await refreshVerificationSummary(client, touched);
+    // The summaries of every incident whose checks they no longer follow are worked out again: those whose demo checks
+    // just went, and any an older version left behind, such as the judged version's reset after a rollback, which
+    // deleted demo checks but kept the demo session's summary of them (see reconcile.ts).
+    await repairVerificationSummaries(client);
 
     // The demo squads and village head work in the pilot regency, Ogan Komering Ilir.
     const ranked = `SELECT i.village_id FROM incidents i JOIN villages v ON v.id = i.village_id
