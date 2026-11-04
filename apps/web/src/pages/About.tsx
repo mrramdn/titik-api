@@ -59,6 +59,7 @@ export const aboutText = dict({
     privacy2: 'Data lokasi di dalam foto (EXIF) dibuang. Koordinat laporan hanya berasal dari GPS yang dipilih pelapor untuk dikirim.',
     privacy3: 'Titik Api tidak menampilkan pemilik lahan atau perusahaan. Status "bakar terkendali" mencatat apa yang terlihat di lapangan.',
     privacy4: 'Server web mencatat alamat IP, waktu, halaman yang dibuka, perujuk, dan jenis peramban pada setiap permintaan, untuk keamanan dan pemecahan masalah, lalu menghapus catatan itu otomatis setelah 14 hari. Situs ini dilayani lewat Cloudflare, yang juga memproses alamat IP untuk mengantar dan melindungi situs.',
+    privacy5: 'Titik Api tidak memakai cookie pelacak atau analitik. Cookie-nya hanya satu, untuk menjaga sesi setelah masuk. Pilihan bahasa, filter, posisi GPS terakhir, data untuk dipakai tanpa sinyal, dan laporan yang belum terkirim hanya disimpan di peramban ini.',
     sourcesTitle: 'Sumber data dan lisensi',
     source1: 'Titik panas dari NASA FIRMS, VIIRS 375 m NRT (NOAA-21, NOAA-20, dan S-NPP sampai 2 November 2026) dan MODIS Collection 6.1 NRT (Terra, Aqua).',
     sourceFirms: 'We acknowledge the use of data and/or imagery from NASA\'s Fire Information for Resource Management System (FIRMS), part of NASA\'s Earth Science Data and Information System (ESDIS).',
@@ -122,6 +123,7 @@ export const aboutText = dict({
     privacy2: 'Location data inside photos (EXIF) is removed. Report coordinates come only from the GPS fix the reporter chooses to send.',
     privacy3: 'Titik Api does not show land owners or companies. The "controlled burn" status records what was seen in the field.',
     privacy4: 'The web server records the IP address, time, requested page, referring page and browser of each request, for security and troubleshooting, and deletes these records automatically after 14 days. The site is served through Cloudflare, which also processes IP addresses to deliver and protect it.',
+    privacy5: 'Titik Api uses no tracking or analytics cookies. Its one cookie keeps you signed in. Your language, filters, last GPS position, data kept for use without signal and reports not yet sent are stored only in this browser.',
     sourcesTitle: 'Data sources and licences',
     source1: 'Hotspots from NASA FIRMS, VIIRS 375 m NRT (NOAA-21, NOAA-20, and S-NPP until 2 November 2026) and MODIS Collection 6.1 NRT (Terra, Aqua).',
     sourceFirms: 'We acknowledge the use of data and/or imagery from NASA\'s Fire Information for Resource Management System (FIRMS), part of NASA\'s Earth Science Data and Information System (ESDIS).',
@@ -140,7 +142,7 @@ const steps: [Key, Key][] = [['howSatTitle', 'howSat'], ['howModisTitle', 'howMo
   ['howAssignTitle', 'howAssign'], ['howCheckTitle', 'howCheck'], ['howDashTitle', 'howDash']];
 const accuracy: Key[] = ['accuracy1', 'accuracy2', 'accuracy3', 'accuracy4', 'accuracy5', 'accuracy6', 'accuracy7'];
 const limits: Key[] = ['limit1', 'limit2', 'limit3', 'limit4', 'limit5'];
-const privacy: Key[] = ['privacy1', 'privacy2', 'privacy3', 'privacy4'];
+const privacy: Key[] = ['privacy1', 'privacy2', 'privacy3', 'privacy4', 'privacy5'];
 const terms: Key[] = ['terms1', 'terms2', 'terms3', 'terms4', 'terms5', 'terms6'];
 
 const LANCE_DISCLAIMER_URL = 'https://www.earthdata.nasa.gov/data/projects/lance/disclaimer';

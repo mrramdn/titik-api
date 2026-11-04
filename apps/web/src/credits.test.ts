@@ -132,4 +132,13 @@ describe('the About page', () => {
     expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The web server records the IP address, time, requested page, referring page and browser of each request, '
       + 'for security and troubleshooting, and deletes these records automatically after 14 days. The site is served through Cloudflare, which also processes IP addresses to deliver and protect it.');
   });
+
+  it('says that no tracking cookie is used, what its one cookie is for, and what stays in the browser', () => {
+    // auth.ts sets titikapi_session at sign-in and nothing else; the web app keeps the rest in localStorage, IndexedDB
+    // and the service worker's caches.
+    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Titik Api tidak memakai cookie pelacak atau analitik. Cookie-nya hanya satu, untuk menjaga sesi setelah masuk. '
+      + 'Pilihan bahasa, filter, posisi GPS terakhir, data untuk dipakai tanpa sinyal, dan laporan yang belum terkirim hanya disimpan di peramban ini.');
+    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('Titik Api uses no tracking or analytics cookies. Its one cookie keeps you signed in. '
+      + 'Your language, filters, last GPS position, data kept for use without signal and reports not yet sent are stored only in this browser.');
+  });
 });
