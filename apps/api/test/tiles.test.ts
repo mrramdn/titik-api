@@ -7,7 +7,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type pg from 'pg';
 import { createApp } from '../src/app.js';
 import { addDays, wibDay } from '../src/geo.js';
-import { Gate, TileCache, clearTileCache, refreshVerificationSummary, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
+import { Gate, Places, TileCache, clearTileCache, refreshVerificationSummary, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
 import { account, bigVillage, emptyDatabase, insertDetection, insertIncident, testPool, tileOf, wibMidnight } from './fixtures.js';
 import { readTile } from './mvt.js';
 
@@ -95,7 +95,8 @@ test('hotspot tiles come for the windows the map offers, 24, 72 or 168 hours; an
 });
 
 test('with tile queries held, misses past the gate get 503 at once or when the wait runs out, nothing is kept, and /health answers at once', async () => {
-  assert.deepEqual(tileLimits, { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200, alwaysQueued: 24 }, 'the limits in production');
+  assert.deepEqual(tileLimits, { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, perNetwork: 24, queuedPerAddress: 100, queuedPerNetwork: 100, queued: 200,
+    alwaysQueued: 24 }, 'the limits in production');
   const app = await tileApp({ running: 2, waiting: 3, waitMs: 1_000 });
   clearTileCache();
   const release = await holdRegencies();
@@ -149,6 +150,47 @@ test('one address has its places at the gate; its further tiles wait their turn,
     await release();
   }
   assert.deepEqual((await Promise.all(served)).map(response => response.statusCode), [200, 200, 200, 200, 200]);
+});
+
+test('an IPv6 /56 has its places at the gate and in the line on top of those of its /64s, so one home cannot take the gate from everyone', async () => {
+  const app = await tileApp({ running: 1, waiting: 64, waitMs: 5_000, perAddress: 2, perNetwork: 3, queuedPerAddress: 5, queuedPerNetwork: 2 });
+  clearTileCache();
+  const release = await holdRegencies();
+  let x = 0;
+  const from = (ip: string) => tile(app, `kabupaten/7/${x++}/60.mvt`, ip);
+  // Every /64 here lies in 2001:db8:77::/56.
+  const served = [from('2001:db8:77:a0::1')];
+  try {
+    await until(async () => (await tileQueries()) === 1, 'the first tile query');
+    // The /56's other two places, from two /64s; then two tiles of a /64 with a place to spare wait in line for the /56.
+    served.push(from('2001:db8:77:a0::1'), from('2001:db8:77:a1::1'), from('2001:db8:77:a1::1'), from('2001:db8:77:a2::1'));
+    await sleep(100);
+    refused(await from('2001:db8:77:a3::1'), 429, 'RATE_LIMITED');
+    // Another /56 and an IPv4 address go to the gate as usual.
+    served.push(from('2001:db8:78::1'), from('203.0.113.95'));
+    await sleep(100);
+    assert.equal(await tileQueries(), 1, 'the gate lets one query run');
+  } finally {
+    await release();
+  }
+  assert.deepEqual((await Promise.all(served)).map(response => response.statusCode), Array(7).fill(200));
+});
+
+test('a place that frees goes to the first in line with room at both its address and its /56', async () => {
+  const places = new Places({ perAddress: 1, perNetwork: 2, queuedPerAddress: 5, queuedPerNetwork: 5, queued: 10, alwaysQueued: 0 });
+  const soon = () => Date.now() + 2_000;
+  const [a, b, c, network] = ['2001:db8:5:a::/64', '2001:db8:5:b::/64', '2001:db8:5:c::/64', '2001:db8:5::/56'];
+  assert.deepEqual([await places.enter(a, network, soon()), await places.enter(b, network, soon())], ['ok', 'ok']);
+  const order: string[] = [];
+  const again = places.enter(a, network, soon()).then(answer => order.push(`a ${answer}`));
+  const third = places.enter(c, network, soon()).then(answer => order.push(`c ${answer}`));
+  places.leave(b, network);
+  await third;
+  assert.deepEqual(order, ['c ok'], 'a still holds its one place: c, behind it, takes the /56\'s');
+  places.leave(a, network);
+  await again;
+  assert.deepEqual(order, ['c ok', 'a ok']);
+  assert.equal(await places.enter('203.0.113.7', null, soon()), 'ok', 'an IPv4 address has no /56');
 });
 
 test('the line for places is shared by every address up to its size, save a few for each address; a tile still waiting at the deadline gets 503', async () => {

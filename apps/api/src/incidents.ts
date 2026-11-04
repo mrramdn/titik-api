@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { requireCondition, choice, object } from './errors.js';
 import { addDays, cardText, isCalendarDate, wibDay, type CardIncident, type Level } from './geo.js';
-import { addressKey } from './imagery.js';
+import { addressKey, networkKey } from './imagery.js';
 import type { Database, User } from './models.js';
 
 const OPEN = `('ditugaskan', 'menuju')`;
@@ -195,10 +195,6 @@ export class Gate {
   private holders = 0;
   private line: ((answer: Admission) => void)[] = [];
   constructor(private readonly places: number, private readonly queue: number) {}
-  get free() { return this.holders < this.places; }
-  get idle() { return this.holders === 0 && this.line.length === 0; }
-  /** How many wait in line. */
-  get waiting() { return this.line.length; }
   enter(deadline: number, signal?: AbortSignal): Promise<Admission> {
     if (signal?.aborted) return Promise.resolve('gone');
     if (this.holders < this.places) { this.holders++; return Promise.resolve('ok'); }
@@ -211,6 +207,69 @@ export class Gate {
   leave() {
     const next = this.line.shift();
     if (next) next('ok'); else this.holders--;
+  }
+}
+
+/** One more (or, with -1, one less) for `key`; a count of none leaves no entry. */
+function bump(counts: Map<string, number>, key: string | null, by: number) {
+  if (key === null) return;
+  const count = (counts.get(key) ?? 0) + by;
+  if (count > 0) counts.set(key, count); else counts.delete(key);
+}
+
+export interface PlaceLimits {
+  /** Places one address holds at once (IPv4 as it is, IPv6 by its /64, which one client can fill with addresses). */
+  perAddress: number;
+  /** And one IPv6 /56, which an ISP often gives one customer: 256 /64s. */
+  perNetwork: number;
+  /** Requests waiting for a place: of one address, of one /56, and of every address together. */
+  queuedPerAddress: number;
+  queuedPerNetwork: number;
+  queued: number;
+  /** An address with fewer than this many in the line may join it even when the line of every address is full. */
+  alwaysQueued: number;
+}
+
+/**
+ * Places counted per address and per IPv6 /56, each up to its limit. A request without one waits in a line shared by
+ * every address, in order, until a place frees at both its address and its /56, its deadline passes, or its client goes.
+ */
+export class Places {
+  private held = new Map<string, number>();
+  private queued = new Map<string, number>();
+  private line: { address: string; network: string | null; admit: (answer: Admission) => void }[] = [];
+  constructor(private readonly limits: PlaceLimits) {}
+  private room(address: string, network: string | null) {
+    return (this.held.get(address) ?? 0) < this.limits.perAddress && (network === null || (this.held.get(network) ?? 0) < this.limits.perNetwork);
+  }
+  private take(address: string, network: string | null) { bump(this.held, address, 1); bump(this.held, network, 1); }
+  private out(waiter: Places['line'][number]) {
+    const k = this.line.indexOf(waiter);
+    if (k < 0) return;
+    this.line.splice(k, 1);
+    bump(this.queued, waiter.address, -1); bump(this.queued, waiter.network, -1);
+  }
+  enter(address: string, network: string | null, deadline: number, signal?: AbortSignal): Promise<Admission> {
+    if (signal?.aborted) return Promise.resolve('gone');
+    if (this.room(address, network)) { this.take(address, network); return Promise.resolve('ok'); }
+    const own = this.queued.get(address) ?? 0;
+    if (own >= this.limits.queuedPerAddress || (network !== null && (this.queued.get(network) ?? 0) >= this.limits.queuedPerNetwork)
+      || (this.line.length >= this.limits.queued && own >= this.limits.alwaysQueued)) return Promise.resolve('full');
+    return waitInLine(deadline, signal, admit => {
+      const waiter = { address, network, admit };
+      this.line.push(waiter);
+      bump(this.queued, address, 1); bump(this.queued, network, 1);
+      return () => this.out(waiter);
+    });
+  }
+  leave(address: string, network: string | null) {
+    bump(this.held, address, -1); bump(this.held, network, -1);
+    // One place freed at the address and its /56: the first in line with room at both takes it.
+    const next = this.line.find(waiter => this.room(waiter.address, waiter.network));
+    if (!next) return;
+    this.out(next);
+    this.take(next.address, next.network);
+    next.admit('ok');
   }
 }
 
@@ -429,30 +488,21 @@ export const clearTileCache = (scope?: Scope) => {
  * Limits on tiles that miss the cache. Each costs a query on the pool every route shares (10 connections), and one
  * address sending tiles nobody else asks for kept /health, sign-in and field reports waiting behind them for a minute.
  */
-export interface TileLimits {
+export interface TileLimits extends PlaceLimits {
   /** Tile queries running at once; the rest of the pool stays free for everything else. */
   running: number;
   /** Tile queries waiting for one of those places, in order; past this a tile is 503. */
   waiting: number;
   /** The longest a tile waits, in milliseconds, before it is 503. */
   waitMs: number;
-  /** Uncached tiles one address (an IPv6 address by its /64) has at the gate, running or waiting there. */
-  perAddress: number;
-  /**
-   * Its further uncached tiles wait for one of those places, at most this many per address and `queued` from all
-   * addresses together (save `alwaysQueued`); past either a tile is 429. A map view on a desktop screen asks for 16 to
-   * 48 tiles at once, and about a hundred as the map opens, and MapLibre never asks again for a refused tile: refused at
-   * once, they would leave holes in the map.
-   */
-  queuedPerAddress: number;
-  queued: number;
-  /**
-   * An address with fewer than this many tiles in the line may join it even when the line is full: two addresses
-   * filling it must not leave every other map with holes past its places.
-   */
-  alwaysQueued: number;
+  // The places are the uncached tiles an address or a /56 has at the gate, running or waiting there. Their further
+  // uncached tiles wait for one in the line; past it a tile is 429. A map view on a desktop screen asks for 16 to 48
+  // tiles at once, and about a hundred as the map opens, and MapLibre never asks again for a refused tile: refused at
+  // once, they would leave holes in the map. An address with fewer than `alwaysQueued` in the line may join it when it
+  // is full, so two addresses filling it do not leave every other map with holes past its places.
 }
-export const tileLimits: TileLimits = { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, queuedPerAddress: 100, queued: 200, alwaysQueued: 24 };
+export const tileLimits: TileLimits = { running: 4, waiting: 64, waitMs: 10_000, perAddress: 12, perNetwork: 24, queuedPerAddress: 100, queuedPerNetwork: 100,
+  queued: 200, alwaysQueued: 24 };
 /** Bytes held by the tile cache, for the tests. */
 export const tileCacheBytes = () => tiles.totalBytes;
 
@@ -473,24 +523,9 @@ function passes(detections: { satellite: string; acq_at: Date }[]) {
 
 export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: Partial<TileLimits> = {}) {
   const limits: TileLimits = { ...tileLimits, ...options };
-  // Tile queries that miss the cache pass one gate; in front of it every address has a lane of its own.
+  // Tile queries that miss the cache pass one gate; to wait there, a query needs a place of its address and its /56.
   const gate = new Gate(limits.running, limits.waiting);
-  const lanes = new Map<string, Gate>();
-  let queued = 0;
-  /** A place for one more uncached tile of `address`: at once, or after its earlier ones. */
-  async function enterLane(address: string, deadline: number, signal: AbortSignal): Promise<Admission> {
-    let lane = lanes.get(address);
-    if (!lane) lanes.set(address, (lane = new Gate(limits.perAddress, limits.queuedPerAddress)));
-    if (lane.free) return lane.enter(deadline, signal);
-    if (queued >= limits.queued && lane.waiting >= limits.alwaysQueued) return 'full';
-    queued++;
-    try { return await lane.enter(deadline, signal); } finally { queued--; }
-  }
-  function leaveLane(address: string) {
-    const lane = lanes.get(address)!;
-    lane.leave();
-    if (lane.idle) lanes.delete(address);
-  }
+  const places = new Places(limits);
   /** A tile, or how to refuse it: 429 past the address's line, 503 when the gate is full or the wait ran out. */
   type Cut = Buffer | 429 | 503;
   /**
@@ -521,10 +556,10 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
   }
   /**
    * A tile that missed the cache: from a query already on its way, or from a new one. Only a new query takes a place,
-   * one of its address's at the gate, waiting its turn for one if need be, and holds it until it ends.
+   * one of its address's (and its /56's) at the gate, waiting its turn for one if need be, and holds it until it ends.
    */
   function uncached(ip: string | undefined, signal: AbortSignal, key: string, scope: Scope, ttl: number, query: () => Promise<Buffer>): Promise<Cut | 'gone'> {
-    const started = generationOf(scope), id = `${started} ${key}`, address = addressKey(ip), mine = `${address} ${id}`;
+    const started = generationOf(scope), id = `${started} ${key}`, address = addressKey(ip), network = networkKey(ip), mine = `${address} ${id}`;
     const known = cutting.get(id) ?? waiting.get(mine);
     if (known) return ride(known, signal);
     const deadline = Date.now() + limits.waitMs, abandon = new AbortController();
@@ -533,7 +568,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
       if (cutting.get(id) === flight) cutting.delete(id);
     } };
     flight.cut = (async (): Promise<Cut> => {
-      const place = await enterLane(address, deadline, abandon.signal);
+      const place = await places.enter(address, network, deadline, abandon.signal);
       if (waiting.get(mine) === flight) waiting.delete(mine);
       if (place !== 'ok') return place === 'full' ? 429 : 503;
       let held = true;
@@ -544,7 +579,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
         if (cached) return cached;
         const other = cutting.get(id);
         if (other) {
-          leaveLane(address);
+          places.leave(address, network);
           held = false;
           const cut = await ride(other, abandon.signal);
           return cut === 'gone' ? 503 : cut;
@@ -560,7 +595,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
           return body;
         } finally { gate.leave(); }
       } finally {
-        if (held) leaveLane(address);
+        if (held) places.leave(address, network);
         flight.drop();
       }
     })();
