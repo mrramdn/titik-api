@@ -112,7 +112,8 @@ export class TileCache {
   private entries = new Map<string, { expires: number; body: Buffer }>();
   private bytes = 0;
   private sweptAt: number;
-  constructor(private readonly limit: number, private readonly now: () => number = Date.now) { this.sweptAt = now(); }
+  // The clock is read on every call, so a test that moves Date moves the cache too.
+  constructor(private readonly limit: number, private readonly now: () => number = () => Date.now()) { this.sweptAt = now(); }
   private cost = (body: Buffer) => body.length + TILE_ENTRY_BYTES;
   private remove(key: string, entry: { body: Buffer }) {
     this.entries.delete(key);
@@ -365,7 +366,11 @@ const tileSql = {
         FROM d WHERE $1 >= 11) p) AS mvt`,
 } as const;
 
-/** Live hotspot tiles change with every ingest; archive days and shapes do not. */
+/**
+ * Live hotspot tiles change with every ingest; archive days and shapes do not. A demo tile changes with what the demo
+ * accounts do, on past days too (an archive tile shows checks and tasks as they are now), and the nightly demo reset
+ * runs in a process of its own that cannot clear this cache: a demo tile is kept as briefly as a live one.
+ */
 const LIVE_TTL = 120_000, ARCHIVE_TTL = 3_600_000;
 /** The windows the map offers (a day, three days, a week): any other value would only add tiles nobody else asks for. */
 const TILE_HOURS = [24, 72, 168];
@@ -500,10 +505,10 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
     const hotspots = layer === 'kejadian' || layer === 'deteksi';
     const hours = hotspots ? tileHours(query.hours) : 0;
     const tanggal = hotspots ? await archiveDate(pool, query.tanggal) : null;
-    const ttl = hotspots && !tanggal ? LIVE_TTL : ARCHIVE_TTL;
     // Everyone gets the real scope. A demo session asks for its own view of field checks and tasks with &lihat=demo;
     // for anyone else the parameter changes nothing. Demo tiles stay out of shared caches.
     const scope: Scope = layer === 'kejadian' && query.lihat === 'demo' && request.user?.demo ? 'demo' : 'real';
+    const ttl = (hotspots && !tanggal) || scope === 'demo' ? LIVE_TTL : ARCHIVE_TTL;
     const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}/${scope}`;
     let body = tiles.get(key);
     if (!body) {

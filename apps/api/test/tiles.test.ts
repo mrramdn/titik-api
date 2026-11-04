@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type pg from 'pg';
 import { createApp } from '../src/app.js';
-import { TileCache, clearTileCache, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
-import { account, emptyDatabase, testPool } from './fixtures.js';
+import { addDays, wibDay } from '../src/geo.js';
+import { TileCache, clearTileCache, refreshVerificationSummary, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
+import { account, bigVillage, emptyDatabase, insertDetection, insertIncident, testPool, tileOf, wibMidnight } from './fixtures.js';
+import { readTile } from './mvt.js';
 
 const pool = testPool();
 let directory: string;
@@ -236,6 +238,35 @@ test('a clear during a tile\'s query, of all tiles or of the demo ones for a dem
     assert.equal((await ask()).statusCode, 200);
     assert.equal(counted.queries, 2, `${label}: the tile cut after the clear was kept, the one before it was not`);
   }
+});
+
+test('a demo tile is kept two minutes at most, an archive day\'s too: the nightly demo reset cannot clear this cache', async t => {
+  const app = await tileApp();
+  const village = await bigVillage(pool);
+  const day = addDays(wibDay(), -3), noon = new Date(wibMidnight(day).getTime() + 12 * 3_600_000);
+  const incident = await insertIncident(pool, { villageId: village.id, first: noon, last: noon, lon: village.lon, lat: village.lat });
+  await insertDetection(pool, { lon: village.lon, lat: village.lat, acqAt: noon, villageId: village.id, incidentId: incident });
+  const demo = await account(pool, 'mpa', 'demo');
+  const { x, y } = tileOf(village.lon, village.lat, 9);
+  /** Whether the incident shows as checked on the archive day's tile, a demo session's own view or the public one. */
+  const checked = async (view: 'demo' | 'public') => {
+    const response = await app.inject({ method: 'GET', url: `/api/v1/tiles/kejadian/9/${x}/${y}.mvt?hours=24&tanggal=${day}${view === 'demo' ? '&lihat=demo' : ''}`,
+      headers: { authorization: `Bearer ${demo.token}` } });
+    assert.equal(response.statusCode, 200, response.body);
+    return readTile(response.rawPayload)[0]?.features.find(feature => feature.properties.id === incident)?.properties.verified;
+  };
+  clearTileCache();
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  assert.deepEqual([await checked('demo'), await checked('public')], [false, false]);
+  // The reset writes its example checks from a process of its own: this server's cache hears nothing of it.
+  await pool.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, observed_at, is_demo) VALUES ($1, $2, gen_random_uuid(), 'asap_bara', $3, true)`,
+    [incident, demo.id, new Date(noon.getTime() + 3_600_000)]);
+  await refreshVerificationSummary(pool, [incident]);
+  t.mock.timers.tick(119_000);
+  assert.equal(await checked('demo'), false, 'the demo tile is still the one cut before');
+  t.mock.timers.tick(2_000);
+  assert.equal(await checked('demo'), true, 'two minutes on, the demo tile is cut again');
+  assert.equal(await checked('public'), false, 'a demo check never shows on the public tile');
 });
 
 test('the tile limit of 3000 a minute counts an IPv6 client by its /64', async () => {
