@@ -4,27 +4,52 @@ export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
 }
 
+/** How often a read the server was too busy for (503 BUSY) is asked again before its error shows. */
+export const BUSY_RETRIES = 2;
+
+/** Waits `ms`, or less if `signal` aborts first. */
+const pause = (ms: number, signal?: AbortSignal | null) => new Promise<void>(done => {
+  if (signal?.aborted) { done(); return; }
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); done(); }, ms);
+  const stop = () => { clearTimeout(timer); done(); };
+  signal?.addEventListener('abort', stop, { once: true });
+});
+
+/**
+ * Calls /api/v1{path}. A read refused because the server's heavy lists are at their limit (503 BUSY, as when one
+ * address opens the map and the dashboard at once) is asked again after the Retry-After it names (1–5 s), up to
+ * BUSY_RETRIES times, so a short rush never shows as an error. Writes are never repeated.
+ */
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, headers, ...rest } = init;
-  let response: Response;
-  try {
-    response = await fetch(`/api/v1${path}`, {
-      credentials: 'same-origin',
-      ...rest,
-      headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
-      ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
-    });
-  } catch {
-    throw new ApiError(0, 'OFFLINE', 'Tidak ada sinyal.');
+  const read = (rest.method ?? 'GET').toUpperCase() === 'GET';
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(`/api/v1${path}`, {
+        credentials: 'same-origin',
+        ...rest,
+        headers: { ...(json !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+        ...(json !== undefined ? { body: JSON.stringify(json) } : {}),
+      });
+    } catch {
+      throw new ApiError(0, 'OFFLINE', 'Tidak ada sinyal.');
+    }
+    const body = await response.json().catch(() => null);
+    if (response.ok) return body as T;
+    const code = body?.error?.code ?? 'ERROR';
+    if (read && code === 'BUSY' && attempt < BUSY_RETRIES && !rest.signal?.aborted) {
+      const seconds = Number(response.headers.get('retry-after'));
+      await pause(Math.min(5, Math.max(1, Number.isFinite(seconds) && seconds > 0 ? seconds : 2)) * 1000, rest.signal);
+      continue;
+    }
+    throw new ApiError(response.status, code, body?.error?.message ?? 'Terjadi kesalahan.');
   }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new ApiError(response.status, body?.error?.code ?? 'ERROR', body?.error?.message ?? 'Terjadi kesalahan.');
-  return body as T;
 }
 
 /** Codes the API can return; ASSIGNMENT_OPEN and ASSIGNMENT_CLOSED come with assignments. */
 export type ErrorCode = 'OFFLINE' | 'UNAUTHENTICATED' | 'FORBIDDEN' | 'NOT_FOUND' | 'INVALID_INPUT' | 'INVALID_ORIGIN' | 'INVALID_CREDENTIALS'
-  | 'INVALID_IMAGE' | 'CONFLICT' | 'NO_ALERTS' | 'NO_DEVICE' | 'ASSIGNMENT_OPEN' | 'ASSIGNMENT_CLOSED' | 'INTERNAL_ERROR' | 'ERROR';
+  | 'INVALID_IMAGE' | 'CONFLICT' | 'NO_ALERTS' | 'NO_DEVICE' | 'ASSIGNMENT_OPEN' | 'ASSIGNMENT_CLOSED' | 'RATE_LIMITED' | 'BUSY' | 'INTERNAL_ERROR' | 'ERROR';
 
 export type Level = 'tinggi' | 'sedang' | 'rendah';
 export type Status = 'api_aktif' | 'asap_bara' | 'bakar_terkendali' | 'alarm_palsu' | 'tidak_terjangkau';
