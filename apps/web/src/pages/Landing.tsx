@@ -15,6 +15,7 @@ import { clockOffset, readFreshness, SIPONGI_URL } from '../components/shell/fre
 import { useFormat } from '../format';
 import { dict, useLang, useT } from '../i18n';
 import { satelliteName } from '../i18n/common';
+import { runsAsInstalledApp } from '../installedApp';
 import { archiveTotal, replayDay } from '../map/archive';
 import { BMKG_FWI_URL } from '../map/risk';
 import { legacyMapTarget, mapPath, MAP_PATH, tryPath, type DemoRole } from '../routes';
@@ -200,10 +201,14 @@ function Picture({ shot, alt, eager = false, sizes }: { shot: Shot; alt: string;
   );
 }
 
-/** "/" is the landing page; an old map link (/?tanggal=…) goes to /peta with the same query, without a new history entry. */
+/**
+ * "/" is the landing page. An old map link (/?tanggal=…) goes to /peta with the same query, without a new history
+ * entry, and so does the installed app, which opens on the map: one installed while the map was at / still opens /
+ * until the browser takes the new start_url (see manifest.ts).
+ */
 export function LandingPage() {
   const location = useLocation();
-  const target = legacyMapTarget(location.search, location.state);
+  const target = legacyMapTarget(location.search, location.state) ?? (runsAsInstalledApp() ? `${MAP_PATH}${location.search}` : null);
   if (target) return <Navigate to={`${target}${location.hash}`} replace state={location.state} />;
   return <Landing />;
 }
