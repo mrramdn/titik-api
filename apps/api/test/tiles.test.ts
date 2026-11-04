@@ -7,7 +7,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type pg from 'pg';
 import { createApp } from '../src/app.js';
 import { addDays, wibDay } from '../src/geo.js';
-import { TileCache, clearTileCache, refreshVerificationSummary, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
+import { Gate, TileCache, clearTileCache, refreshVerificationSummary, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
 import { account, bigVillage, emptyDatabase, insertDetection, insertIncident, testPool, tileOf, wibMidnight } from './fixtures.js';
 import { readTile } from './mvt.js';
 
@@ -21,6 +21,12 @@ async function tileApp(tiles: Partial<TileLimits> = {}, db: pg.Pool = pool) {
   return app;
 }
 const tile = (app: FastifyInstance, path: string, remoteAddress = '127.0.0.1') => app.inject({ method: 'GET', url: `/api/v1/tiles/${path}`, remoteAddress });
+/** A tile request whose client can go away, as a map cancels the tiles that leave its view. */
+function cancellable(app: FastifyInstance, path: string, remoteAddress: string) {
+  const client = new AbortController();
+  const answer = app.inject({ method: 'GET', url: `/api/v1/tiles/${path}`, remoteAddress, signal: client.signal }).catch((error: { code?: string }) => error.code);
+  return { answer, cancel: () => client.abort() };
+}
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check: () => Promise<boolean>, what: string) {
   for (let k = 0; k < 300; k++) {
@@ -229,6 +235,75 @@ test('requests of one address for a tile its earlier request waits to start wait
   }
   assert.deepEqual([await first, ...(await Promise.all(answers))].map(response => response.statusCode), Array(8).fill(200));
   assert.equal(counted.queries, 2, 'each tile cut once');
+});
+
+test('a waiter whose client goes leaves the gate\'s line at once, and its place in line goes to the next', async () => {
+  const gate = new Gate(1, 2);
+  const soon = () => Date.now() + 2_000;
+  assert.equal(await gate.enter(soon()), 'ok');
+  const client = new AbortController();
+  const gone = gate.enter(soon(), client.signal);
+  const second = gate.enter(soon());
+  assert.equal(await gate.enter(soon()), 'full', 'the line holds two');
+  client.abort();
+  assert.equal(await gone, 'gone');
+  const third = gate.enter(soon());
+  gate.leave();
+  assert.equal(await second, 'ok');
+  gate.leave();
+  assert.equal(await third, 'ok', 'it took the place in line the one that went had held');
+  assert.equal(await gate.enter(soon(), AbortSignal.abort()), 'gone', 'a client already gone does not wait');
+});
+
+test('tiles a map has cancelled leave their address\'s line at once and never run their queries', async () => {
+  const { db, counted } = countingPool();
+  const app = await tileApp({ running: 1, waitMs: 5_000, perAddress: 1, queuedPerAddress: 3 }, db);
+  clearTileCache();
+  const release = await holdRegencies();
+  const a = '203.0.113.80';
+  const first = tile(app, 'kabupaten/5/3/15.mvt', a);
+  let next: Promise<LightMyRequestResponse>;
+  try {
+    await until(async () => (await tileQueries()) === 1, 'the first tile query');
+    // The old view: three tiles wait in the address's line, then the map moves on and cancels them.
+    const old = [4, 5, 6].map(x => cancellable(app, `kabupaten/5/${x}/15.mvt`, a));
+    await sleep(100);
+    for (const { cancel } of old) cancel();
+    assert.deepEqual(await Promise.all(old.map(({ answer }) => answer)), Array(3).fill('ABORT_ERR'));
+    // The new view finds the line free.
+    next = tile(app, 'kabupaten/5/7/15.mvt', a);
+    await sleep(100);
+  } finally {
+    await release();
+  }
+  assert.deepEqual([(await first).statusCode, (await next).statusCode], [200, 200]);
+  assert.equal(counted.queries, 2, 'the cancelled tiles were never cut');
+});
+
+test('a query whose requests have all gone leaves the gate\'s line before it starts; while one stays, it keeps its place', async () => {
+  const { db, counted } = countingPool();
+  const app = await tileApp({ running: 1, waiting: 1, waitMs: 5_000 }, db);
+  clearTileCache();
+  const release = await holdRegencies();
+  const first = tile(app, 'kabupaten/5/8/15.mvt', '203.0.113.90');
+  let next: Promise<LightMyRequestResponse>;
+  try {
+    await until(async () => (await tileQueries()) === 1, 'the first tile query');
+    // Two visitors ask for one tile: its query waits at the gate, the one place in its line.
+    const one = cancellable(app, 'kabupaten/5/9/15.mvt', '203.0.113.91'), other = cancellable(app, 'kabupaten/5/9/15.mvt', '203.0.113.92');
+    await sleep(100);
+    one.cancel();
+    assert.equal(await one.answer, 'ABORT_ERR');
+    refused(await tile(app, 'kabupaten/5/10/15.mvt', '203.0.113.93'), 503, 'BUSY');
+    other.cancel();
+    assert.equal(await other.answer, 'ABORT_ERR');
+    next = tile(app, 'kabupaten/5/11/15.mvt', '203.0.113.93');
+    await sleep(100);
+  } finally {
+    await release();
+  }
+  assert.deepEqual([(await first).statusCode, (await next).statusCode], [200, 200]);
+  assert.equal(counted.queries, 2, 'the tile nobody waited for any more was never cut');
 });
 
 test('a clear of the demo tiles during a public tile\'s query leaves that query shared and its tile kept', async () => {

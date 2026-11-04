@@ -159,32 +159,56 @@ export class TileCache {
   get count() { return this.entries.size; }
 }
 
-/** A place at a Gate, or none: its queue was full, or the deadline came first. */
-export type Admission = 'ok' | 'full' | 'timeout';
+/** A place at a Gate, or none: its queue was full, the deadline came first, or the client went away. */
+export type Admission = 'ok' | 'full' | 'timeout' | 'gone';
 
 /**
- * At most `places` holders at once; up to `queue` more wait in order, each until its deadline. A holder that leaves
- * hands its place to the first in line.
+ * Waits in a line until `admit` is called, or until the deadline ('timeout') or until `signal` says the client has gone
+ * ('gone'). In those two cases the function `join` returned takes the waiter out of the line at once, so a request
+ * nobody waits for any more holds up no one behind it.
+ */
+function waitInLine(deadline: number, signal: AbortSignal | undefined, join: (admit: (answer: Admission) => void) => () => void): Promise<Admission> {
+  const wait = deadline - Date.now();
+  if (wait <= 0) return Promise.resolve('timeout');
+  return new Promise(resolve => {
+    let timer: NodeJS.Timeout | undefined, settled = false;
+    const settle = (answer: Admission) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', gone);
+      resolve(answer);
+    };
+    const leave = join(settle);
+    const out = (answer: Admission) => { if (!settled) { leave(); settle(answer); } };
+    const gone = () => out('gone');
+    timer = setTimeout(() => out('timeout'), wait);
+    signal?.addEventListener('abort', gone, { once: true });
+  });
+}
+
+/**
+ * At most `places` holders at once; up to `queue` more wait in order, each until its deadline or until its client goes
+ * away. A holder that leaves hands its place to the first in line.
  */
 export class Gate {
   private holders = 0;
-  private line: { admit: (answer: Admission) => void; timer: NodeJS.Timeout }[] = [];
+  private line: ((answer: Admission) => void)[] = [];
   constructor(private readonly places: number, private readonly queue: number) {}
   get free() { return this.holders < this.places; }
   get idle() { return this.holders === 0 && this.line.length === 0; }
-  enter(deadline: number): Promise<Admission> {
+  enter(deadline: number, signal?: AbortSignal): Promise<Admission> {
+    if (signal?.aborted) return Promise.resolve('gone');
     if (this.holders < this.places) { this.holders++; return Promise.resolve('ok'); }
     if (this.line.length >= this.queue) return Promise.resolve('full');
-    const wait = deadline - Date.now();
-    if (wait <= 0) return Promise.resolve('timeout');
-    return new Promise(admit => {
-      const waiter = { admit, timer: setTimeout(() => { this.line.splice(this.line.indexOf(waiter), 1); admit('timeout'); }, wait) };
-      this.line.push(waiter);
+    return waitInLine(deadline, signal, admit => {
+      this.line.push(admit);
+      return () => { const k = this.line.indexOf(admit); if (k >= 0) this.line.splice(k, 1); };
     });
   }
   leave() {
     const next = this.line.shift();
-    if (next) { clearTimeout(next.timer); next.admit('ok'); } else this.holders--;
+    if (next) next('ok'); else this.holders--;
   }
 }
 
@@ -447,13 +471,13 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
   const lanes = new Map<string, Gate>();
   let queued = 0;
   /** A place for one more uncached tile of `address`: at once, or after its earlier ones. */
-  async function enterLane(address: string, deadline: number): Promise<Admission> {
+  async function enterLane(address: string, deadline: number, signal: AbortSignal): Promise<Admission> {
     let lane = lanes.get(address);
     if (!lane) lanes.set(address, (lane = new Gate(limits.perAddress, limits.queuedPerAddress)));
-    if (lane.free) return lane.enter(deadline);
+    if (lane.free) return lane.enter(deadline, signal);
     if (queued >= limits.queued) return 'full';
     queued++;
-    try { return await lane.enter(deadline); } finally { queued--; }
+    try { return await lane.enter(deadline, signal); } finally { queued--; }
   }
   function leaveLane(address: string) {
     const lane = lanes.get(address)!;
@@ -462,43 +486,79 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
   }
   /** A tile, or how to refuse it: 429 past the address's line, 503 when the gate is full or the wait ran out. */
   type Cut = Buffer | 429 | 503;
+  /**
+   * A query on its way to cutting a tile, and the requests waiting for it. Once they have all gone (a map cancels the
+   * tiles that leave its view), a query that has not started leaves its line and runs nowhere.
+   */
+  interface Flight { cut: Promise<Cut>; riders: number; started: boolean; abandon: AbortController; drop: () => void }
   // Requests for a tile take no place when they can wait for a query that will cut it: one that holds its place
   // (`cutting`, by generation and key), or one their own address asked for that still waits for a place (`waiting`, by
   // address too). Waiting for another address's request would put them at the back of that address's line.
-  const cutting = new Map<string, Promise<Cut>>();
-  const waiting = new Map<string, Promise<Cut>>();
+  const cutting = new Map<string, Flight>();
+  const waiting = new Map<string, Flight>();
+  /** The flight's tile for one request; 'gone' as soon as its client goes. */
+  function ride(flight: Flight, signal: AbortSignal): Promise<Cut | 'gone'> {
+    const left = () => {
+      if (--flight.riders > 0 || flight.started) return;
+      flight.drop();
+      flight.abandon.abort();
+    };
+    flight.riders++;
+    if (signal.aborted) { left(); return Promise.resolve('gone'); }
+    return new Promise((resolve, reject) => {
+      const gone = () => { resolve('gone'); left(); };
+      signal.addEventListener('abort', gone, { once: true });
+      flight.cut.then(cut => { signal.removeEventListener('abort', gone); resolve(cut); },
+        error => { signal.removeEventListener('abort', gone); reject(error); });
+    });
+  }
   /**
    * A tile that missed the cache: from a query already on its way, or from a new one. Only a new query takes a place,
    * one of its address's at the gate, waiting its turn for one if need be, and holds it until it ends.
    */
-  function uncached(ip: string | undefined, key: string, scope: Scope, ttl: number, query: () => Promise<Buffer>): Promise<Cut> {
+  function uncached(ip: string | undefined, signal: AbortSignal, key: string, scope: Scope, ttl: number, query: () => Promise<Buffer>): Promise<Cut | 'gone'> {
     const started = generationOf(scope), id = `${started} ${key}`, address = addressKey(ip), mine = `${address} ${id}`;
     const known = cutting.get(id) ?? waiting.get(mine);
-    if (known) return known;
-    const deadline = Date.now() + limits.waitMs;
-    let flight!: Promise<Cut>;
-    flight = (async () => {
-      const place = await enterLane(address, deadline);
+    if (known) return ride(known, signal);
+    const deadline = Date.now() + limits.waitMs, abandon = new AbortController();
+    const flight: Flight = { cut: Promise.resolve(503), riders: 0, started: false, abandon, drop: () => {
+      if (waiting.get(mine) === flight) waiting.delete(mine);
+      if (cutting.get(id) === flight) cutting.delete(id);
+    } };
+    flight.cut = (async (): Promise<Cut> => {
+      const place = await enterLane(address, deadline, abandon.signal);
       if (waiting.get(mine) === flight) waiting.delete(mine);
       if (place !== 'ok') return place === 'full' ? 429 : 503;
-      // While it waited for its place, the tile may have been cut, or a request from another address may have started on it.
-      const ready = tiles.get(key) ?? cutting.get(id);
-      if (ready) { leaveLane(address); return ready; }
-      cutting.set(id, flight);
+      let held = true;
       try {
-        if ((await gate.enter(deadline)) !== 'ok') return 503;
+        if (abandon.signal.aborted) return 503;
+        // While it waited for its place, the tile may have been cut, or a request from another address may have started on it.
+        const cached = tiles.get(key);
+        if (cached) return cached;
+        const other = cutting.get(id);
+        if (other) {
+          leaveLane(address);
+          held = false;
+          const cut = await ride(other, abandon.signal);
+          return cut === 'gone' ? 503 : cut;
+        }
+        cutting.set(id, flight);
+        const turn = await gate.enter(deadline, abandon.signal);
+        if (turn !== 'ok') return 503;
+        if (abandon.signal.aborted) { gate.leave(); return 503; }
+        flight.started = true;
         try {
           const body = await query();
           if (generationOf(scope) === started) tiles.set(key, body, ttl);
           return body;
         } finally { gate.leave(); }
       } finally {
-        leaveLane(address);
-        if (cutting.get(id) === flight) cutting.delete(id);
+        if (held) leaveLane(address);
+        flight.drop();
       }
     })();
     waiting.set(mine, flight);
-    return flight;
+    return ride(flight, signal);
   }
   // A refused tile is kept nowhere, and the map may ask again in two seconds. One warning a minute at most, no address.
   let refused = { busy: 0, perAddress: 0 }, warnedAt = -Infinity;
@@ -532,12 +592,14 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
     const ttl = (hotspots && !tanggal) || scope === 'demo' ? LIVE_TTL : ARCHIVE_TTL;
     const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}/${scope}`;
     // A miss costs a query on the shared pool.
-    const body = tiles.get(key) ?? (await uncached(request.ip, key, scope, ttl, async () => {
+    const body = tiles.get(key) ?? (await uncached(request.ip, request.signal, key, scope, ttl, async () => {
       const sqlParams: unknown[] = [z, x, y];
       const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
         : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
       return ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
     }));
+    // The client has gone (a map cancels the tiles that leave its view): nobody reads this, and nothing was refused.
+    if (body === 'gone') return reply.code(499).send();
     if (typeof body === 'number') return refuse(reply, body);
     reply.header('Content-Type', 'application/vnd.mapbox-vector-tile')
       .header('Cache-Control', scope === 'demo' ? 'private, max-age=60' : `public, max-age=${ttl / 1000}`);
