@@ -39,6 +39,9 @@ export const windText = dict({
  */
 export const windIsCurrent = (wind: Wind, now = Date.now()) => wind.mode === 'now' && now - Date.parse(wind.at) <= HOUR;
 
+/** When windLine next reads differently: a wind told as now turns into its hour an hour after that hour began. */
+export const windChangesAt = (wind: Wind, now = Date.now()) => (windIsCurrent(wind, now) ? Date.parse(wind.at) + HOUR + 1 : null);
+
 /**
  * "Angin sekarang dari timur, 12 km/jam · asap mengarah ke barat"; "Angin pada 3 Nov 13.00 WIB: …" once that hour is
  * past; the wind at the last detection; or calm.

@@ -5,9 +5,10 @@ import type { FwiClass, Risk, RiskDay } from '../api';
 import type { Loaded } from '../components/ui';
 import { OpenMeteoCredit } from '../components/OpenMeteo';
 import { todayWib } from '../components/bpbd/data';
+import { nextWibMidnight, useClock } from '../clock';
 import { dict, useLang, useT } from '../i18n';
 import { useFormat } from '../format';
-import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiOpacity, fwiRange, riskAge, riskDayLabel, riskDetail } from './risk';
+import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiOpacity, fwiRange, riskAge, riskAgeChangesAt, riskDayLabel, riskDetail, shownRiskDay } from './risk';
 
 const text = dict({
   id: {
@@ -30,21 +31,32 @@ export const RiskSwatch = ({ fwiClass }: { fwiClass: FwiClass }) => (
 );
 
 /**
- * Over the top left of the map while the layer is on: the live days, each named by its date ("Hari ini", "Besok" and
- * "Lusa" only when it is that day), the date alone in the archive, or why there is nothing to show; then how old the
- * forecast is once it passes 6 hours.
+ * The fire danger day the map shows, as a place in the grid (shownRiskDay: the chosen date, else the archive day, else
+ * today), and today's WIB date, which names the days. Without a chosen day the map moves on to the new today at
+ * midnight, the day switch with it, also while nothing else renders the map again (no signal).
  */
-export function RiskDays({ risk, day, onDay }: { risk: Loaded<Risk>; day: number; onDay(day: number): void }) {
+export function useRiskDay(risk: Risk | null, chosen: string | null, tanggal: string) {
+  const now = useClock(time => (risk && !tanggal ? nextWibMidnight(time) : null));
+  const today = todayWib(new Date(now));
+  return { today, day: shownRiskDay(risk, chosen, tanggal || today) };
+}
+
+/**
+ * Over the top left of the map while the layer is on: the live days, each named by its date against `today` ("Hari
+ * ini", "Besok" and "Lusa" only when it is that day), the date alone in the archive, or why there is nothing to show;
+ * then how old the forecast is once it passes 6 hours, growing while the switch stays on screen.
+ */
+export function RiskDays({ risk, day, today, onDay }: { risk: Loaded<Risk>; day: number; today: string; onDay(day: number): void }) {
   const t = useT(text), f = useFormat();
   const { lang } = useLang();
   const data = risk.data;
+  const now = useClock(time => (data ? riskAgeChangesAt(data, time) : null));
   const days = data?.cells[0]?.days.slice(0, LIVE_DAYS) ?? [];
-  const age = data ? riskAge(data, lang) : null;
+  const age = data ? riskAge(data, lang, now) : null;
   let body: ReactNode;
   if (data && !data.fetchedAt) body = <span>{t('noWeather')}</span>;
   else if (data && (data.archive || days.length < 2)) body = <span>{f.calendar(data.archive ? data.asOf : days[0]?.date ?? data.asOf)}</span>;
   else if (data) {
-    const today = todayWib();
     body = (
       <div className="risk-seg" role="group" aria-label={t('days')}>
         {days.map((entry, index) => (

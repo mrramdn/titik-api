@@ -32,7 +32,7 @@ describe('wind in the incident panel', () => {
     expect(windLine(detected, 'en', now)).toBe('Wind when last detected (23 Oct 13:00 WIB): from the southwest, 12 km/h · smoke drifts northeast');
   });
 
-  it('gives the hour instead of "now" once that hour is over an hour old: a copy the service worker kept, or a panel left open', () => {
+  it('gives the hour instead of "now" for a time over an hour after that hour began, as for a copy the service worker kept', () => {
     expect(windIsCurrent(wind(), minutes(60))).toBe(true);
     expect(windIsCurrent(wind(), minutes(61))).toBe(false);
     expect(windIsCurrent(wind({ mode: 'detected' }), now)).toBe(false);

@@ -6,8 +6,9 @@ import { Gauge } from 'lucide-react';
 import type { Risk } from '../../api';
 import { dict, fill, useLang, useT, type Lang } from '../../i18n';
 import { formatter } from '../../format';
-import { highDanger, highDangerName, riskAge, riskDayIndex, type HighDanger, type RiskLink } from '../../map/risk';
+import { highDanger, highDangerName, riskAge, riskAgeChangesAt, riskDayIndex, type HighDanger, type RiskLink } from '../../map/risk';
 import { MAP_PATH } from '../../routes';
+import { earliest, nextWibMidnight, useClock } from '../../clock';
 import { shiftDate, todayWib, useLoad } from './data';
 import { OpenMeteoCredit } from '../OpenMeteo';
 
@@ -58,9 +59,11 @@ export function DangerCard({ province, version }: { province: string; version?: 
   const { lang } = useLang();
   const risk = useLoad<Risk>('/risk', version);
   const data = risk.data;
+  // Tomorrow moves on at midnight and the forecast's age grows, also on a dashboard left open without a signal.
+  const now = useClock(time => (data && !data.archive ? earliest(nextWibMidnight(time), riskAgeChangesAt(data, time)) : null));
   if (!data || data.archive) return null;
   const computed = Boolean(data.fetchedAt);
-  const card = dangerCard(data, province, lang);
+  const card = dangerCard(data, province, lang, todayWib(new Date(now)), now);
   return (
     <section className="bd-danger" aria-labelledby="bd-danger-title">
       <Gauge size={18} className="icon" aria-hidden="true" />

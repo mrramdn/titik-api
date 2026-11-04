@@ -19,9 +19,8 @@ import {
   sentinelUnderEsri, tileUrls,
 } from './layers';
 import { Legend } from './Legend';
-import { RISK_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath, shownRiskDay } from './risk';
-import { todayWib } from '../components/bpbd/data';
-import { RiskCell, RiskDays } from './RiskParts';
+import { RISK_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
+import { RiskCell, RiskDays, useRiskDay } from './RiskParts';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
   incidentFilter, incidentOpacity, incidentRadius, incidentSortKey, incidentStroke, incidentStrokeWidth, kilometreRadius, levelColor,
@@ -133,7 +132,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const riskData = riskOn && risk.data?.fetchedAt ? risk.data : null;
   // The day is kept as a date, so a newer answer (one more day, one less) keeps showing the same day.
   const [riskDate, setRiskDate] = useState<string | null>(initialRiskDate);
-  const shownDay = shownRiskDay(riskData, riskDate, tanggal || todayWib());
+  const { today: riskToday, day: shownDay } = useRiskDay(riskData, riskDate, tanggal);
   const [riskCell, setRiskCell] = useState<number | null>(null);
   const regions = useApi<RegionSummary[]>(bubbles ? `/regions/summary?hours=${hours}${query}${tanggalParam(tanggal)}` : null, version);
   // Bubbles need GET /regions/summary; without it (an older API) incidents show at every zoom instead. A later failed
@@ -420,7 +419,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   return (
     <div className={`map-pane ${className ?? ''}`}>
       <div ref={container} className="map" role="region" aria-label={t('map')} />
-      {riskOn && <RiskDays risk={risk} day={shownDay} onDay={index => setRiskDate(risk.data?.cells[0]?.days[index]?.date ?? null)} />}
+      {riskOn && <RiskDays risk={risk} day={shownDay} today={riskToday} onDay={index => setRiskDate(risk.data?.cells[0]?.days[index]?.date ?? null)} />}
       {host && createPortal(<>
         <button type="button" className={`mapctl-btn ${panel === 'layers' ? 'on' : ''}`} aria-label={t('layers')} title={t('layers')} aria-expanded={panel === 'layers'} onClick={() => toggle('layers')}><Layers size={18} /></button>
         <button type="button" className={`mapctl-btn ${panel === 'legend' ? 'on' : ''}`} aria-label={t('legend')} title={t('legend')} aria-expanded={panel === 'legend'} onClick={() => toggle('legend')}><List size={18} /></button>

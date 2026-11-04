@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultFilters, incidentQuery, type ArchiveDays, type FwiClass, type RegencyRiskDay, type Risk, type RiskDay } from '../api';
 import { RiskDays } from './RiskParts';
+import { todayWib } from '../components/bpbd/data';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
 import { readConfig } from '../config';
@@ -318,7 +319,7 @@ describe('fire danger (FWI)', () => {
   });
 
   it('shows the map\'s day switch by date with the forecast\'s age, from a copy kept two days ago', () => {
-    const days = (data: Risk, day = 0) => renderToStaticMarkup(createElement(RiskDays, { risk: { data, error: null, loading: false, reload() {} }, day, onDay() {} }));
+    const days = (data: Risk, day = 0) => renderToStaticMarkup(createElement(RiskDays, { risk: { data, error: null, loading: false, reload() {} }, day, today: todayWib(), onDay() {} }));
     vi.useFakeTimers();
     try {
       // 3 Nov 13.00 WIB, two hours after the run: today, tomorrow and the day after, no age.

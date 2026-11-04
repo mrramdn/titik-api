@@ -80,6 +80,20 @@ export function riskAge(risk: Pick<Risk, 'archive' | 'fetchedAt'>, lang: Lang, n
   return days === 1 ? w.ageDay : fill(w.ageDays, { n: formatter(lang).num(days) });
 }
 
+/**
+ * When riskAge next reads differently (ms): as the forecast passes 6 hours, then at each whole hour of its age, then
+ * each whole day from the first; null where it never shows.
+ */
+export function riskAgeChangesAt(risk: Pick<Risk, 'archive' | 'fetchedAt'>, now = Date.now()) {
+  if (risk.archive || !risk.fetchedAt) return null;
+  const fetched = Date.parse(risk.fetchedAt);
+  if (Number.isNaN(fetched)) return null;
+  const age = now - fetched;
+  if (!(age > STALE_MS)) return fetched + STALE_MS + 1;
+  const hours = Math.floor(age / 3_600_000);
+  return hours < 24 ? fetched + (hours + 1) * 3_600_000 : fetched + (Math.floor(hours / 24) + 1) * 24 * 3_600_000;
+}
+
 /** GET /risk for live data (today and the next two days) or for one archive day. */
 export const riskPath = (tanggal: string) => (tanggal ? `/risk?tanggal=${tanggal}` : '/risk');
 
