@@ -8,6 +8,8 @@ import { detectionColor } from './style';
 export const OVERVIEW_ZOOM = 8;
 /** From this zoom a hotspot is drawn as its satellite pixel instead of a dot. */
 export const FOOTPRINT_ZOOM = 11;
+/** From this zoom the satellite view shows Sentinel-2 cloudless by EOX instead of the daily GIBS image. */
+export const SENTINEL_ZOOM = 9;
 /** From this zoom the satellite view shows Esri World Imagery instead of Sentinel-2, when the server offers it. */
 export const ESRI_ZOOM = 11;
 /** The API serves Esri tiles up to this zoom; the map stops there too. */
@@ -61,17 +63,18 @@ export function esriSource(config: AppConfig | null | undefined, origin: string)
 }
 
 /**
- * Esri's attribution stays open while its imagery shows (the Esri source is on the map, the detailed imagery layer is
- * on, zoom 11 or closer) on a map wider than 640 px, where MapLibre itself stops collapsing attributions. A narrower
- * map keeps it one tap away.
+ * The attribution stays open while EOX's imagery shows, and Esri's with it, on a map wider than 640 px, where MapLibre
+ * itself stops collapsing attributions: the detailed imagery layer is on at zoom 9 or closer, which always shows
+ * Sentinel-2 cloudless (the citra source, or under Esri's tiles from zoom 11). EOX asks for its credit legibly next to
+ * the imagery, as Esri does for its own. A narrower map keeps it one tap away.
  */
-export const keepAttributionOpen = (view: { esri: boolean; citra: boolean; zoom: number; width: number }) =>
-  view.esri && view.citra && view.zoom >= ESRI_ZOOM && view.width > 640;
+export const keepAttributionOpen = (view: { citra: boolean; zoom: number; width: number }) =>
+  view.citra && view.zoom >= SENTINEL_ZOOM && view.width > 640;
 
 /** Satellite view by zoom: the daily GIBS image below 9, Sentinel-2 from 9, and Esri from 11 when the server offers it. */
 export const imageryZoom = (esri: boolean) => ({
-  harian: [0, 9] as [number, number],
-  citra: [9, esri ? ESRI_ZOOM : 24] as [number, number],
+  harian: [0, SENTINEL_ZOOM] as [number, number],
+  citra: [SENTINEL_ZOOM, esri ? ESRI_ZOOM : 24] as [number, number],
   esri: [ESRI_ZOOM, 24] as [number, number],
 });
 

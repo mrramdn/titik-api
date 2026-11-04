@@ -127,14 +127,19 @@ describe('HD imagery', () => {
     expect(ESRI_DATA_ATTRIBUTION).toBe('Esri, Vantor, Earthstar Geographics, and the GIS User Community');
   });
 
-  it('keeps Esri\'s attribution open on a map wider than 640 px while its imagery shows', () => {
-    const view = { esri: true, citra: true, zoom: 11, width: 1024 };
+  it('keeps the attribution open on a map wider than 640 px while EOX\'s imagery shows, and Esri\'s with it', () => {
+    // Sentinel-2 cloudless from zoom 9: the citra source, with or without Esri (under its tiles from zoom 11).
+    const view = { citra: true, zoom: 9, width: 1024 };
+    expect(imageryZoom(false).citra[0]).toBe(9);
+    expect(imageryZoom(true).citra[0]).toBe(9);
     expect(keepAttributionOpen(view)).toBe(true);
+    expect(keepAttributionOpen({ ...view, zoom: 10 })).toBe(true);
+    expect(keepAttributionOpen({ ...view, zoom: 11 })).toBe(true);
     expect(keepAttributionOpen({ ...view, zoom: 18 })).toBe(true);
     expect(keepAttributionOpen({ ...view, width: 641 })).toBe(true);
     expect(keepAttributionOpen({ ...view, width: 640 })).toBe(false);
-    expect(keepAttributionOpen({ ...view, zoom: 10.9 })).toBe(false);
-    expect(keepAttributionOpen({ ...view, esri: false })).toBe(false);
+    // Below zoom 9 the satellite view is the daily GIBS image.
+    expect(keepAttributionOpen({ ...view, zoom: 8.9 })).toBe(false);
     expect(keepAttributionOpen({ ...view, citra: false })).toBe(false);
   });
 

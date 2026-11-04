@@ -144,7 +144,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
   const state = useRef({ hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, hdImagery, imageryAttribution, footprints, risk: riskData, riskDay: shownDay });
   state.current = { hours, version, tanggal, demo, layers, selected, focus, filters, regions: regions.data, overview, boundsMinZoom, daily, hdImagery, imageryAttribution, footprints, risk: riskData, riskDay: shownDay };
   const attribution = () => container.current?.querySelector<HTMLElement>('.maplibregl-ctrl-attrib') ?? null;
-  /** True while the attribution is held open for Esri's imagery. */
+  /** True while the attribution is held open for EOX's or Esri's imagery. */
   const attributionHeld = useRef(false);
 
   useEffect(() => {
@@ -155,7 +155,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     });
     map.current = instance;
     // The compact attribution opens as soon as it is added and would cover a phone-sized map; it stays one tap away,
-    // except while Esri's imagery shows on a wider map (syncAttribution).
+    // except while EOX's or Esri's imagery shows on a wider map (syncAttribution).
     const collapseAttribution = () => {
       attribution()?.classList.remove('maplibregl-compact-show');
       attributionHeld.current = false;
@@ -172,7 +172,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     instance.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: false }), 'bottom-right');
     instance.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
     instance.on('load', collapseAttribution);
-    // MapLibre folds the attribution away on every drag; Esri's comes straight back.
+    // MapLibre folds the attribution away on every drag; one held open for the imagery comes straight back.
     instance.on('drag', syncAttribution);
     instance.on('resize', syncAttribution);
     // When the API refuses Esri's tiles (a cap, too many from this address) or Esri keeps failing, the close-up goes
@@ -309,10 +309,10 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     if (esri) for (const id of ['citra-latar', 'esri']) m.setLayoutProperty(id, 'visibility', state.current.layers.citra ? 'visible' : 'none');
     syncAttribution();
   }
-  /** Esri's attribution is held open while its imagery shows on a wide map; when it goes, the attribution folds again. */
+  /** The attribution is held open while EOX's or Esri's imagery shows on a wide map; when it goes, it folds again. */
   function syncAttribution() {
     const m = map.current, element = attribution(); if (!m || !ready.current || !element) return;
-    const hold = keepAttributionOpen({ esri: Boolean(m.getLayer('esri')), citra: state.current.layers.citra, zoom: m.getZoom(), width: m.getContainer().offsetWidth });
+    const hold = keepAttributionOpen({ citra: state.current.layers.citra, zoom: m.getZoom(), width: m.getContainer().offsetWidth });
     if (hold) {
       element.classList.add('maplibregl-compact-show');
       element.setAttribute('open', '');
