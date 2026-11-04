@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -46,6 +46,12 @@ export function trustedProxies(value = process.env.TRUST_PROXY): string | false 
   return value === 'true' ? 'loopback, linklocal, uniquelocal' : value;
 }
 
+/**
+ * A request as the log keeps it: its method, path and host, not who sent it. Fastify's own adds the client's address
+ * and port; nginx already keeps visitors' addresses for 14 days, and the container log has no such limit.
+ */
+const requestLog = (request: FastifyRequest) => ({ method: request.method, url: request.url, host: request.host });
+
 export async function createApp(options: Options = {}) {
   const ownsPool = !options.pool;
   const pool = options.pool ?? createPool();
@@ -54,7 +60,8 @@ export async function createApp(options: Options = {}) {
   const production = options.production ?? process.env.NODE_ENV === 'production';
   const origins = new Set(options.origins ?? (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173').split(',').map(item => item.trim()));
   const app = Fastify({
-    logger: options.logger ?? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'], ...(options.logStream && { stream: options.logStream }) },
+    logger: options.logger ?? { redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'], serializers: { req: requestLog },
+      ...(options.logStream && { stream: options.logStream }) },
     bodyLimit: 64 * 1024,
     trustProxy: options.trustProxy ?? trustedProxies(),
   });

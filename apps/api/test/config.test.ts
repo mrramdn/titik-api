@@ -25,6 +25,23 @@ test('the public config says whether HD imagery is on and never holds the ArcGIS
   assert.deepEqual((await get('/api/v1/config')).json(), { data: { hdImagery: false, imageryAttribution: null } });
 });
 
+test('the request log keeps the method and the path of a request, never the visitor\'s address or port', async () => {
+  const lines: string[] = [];
+  const { app: logging } = await createApp({ pool, uploadsDir: join(directory, 'uploads'), webDir: join(directory, 'web'), imagery: { key: undefined },
+    logStream: { write: line => { lines.push(line); } } });
+  try {
+    assert.equal((await logging.inject({ method: 'GET', url: '/api/v1/health?probe=1', remoteAddress: '203.0.113.77' })).statusCode, 200);
+  } finally {
+    await logging.close();
+  }
+  const entries = lines.map(line => JSON.parse(line) as { msg?: string; req?: Record<string, unknown>; res?: { statusCode?: number } });
+  const incoming = entries.find(entry => entry.msg === 'incoming request');
+  assert.deepEqual([incoming?.req?.method, incoming?.req?.url], ['GET', '/api/v1/health?probe=1']);
+  assert.ok(incoming?.req && !('remoteAddress' in incoming.req) && !('remotePort' in incoming.req), JSON.stringify(incoming));
+  assert.ok(entries.some(entry => entry.msg === 'request completed' && entry.res?.statusCode === 200));
+  for (const line of lines) assert.ok(!line.includes('203.0.113.77') && !line.includes('remote'), line);
+});
+
 test('responses send the origin, never the path, to other sites', async () => {
   for (const url of ['/api/v1/health', '/api/v1/config', '/api/v1/tiles/desa/3/6/4.mvt', '/tidak-ada']) {
     assert.equal((await get(url)).headers['referrer-policy'], 'strict-origin-when-cross-origin', url);
