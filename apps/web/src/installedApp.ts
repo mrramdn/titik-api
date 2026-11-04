@@ -1,7 +1,10 @@
 // Whether the page runs as an installed app (opened from the home screen or the app list) rather than in a browser tab.
 
-/** The display modes of an installed app. The manifest asks for standalone; a browser or the user may give another. */
-const appModes = ['standalone', 'fullscreen', 'minimal-ui'];
+/**
+ * The display modes of an installed app: the manifest asks for standalone, and a browser without it falls back to
+ * minimal-ui. Fullscreen is left out: a browser tab in F11 fullscreen matches it too, and the manifest never asks for it.
+ */
+const appModes = ['standalone', 'minimal-ui'];
 
 /** What the check reads of `window`. */
 export interface AppWindow { matchMedia?: Window['matchMedia']; navigator?: unknown }

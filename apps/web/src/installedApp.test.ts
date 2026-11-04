@@ -23,8 +23,10 @@ describe('the installed app', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it('is told from a browser tab by its display mode, or by navigator.standalone on iOS', () => {
-    for (const mode of ['standalone', 'fullscreen', 'minimal-ui']) expect(runsAsInstalledApp(display(mode)), mode).toBe(true);
+    for (const mode of ['standalone', 'minimal-ui']) expect(runsAsInstalledApp(display(mode)), mode).toBe(true);
     expect(runsAsInstalledApp(display('browser'))).toBe(false);
+    // A browser tab in F11 fullscreen; the manifest never asks for fullscreen.
+    expect(runsAsInstalledApp(display('fullscreen'))).toBe(false);
     expect(runsAsInstalledApp(display('browser', true))).toBe(true);
     expect(runsAsInstalledApp(display('browser', false))).toBe(false);
     expect(runsAsInstalledApp({ navigator: {} })).toBe(false);
