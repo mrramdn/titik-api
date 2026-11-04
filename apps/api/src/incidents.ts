@@ -375,16 +375,22 @@ const tileHours = (value: unknown) => {
   return hours;
 };
 const tiles = new TileCache(32 * 1024 * 1024);
-/** Counts the clears: a tile cut before one may miss what changed, so it answers its requests but is not kept. */
-let generation = 0;
+/**
+ * Counts the clears: `all` every clear, `demo` the clears of demo tiles only. A tile cut before a clear of its scope may
+ * miss what changed, so it answers its requests but is not kept, and later requests do not wait for its query. A demo
+ * clear changes only what demo sessions see: public tiles cut across it are still right.
+ */
+const generation = { all: 0, demo: 0 };
+/** The clears a tile of `scope` has seen so far. */
+const generationOf = (scope: Scope) => (scope === 'demo' ? `${generation.all}.${generation.demo}` : `${generation.all}`);
 let archiveDays: { at: number; body: unknown } | null = null;
 /**
  * Forgets every cut tile and the archive day counts, so the next request shows new detections, checks and tasks at once.
  * A demo account's check or task changes only what demo sessions see: with `scope` 'demo' just their tiles go.
  */
 export const clearTileCache = (scope?: Scope) => {
-  generation++;
-  if (scope === 'demo') { tiles.drop(key => key.endsWith('/demo')); return; }
+  if (scope === 'demo') { generation.demo++; tiles.drop(key => key.endsWith('/demo')); return; }
+  generation.all++;
   tiles.clear(); archiveDays = null; firstDay = null;
 };
 
@@ -452,15 +458,15 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
   // Requests for a tile that is being cut wait for that query instead of starting their own.
   const flights = new Map<string, Promise<Buffer | null>>();
   /** The tile from the query already cutting it, or from a new one through the gate; null when the gate refused. */
-  function cut(key: string, ttl: number, deadline: number, query: () => Promise<Buffer>) {
-    const started = generation, id = `${started} ${key}`;
+  function cut(key: string, scope: Scope, ttl: number, deadline: number, query: () => Promise<Buffer>) {
+    const started = generationOf(scope), id = `${started} ${key}`;
     let flight = flights.get(id);
     if (!flight) {
       flight = (async () => {
         if ((await gate.enter(deadline)) !== 'ok') return null;
         try {
           const body = await query();
-          if (generation === started) tiles.set(key, body, ttl);
+          if (generationOf(scope) === started) tiles.set(key, body, ttl);
           return body;
         } finally { gate.leave(); }
       })().finally(() => flights.delete(id));
@@ -507,7 +513,7 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool, options: P
       const place = await enterLane(address, deadline);
       if (place !== 'ok') return refuse(reply, place === 'full' ? 429 : 503);
       try {
-        body = tiles.get(key) ?? (await cut(key, ttl, deadline, async () => {
+        body = tiles.get(key) ?? (await cut(key, scope, ttl, deadline, async () => {
           const sqlParams: unknown[] = [z, x, y];
           const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
             : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();

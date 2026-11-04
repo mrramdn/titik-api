@@ -7,7 +7,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type pg from 'pg';
 import { createApp } from '../src/app.js';
 import { TileCache, clearTileCache, tileCacheBytes, tileLimits, type TileLimits } from '../src/incidents.js';
-import { emptyDatabase, testPool } from './fixtures.js';
+import { account, emptyDatabase, testPool } from './fixtures.js';
 
 const pool = testPool();
 let directory: string;
@@ -28,12 +28,28 @@ async function until(check: () => Promise<boolean>, what: string) {
   assert.fail(`timed out waiting for ${what}`);
 }
 
-/** Holds every query on regencies until the returned function runs: kabupaten tiles wait in the database. */
-async function holdRegencies() {
+/**
+ * Holds every query on a table until the returned function runs: on regencies kabupaten tiles wait in the database, on
+ * assignments kejadian tiles do.
+ */
+async function hold(table: 'regencies' | 'assignments') {
   const client = await pool.connect();
   await client.query('BEGIN');
-  await client.query('LOCK TABLE regencies IN ACCESS EXCLUSIVE MODE');
+  await client.query(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
   return async () => { await client.query('COMMIT'); client.release(); };
+}
+const holdRegencies = () => hold('regencies');
+/** The test pool, counting the tile queries the app sends through it. */
+function countingPool() {
+  const counted = { queries: 0 };
+  const db = new Proxy(pool, {
+    get(target, name) {
+      const value = Reflect.get(target, name, target);
+      if (name === 'query') return (...args: unknown[]) => { if (String(args[0]).includes('ST_AsMVT')) counted.queries++; return value.apply(target, args); };
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return { db, counted };
 }
 /** Tile queries in the database right now, running or waiting for the lock. */
 const tileQueries = async () => Number((await pool.query(`SELECT count(*) AS n FROM pg_stat_activity
@@ -148,16 +164,8 @@ test('the line for places is shared by every address up to its size, and a tile 
 });
 
 test('one tile asked for many times at once runs one query', async () => {
-  // Counts the tile queries the app sends through its pool.
-  let queries = 0;
-  const counting = new Proxy(pool, {
-    get(target, name) {
-      const value = Reflect.get(target, name, target);
-      if (name === 'query') return (...args: unknown[]) => { if (String(args[0]).includes('ST_AsMVT')) queries++; return value.apply(target, args); };
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-  const app = await tileApp({}, counting);
+  const { db, counted } = countingPool();
+  const app = await tileApp({}, db);
   clearTileCache();
   const release = await holdRegencies();
   // More than one address's places: the rest wait their turn and then find the tile in the cache.
@@ -172,7 +180,62 @@ test('one tile asked for many times at once runs one query', async () => {
   const answers = await Promise.all(asked);
   assert.ok(answers.every(response => response.statusCode === 200));
   assert.ok(answers.every(response => response.rawPayload.equals(answers[0]!.rawPayload)));
-  assert.equal(queries, 1);
+  assert.equal(counted.queries, 1);
+});
+
+test('a clear of the demo tiles during a public tile\'s query leaves that query shared and its tile kept', async () => {
+  const { db, counted } = countingPool();
+  const app = await tileApp({}, db);
+  clearTileCache();
+  const release = await holdRegencies();
+  const path = 'kabupaten/5/26/15.mvt';
+  const first = tile(app, path);
+  let second: Promise<LightMyRequestResponse>;
+  try {
+    await until(async () => (await tileQueries()) === 1, 'the tile query');
+    // A demo account's check or task, as anyone can make one.
+    clearTileCache('demo');
+    second = tile(app, path, '198.51.100.5');
+    await sleep(200);
+    assert.equal(await tileQueries(), 1, 'the second request waits for the query already running');
+  } finally {
+    await release();
+  }
+  assert.deepEqual([(await first).statusCode, (await second).statusCode], [200, 200]);
+  assert.equal((await tile(app, path)).statusCode, 200);
+  assert.equal(counted.queries, 1, 'one query, and its tile was kept');
+});
+
+test('a clear during a tile\'s query, of all tiles or of the demo ones for a demo tile: later requests run their own, and only theirs is kept', async () => {
+  const { db, counted } = countingPool();
+  const app = await tileApp({}, db);
+  const demo = await account(pool, 'mpa', 'demo');
+  // A demo session's own view of checks and tasks; its query reads assignments.
+  const demoTile = (path: string) => app.inject({ method: 'GET', url: `/api/v1/tiles/${path}?lihat=demo`, remoteAddress: '203.0.113.30',
+    headers: { authorization: `Bearer ${demo.token}` } });
+  const cases = [
+    { label: 'a demo tile, demo clear', table: 'assignments', ask: () => demoTile('kejadian/9/408/264.mvt'), clear: () => clearTileCache('demo') },
+    { label: 'a demo tile, full clear', table: 'assignments', ask: () => demoTile('kejadian/9/409/264.mvt'), clear: () => clearTileCache() },
+    { label: 'a public tile, full clear', table: 'regencies', ask: () => tile(app, 'kabupaten/5/27/15.mvt'), clear: () => clearTileCache() },
+  ] as const;
+  for (const { label, table, ask, clear } of cases) {
+    clearTileCache();
+    counted.queries = 0;
+    const release = await hold(table);
+    const first = ask();
+    let second: Promise<LightMyRequestResponse>;
+    try {
+      await until(async () => (await tileQueries()) === 1, `${label}: the first query`);
+      clear();
+      second = ask();
+      await until(async () => (await tileQueries()) === 2, `${label}: the second request runs its own query`);
+    } finally {
+      await release();
+    }
+    assert.deepEqual([(await first).statusCode, (await second).statusCode], [200, 200], label);
+    assert.equal((await ask()).statusCode, 200);
+    assert.equal(counted.queries, 2, `${label}: the tile cut after the clear was kept, the one before it was not`);
+  }
 });
 
 test('the tile limit of 3000 a minute counts an IPv6 client by its /64', async () => {
