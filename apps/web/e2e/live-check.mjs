@@ -1,9 +1,9 @@
 // Walks the landing page and every role's pages in both languages and reports console errors and failed requests;
 // then checks that a first visit to the landing page leaves the map's code alone (its own requests and a service
-// worker's), that the first app screen installs the service worker with the map for use without a signal, that an old
-// map link (/?tanggal=) lands on /peta, that ?lihat= opens each shared demo account but never over a session the server
-// has not confirmed and never undoes where the visitor went meanwhile, that an unknown address stays as it is, and that
-// the installed app keeps its identity.
+// worker's), that the first app screen installs the service worker with the map (MapLibre's worker included) for use
+// without a signal, also once the browser's HTTP cache is gone, that an old map link (/?tanggal=) lands on /peta, that
+// ?lihat= opens each shared demo account but never over a session the server has not confirmed and never undoes where
+// the visitor went meanwhile, that an unknown address stays as it is, and that the installed app keeps its identity.
 //   node e2e/live-check.mjs <baseUrl> [resolveToIp] [screenshotDir]
 // resolveToIp maps the host of baseUrl to an address (for a stale local DNS cache); screenshots are optional.
 import { chromium } from 'playwright-core';
@@ -240,7 +240,7 @@ await check('tidak-ada', async page => {
 });
 
 // The service worker: none on a first visit to the landing page, then the first app screen installs it with the map's
-// code precached, and the map screen opens without a signal.
+// code precached (MapLibre's worker script too), and the map screen opens without a signal and without the HTTP cache.
 await check('service-worker', async (page, ctx) => {
   const requests = { landing: [], worker: 0 };
   let step = 'landing';
@@ -263,13 +263,23 @@ await check('service-worker', async (page, ctx) => {
     const name = (await caches.keys()).find(key => key.startsWith('workbox-precache'));
     return name ? (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname) : [];
   });
-  for (const chunk of ['MapView-', 'MapScreen-', 'IncidentPanel-']) if (!precached.some(path => path.startsWith(`/assets/${chunk}`))) return `${chunk}*.js not precached`;
+  // MapLibre's worker script too: without it the map pane stays blank offline.
+  for (const file of ['MapView-*.js', 'MapScreen-*.js', 'IncidentPanel-*.js', 'maplibre-gl-worker-*.mjs']) {
+    const [start, end] = file.split('*');
+    if (!precached.some(path => path.startsWith(`/assets/${start}`) && path.endsWith(end))) return `${file} not precached`;
+  }
   await page.waitForTimeout(1500);
+  // Without the browser's HTTP cache as well, which still holds what the visit above fetched (MapLibre's worker among
+  // it) and which a phone low on storage drops first: the map screen must open from the precache alone.
+  await (await ctx.newCDPSession(page)).send('Network.clearBrowserCache');
+  const workerFailed = [];
+  page.on('requestfailed', r => { if (/\/assets\/maplibre-gl-worker-/.test(r.url())) workerFailed.push(r.failure()?.errorText ?? 'failed'); });
   await ctx.setOffline(true);
   await page.goto(`${base}/peta`).catch(() => {});
   await page.waitForTimeout(4000);
   const offline = await page.evaluate(() => ({ screen: Boolean(document.querySelector('.mapscreen .sidebar')), failed: document.querySelector('.load-failed')?.textContent ?? '' }));
   await ctx.setOffline(false);
+  if (workerFailed.length) return `MapLibre's worker did not load without a signal (${workerFailed[0]})`;
   return offline.screen && !/Halaman ini tidak bisa dimuat/.test(offline.failed) ? null : `the map screen without a signal: ${offline.failed || 'not there'}`;
 });
 
