@@ -5,7 +5,7 @@ Kalimantan Tengah: titik panas dicocokkan dengan desanya, BPBD menugaskan regu r
 kembali ke BPBD.
 
 **[Buka aplikasi](https://titik-api.mrramdn.com)** ·
-[Putar ulang puncak kemarau, 23 Okt 2026](https://titik-api.mrramdn.com/peta?tanggal=2026-10-23) ·
+[Putar ulang puncak kemarau, 23 Okt 2026](https://titik-api.mrramdn.com/?tanggal=2026-10-23) ·
 [Coba sebagai BPBD](https://titik-api.mrramdn.com/dasbor?lihat=bpbd) ·
 [Coba sebagai relawan](https://titik-api.mrramdn.com/tugas?lihat=mpa) ·
 [English](README.md)
@@ -110,9 +110,21 @@ flowchart LR
   lebih dari 90 menit lalu, dan aplikasi menampilkan peringatan data tertunda setelah dua jam.
 - Basis data (beserta arsip) dan foto dicadangkan setiap malam dan dipulihkan ke container sekali pakai sebelum
   cadangan disimpan. Akun demo direset pukul 03.00 WIB.
-- Batas layanan pihak ketiga dijaga di kode: proxy citra berhenti di 1.000.000 tile per siklus tagihan Esri, 33.000
-  sehari, dan 5.000 per alamat pengunjung sehari, lalu kembali ke Sentinel-2 cloudless; Open-Meteo dipanggil dalam
-  kelompok kecil yang diberi jeda.
+- Batas layanan pihak ketiga dijaga di kode. Proxy citra berhenti di 1.000.000 tile per siklus tagihan Esri, 33.000
+  sehari, dan 5.000 per alamat pengunjung sehari, menyisakan seperempat terakhir setiap hari untuk pengunjung yang
+  baru memakai kurang dari 300 tile hari itu, lalu kembali ke Sentinel-2 cloudless. Pencarian angin tetap di bawah 60
+  panggilan Open-Meteo per menit dan 2.000 per hari, dan kejadian lama paling banyak memakai separuhnya; data cuaca
+  diambil dalam kelompok kecil yang diberi jeda.
+- Setiap batas laju menghitung klien IPv6 per /64. Dua gerbang menyisakan koneksi basis data untuk masuk, formulir,
+  dan pemeriksaan hidup: tile peta yang belum ada di cache paling banyak empat kueri sekaligus, dan bacaan berat
+  (daftar kejadian, hitungan, halaman desa, dasbor, rekap, dan CSV) paling banyak tiga, masing-masing dengan jatah per
+  alamat (tile juga per IPv6 /56). Permintaan tile yang sama berbagi satu kueri, dan tile yang dibatalkan peta keluar
+  dari antrean. Lewat dari batas itu, permintaan dijawab 503 atau 429 dengan `Retry-After`, dan aplikasi mencoba lagi
+  sendiri.
+- Deploy menghentikan ingest FIRMS atau pembaruan cuaca yang sedang berjalan dalam hitungan detik: ingest dibatalkan
+  dan diambil lagi pada tarikan berikutnya, cuaca menyimpan kelompok yang sudah selesai. Setelah rollback ke
+  `joints-2026` lalu kembali, pemeriksaan saat start memindahkan apa yang ditulis versi lama dengan akun demo kembali
+  ke cakupan demo, termasuk sumber panas tetap dari alarm palsu demo.
 
 ## Jalankan lokal
 
@@ -138,17 +150,24 @@ Daftar rute ada di [README berbahasa Inggris](README.md#api-apiv1).
 
 ## Pengujian
 
-`pnpm test:api` menjalankan 92 tes, sebagian besar di basis data PostGIS sungguhan: ingest dan pengelompokan, jendela
-arsip, kotak piksel di tile, indikasi luas, FWI terhadap contoh musim yang diterbitkan, alur cuaca dengan data rekaman,
-cakupan demo, proxy citra dan batasnya, cek lapangan tanpa sinyal, rekap, dan CSV. `pnpm test:web` menjalankan 104 tes
-Vitest. Keduanya berjalan di CI pada setiap push (jumlah per 4 Nov 2026).
+`pnpm test:api` menjalankan 136 tes, sebagian besar di basis data PostGIS sungguhan: ingest dan pengelompokan,
+penghentian saat server berhenti, jendela arsip, kotak piksel di tile, cache tile dan kedua gerbang, indikasi luas, FWI
+terhadap contoh musim yang diterbitkan, alur cuaca dengan data rekaman, batas panggilan angin, cakupan demo, proxy
+citra dan batasnya, cek lapangan tanpa sinyal, rekap, dan CSV. `pnpm test:web` menjalankan 186 tes Vitest, sebagian
+merender layar di happy-dom. Keduanya berjalan di CI pada setiap push (jumlah per 4 Nov 2026).
 
 ## Privasi
 
 - Nama pelapor, catatan, dan foto hanya terlihat oleh akun BPBD dan relawan yang masuk, tidak pernah oleh pengunjung;
   sesi demo hanya melihatnya pada laporan demo.
 - Foto disimpan ulang dan kehilangan metadata lokasinya. Posisi laporan hanya posisi yang dipilih pelapor untuk
-  dikirim; laporan demo hanya menyimpan jaraknya ke titik panas.
+  dikirim; laporan demo hanya menyimpan jarak yang dibulatkan ke titik panas.
+- Log permintaan API tidak menyimpan alamat pengunjung. Log akses server web menyimpan alamat, waktu, halaman, perujuk,
+  dan jenis peramban setiap permintaan selama 14 hari, untuk keamanan dan pemecahan masalah. Situs ini dilayani lewat
+  Cloudflare, yang juga memproses alamat IP untuk mengantar dan melindungi situs.
+- Tanpa cookie pelacak atau analitik, jadi tanpa banner cookie: satu-satunya cookie menjaga sesi setelah masuk.
+  Bahasa, filter, posisi GPS terakhir, data untuk dipakai tanpa sinyal, dan laporan yang belum terkirim tetap di
+  peramban.
 - Titik Api tidak menampilkan pemilik lahan atau perusahaan; kawasan industri hanya diberi label jenisnya.
 
 ## Penggunaan AI

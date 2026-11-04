@@ -5,7 +5,7 @@ Indonesia: the hotspot is matched to its village, the regional disaster agency s
 what the squad finds comes back to the agency.
 
 **[Open the app](https://titik-api.mrramdn.com)** ·
-[Replay the dry-season peak, 23 Oct 2026](https://titik-api.mrramdn.com/peta?tanggal=2026-10-23) ·
+[Replay the dry-season peak, 23 Oct 2026](https://titik-api.mrramdn.com/?tanggal=2026-10-23) ·
 [Try it as the agency](https://titik-api.mrramdn.com/dasbor?lihat=bpbd) ·
 [Try it as a volunteer](https://titik-api.mrramdn.com/tugas?lihat=mpa) ·
 [Bahasa Indonesia](README.id.md)
@@ -107,9 +107,19 @@ flowchart LR
   more than 90 minutes old, and the app shows a stale-data warning after two hours.
 - The database (with the archive) and the photos are backed up every night and restored into a throwaway container
   before a backup is kept. The demo accounts are reset at 03.00 WIB.
-- Third-party limits are enforced in code: the imagery proxy stops at 1,000,000 tiles per Esri billing cycle, 33,000
-  a day and 5,000 per visitor address a day, and falls back to Sentinel-2 cloudless; Open-Meteo is called in small,
-  paced batches.
+- Third-party limits are enforced in code. The imagery proxy stops at 1,000,000 tiles per Esri billing cycle, 33,000
+  a day and 5,000 per visitor address a day, keeps the last quarter of each day for visitors with fewer than 300 tiles
+  that day, and falls back to Sentinel-2 cloudless. Wind lookups stay within 60 Open-Meteo calls a minute and 2,000 a
+  day, of which lookups for older incidents may use half; the weather is fetched in small, paced blocks.
+- Every rate limit counts an IPv6 client by its /64. Two gates keep database connections free for sign-in, forms and
+  the health check: uncached map tiles run at most four queries at a time and the heavy reads (incident lists, counts,
+  village pages, the dashboard, the recap and the CSV) at most three, each with places per address (tiles also per
+  IPv6 /56). Requests for the same tile share one query, and a tile the map has cancelled leaves the line. Past the
+  limits a request gets 503 or 429 with `Retry-After`, and the app asks again by itself.
+- A deploy stops a running FIRMS ingest or weather update within seconds: the ingest rolls back and the next pull
+  fetches it again, the weather keeps the blocks it has saved. After a rollback to `joints-2026` and back, a check at
+  start-up moves what the old version wrote with the demo accounts back into the demo scope, including the fixed heat
+  sources its demo false alarms added.
 
 ## Run locally
 
@@ -150,17 +160,23 @@ settings in `.env.example`: Web Push keys (`npx web-push generate-vapid-keys`), 
 
 ## Tests
 
-`pnpm test:api` runs 92 tests, most against a real PostGIS database: ingest and clustering, the archive window, pixel
-boxes in tiles, the indicated area, the FWI against the published sample season, the weather pipeline with recorded
-fixtures, the demo scope, the imagery proxy and its caps, field checks without signal, the recap and the CSV.
-`pnpm test:web` runs 104 Vitest tests. Both run in CI on every push (counts as of 4 Nov 2026).
+`pnpm test:api` runs 136 tests, most against a real PostGIS database: ingest and clustering, stopping on shutdown, the
+archive window, pixel boxes in tiles, the tile cache and both gates, the indicated area, the FWI against the published
+sample season, the weather pipeline with recorded fixtures, the wind budget, the demo scope, the imagery proxy and its
+caps, field checks without signal, the recap and the CSV. `pnpm test:web` runs 186 Vitest tests, some rendering
+screens in happy-dom. Both run in CI on every push (counts as of 4 Nov 2026).
 
 ## Privacy
 
 - Reporter names, notes and photos are shown only to signed-in agency and volunteer accounts, never to visitors; a
   demo session sees them only on demo reports.
 - Photos are re-encoded and lose their location metadata. A report's position is only the one the reporter chose to
-  send; demo reports keep only the distance to the hotspot.
+  send; demo reports keep only a rounded distance to the hotspot.
+- The API's request log holds no visitor addresses. The web server's access log keeps the address, time, page,
+  referrer and browser of each request for 14 days, for security and troubleshooting. The site is served through
+  Cloudflare, which also processes addresses to deliver and protect it.
+- No tracking or analytics cookies, so no cookie banner: the only cookie keeps a signed-in session. Language, filters,
+  the last GPS fix, data for use without signal and unsent reports stay in the browser.
 - Titik Api does not show land owners or companies; industrial sites carry only their type.
 
 ## Use of AI
@@ -185,11 +201,14 @@ Code: MIT (see `LICENSE`). Third-party data keeps its own licence:
   System (FIRMS) (https://www.earthdata.nasa.gov/firms), part of NASA's Earth Science Data and Information System
   (ESDIS)." MODIS MCD14DL C6.1 NRT (doi:10.5067/FIRMS/MODIS/MCD14DL.NRT.0061).
 - **Daily satellite images:** NASA EOSDIS Global Imagery Browse Services (GIBS).
-- **Weather:** [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0); history from ERA5, contains modified Copernicus
-  Climate Change Service information 2026.
+- **Weather:** [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0); history from ERA5. Generated using or contains
+  modified Copernicus Climate Change Service information 2026. Neither the European Commission nor ECMWF is
+  responsible for any use that may be made of the Copernicus information or data it contains.
 - **Fire danger classes:** BMKG's published FWI classes (rendah 0–1, sedang 2–6, tinggi 7–13, sangat tinggi above 13).
 - **Village boundaries:** BPS through OCHA/HDX (CC BY-IGO). **Peat:** Global peatland extent, Global Nature Watch
   (CC BY 4.0). **Forest disturbance alerts:** UMD/GLAD, WUR via Global Nature Watch (CC BY 4.0).
 - **Settlements and industrial sites:** © OpenStreetMap contributors (ODbL). **Base map:** OpenFreeMap, © OpenMapTiles.
-- **Imagery:** Sentinel-2 cloudless 2023 by EOX IT Services GmbH (CC BY-NC-SA 4.0); Powered by Esri, World Imagery:
-  Esri, Vantor, Earthstar Geographics and the GIS User Community (the full provider list comes from the service).
+- **Imagery:** EOxCloudless [https://cloudless.eox.at](https://cloudless.eox.at) by
+  [EOX IT Services GmbH](https://eox.at) (Contains modified Copernicus Sentinel data 2023), CC BY-NC-SA 4.0. Powered
+  by Esri, World Imagery: Esri, Vantor, Earthstar Geographics and the GIS User Community (the full provider list comes
+  from the service).
