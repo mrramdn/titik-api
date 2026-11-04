@@ -1,5 +1,8 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultFilters, incidentQuery, type ArchiveDays, type FwiClass, type RegencyRiskDay, type Risk, type RiskDay } from '../api';
+import { RiskDays } from './RiskParts';
 import { ageClock, barHeights, busiestDay, inArchive, panelActions, tanggalFromSearch, windowStart, withTanggal } from './archive';
 import { dailyLayerFor } from './imagery';
 import { readConfig } from '../config';
@@ -8,7 +11,10 @@ import {
   imageryZoom, keepAttributionOpen, sentinelUnderEsri, tileUrls,
 } from './layers';
 import { clearedFilters } from './list';
-import { fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskDetail, riskFeatures, riskFill, riskLinkDay, riskOpacity, riskPath, riskText } from './risk';
+import {
+  fwiColors, fwiLabel, highDanger, highDangerName, partialText, regencyDays, riskAge, riskDayIndex, riskDayLabel, riskDetail, riskFeatures, riskFill, riskLinkDay,
+  riskOpacity, riskPath, riskText,
+} from './risk';
 
 const archive: ArchiveDays = {
   first: '2026-10-08', last: '2026-11-02',
@@ -247,29 +253,87 @@ describe('fire danger (FWI)', () => {
   });
 
   it('lists the regencies where high or above covers at least 10% of the area, the largest share first, then the mean FWI', () => {
-    expect(highDanger(risk, 1)).toEqual([
+    expect(highDanger(risk, '2026-11-04')).toEqual([
       { name: 'Pulang Pisau', province: 'Kalimantan Tengah', fwiClass: 'sangat_tinggi', share: 0.8, meanFwi: 14.2 },
       { name: 'Ogan Komering Ilir', province: 'Sumatera Selatan', fwiClass: 'sedang', share: 0.3, meanFwi: 6.1 },
       { name: 'Kapuas', province: 'Kalimantan Tengah', fwiClass: 'rendah', share: 0.3, meanFwi: 3.2 },
       { name: 'Banyuasin', province: 'Sumatera Selatan', fwiClass: 'rendah', share: 0.1, meanFwi: 2.3 },
     ]);
-    expect(highDanger(risk, 1, 'Sumatera Selatan').map(r => r.name)).toEqual(['Ogan Komering Ilir', 'Banyuasin']);
-    expect(highDanger(risk, 0).map(r => [r.name, r.share])).toEqual([['Ogan Komering Ilir', 0.6]]);
-    expect(highDanger(risk, 2).map(r => r.name)).toEqual(['Pulang Pisau']);
-    expect(highDanger(risk, 7)).toEqual([]);
-    expect(regencyDays(risk).get('Kalimantan Tengah/Pulang Pisau')!.fwiClass).toBe('sedang');
-    expect(regencyDays(risk, 1).get('Sumatera Selatan/Banyuasin')!.partial).toEqual({ fwiClass: 'tinggi', share: 0.1 });
-    expect(regencyDays({ ...risk, fetchedAt: null }).size).toBe(0);
-    expect(regencyDays(null).size).toBe(0);
+    expect(highDanger(risk, '2026-11-04', 'Sumatera Selatan').map(r => r.name)).toEqual(['Ogan Komering Ilir', 'Banyuasin']);
+    expect(highDanger(risk, '2026-11-03').map(r => [r.name, r.share])).toEqual([['Ogan Komering Ilir', 0.6]]);
+    expect(highDanger(risk, '2026-11-05').map(r => r.name)).toEqual(['Pulang Pisau']);
+    expect(highDanger(risk, '2026-11-10')).toEqual([]);
+    expect(regencyDays(risk, '2026-11-03').get('Kalimantan Tengah/Pulang Pisau')!.fwiClass).toBe('sedang');
+    expect(regencyDays(risk, '2026-11-04').get('Sumatera Selatan/Banyuasin')!.partial).toEqual({ fwiClass: 'tinggi', share: 0.1 });
+    expect(regencyDays({ ...risk, fetchedAt: null }, '2026-11-03').size).toBe(0);
+    expect(regencyDays(null, '2026-11-03').size).toBe(0);
+  });
+
+  it('finds a day by its date, not its place: a regency missing a day does not shift the next one into its slot', () => {
+    // Kapuas has 3 and 4 Nov; Katingan lacks 3 Nov (a failed weather request), so its first entry is 4 Nov.
+    const gap = { ...risk, regencies: [risk.regencies[3]!, regency('Katingan', 'Kalimantan Tengah', [area(1, 'tinggi', [0, 0.2, 0.8, 0], 9.6)])] };
+    expect(highDanger(gap, '2026-11-03')).toEqual([]);
+    expect(highDanger(gap, '2026-11-04').map(r => r.name)).toEqual(['Katingan', 'Kapuas']);
+    expect(regencyDays(gap, '2026-11-03').has('Kalimantan Tengah/Katingan')).toBe(false);
+    expect(regencyDays(gap, '2026-11-04').get('Kalimantan Tengah/Katingan')!.fwiClass).toBe('tinggi');
+  });
+
+  it('names each day of the switch by its date against today in WIB, so a kept copy never calls yesterday "today"', () => {
+    expect(['2026-11-03', '2026-11-04', '2026-11-05'].map(date => riskDayLabel(date, 'id', '2026-11-03'))).toEqual(['Hari ini', 'Besok', 'Lusa']);
+    expect(['2026-11-03', '2026-11-04', '2026-11-05'].map(date => riskDayLabel(date, 'en', '2026-11-03'))).toEqual(['Today', 'Tomorrow', 'In 2 days']);
+    // The same answer read two days later, offline: its first two days are past.
+    expect(['2026-11-03', '2026-11-04', '2026-11-05'].map(date => riskDayLabel(date, 'id', '2026-11-05'))).toEqual(['3 Nov', '4 Nov', 'Hari ini']);
+    expect(riskDayLabel('2026-10-31', 'id', '2026-11-01')).toBe('31 Okt');
+    expect(riskDayLabel('2026-12-31', 'en', '2026-12-29')).toBe('In 2 days');
+    expect(riskDayLabel('2027-01-01', 'en', '2026-12-31')).toBe('Tomorrow');
+    expect(riskDayIndex(risk, '2026-11-04')).toBe(1);
+    expect(riskDayIndex(risk, '2026-11-06')).toBe(-1);
+    expect(riskDayIndex({ ...risk, cells: [] }, '2026-11-04')).toBe(-1);
+  });
+
+  it('says how old the live forecast is once it passes 6 hours, never for an archive day', () => {
+    const at = (hours: number) => Date.parse('2026-11-03T04:10:00Z') + hours * 3_600_000;
+    expect(riskAge(risk, 'id', at(2))).toBeNull();
+    expect(riskAge(risk, 'id', at(6))).toBeNull();
+    expect(riskAge(risk, 'id', at(8.5))).toBe('Dihitung 8 jam lalu');
+    expect(riskAge(risk, 'en', at(8.5))).toBe('Computed 8 hours ago');
+    expect(riskAge(risk, 'id', at(30))).toBe('Dihitung 1 hari lalu');
+    expect(riskAge(risk, 'en', at(30))).toBe('Computed 1 day ago');
+    expect(riskAge(risk, 'en', at(50))).toBe('Computed 2 days ago');
+    expect(riskAge({ ...risk, archive: true }, 'id', at(500))).toBeNull();
+    expect(riskAge({ ...risk, fetchedAt: null }, 'id', at(50))).toBeNull();
+  });
+
+  it('shows the map\'s day switch by date with the forecast\'s age, from a copy kept two days ago', () => {
+    const days = (data: Risk, day = 0) => renderToStaticMarkup(createElement(RiskDays, { risk: { data, error: null, loading: false, reload() {} }, day, onDay() {} }));
+    vi.useFakeTimers();
+    try {
+      // 3 Nov 13.00 WIB, two hours after the run: today, tomorrow and the day after, no age.
+      vi.setSystemTime(new Date('2026-11-03T06:10:00Z'));
+      const fresh = days(risk);
+      expect([...fresh.matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['Hari ini', 'Besok', 'Lusa']);
+      expect(fresh).not.toContain('Dihitung');
+      // 5 Nov 09.00 WIB, offline: the same answer from the service worker.
+      vi.setSystemTime(new Date('2026-11-05T02:00:00Z'));
+      const kept = days(risk);
+      expect([...kept.matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map(match => match[1])).toEqual(['3 Nov', '4 Nov', 'Hari ini']);
+      expect(kept).toContain('<span>Dihitung 1 hari lalu</span>');
+      // The archive shows its date and no age.
+      const archived = days({ ...risk, archive: true, asOf: '2026-10-23', cells: risk.cells.map(cell => ({ ...cell, days: cell.days.slice(0, 1) })) });
+      expect(archived).toContain('23 Okt 2026');
+      expect(archived).not.toContain('Dihitung');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('names a regency with its share at high or above, and its class when that is high or very high', () => {
-    const [pulang, oki] = highDanger(risk, 1);
+    const [pulang, oki] = highDanger(risk, '2026-11-04');
     expect(highDangerName(pulang!, 'id')).toBe('Pulang Pisau 80%');
     expect(highDangerName(pulang!, 'en')).toBe('Pulang Pisau 80%');
     expect(highDangerName(oki!, 'id')).toBe('Ogan Komering Ilir 30%');
     expect(highDangerName(oki!, 'en')).toBe('Ogan Komering Ilir 30%');
-    expect(highDangerName(highDanger(risk, 0)[0]!, 'id')).toBe('Ogan Komering Ilir 60%');
+    expect(highDangerName(highDanger(risk, '2026-11-03')[0]!, 'id')).toBe('Ogan Komering Ilir 60%');
   });
 
   it('puts a regency on the card by its share at high or above, the same share its recap line gives', () => {
@@ -278,10 +342,10 @@ describe('fire danger (FWI)', () => {
     // Murung Raya, 24 July 2026: high or above covers 13.6%.
     const murung = regency('Murung Raya', 'Kalimantan Tengah', [area(0, 'rendah', [0.483, 0.381, 0.066, 0.07], 2.6, { fwiClass: 'tinggi', share: 0.136 })]);
     const july = { ...risk, regencies: [musi, murung] };
-    expect(highDanger(july, 0).map(r => [r.name, r.fwiClass, r.share])).toEqual([['Murung Raya', 'rendah', 0.136], ['Musi Rawas', 'sedang', 0.101]]);
-    expect(highDanger(july, 0).map(r => highDangerName(r, 'id'))).toEqual(['Murung Raya 14%', 'Musi Rawas 10%']);
-    expect(partialText(regencyDays(july).get('Kalimantan Tengah/Murung Raya')!.partial!, 'id')).toBe('tinggi atau lebih di 14% wilayah');
-    expect(partialText(regencyDays(july).get('Sumatera Selatan/Musi Rawas')!.partial!, 'id')).toBe('tinggi atau lebih di 10% wilayah');
+    expect(highDanger(july, '2026-11-03').map(r => [r.name, r.fwiClass, r.share])).toEqual([['Murung Raya', 'rendah', 0.136], ['Musi Rawas', 'sedang', 0.101]]);
+    expect(highDanger(july, '2026-11-03').map(r => highDangerName(r, 'id'))).toEqual(['Murung Raya 14%', 'Musi Rawas 10%']);
+    expect(partialText(regencyDays(july, '2026-11-03').get('Kalimantan Tengah/Murung Raya')!.partial!, 'id')).toBe('tinggi atau lebih di 14% wilayah');
+    expect(partialText(regencyDays(july, '2026-11-03').get('Sumatera Selatan/Musi Rawas')!.partial!, 'id')).toBe('tinggi atau lebih di 10% wilayah');
   });
 
   it('writes the recap\'s line for a higher class over part of a regency', () => {

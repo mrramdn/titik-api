@@ -4,23 +4,25 @@ import { ExternalLink } from 'lucide-react';
 import type { FwiClass, Risk, RiskDay } from '../api';
 import type { Loaded } from '../components/ui';
 import { OpenMeteoCredit } from '../components/OpenMeteo';
+import { todayWib } from '../components/bpbd/data';
 import { dict, useLang, useT } from '../i18n';
 import { useFormat } from '../format';
-import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiOpacity, fwiRange, riskDetail } from './risk';
+import { BMKG_FWI_URL, fwiClasses, fwiColors, fwiLabel, fwiOpacity, fwiRange, riskAge, riskDayLabel, riskDetail } from './risk';
 
 const text = dict({
   id: {
-    title: 'Bahaya kebakaran', days: 'Hari', today: 'Hari ini', tomorrow: 'Besok', after: 'Lusa',
+    title: 'Bahaya kebakaran', days: 'Hari',
     loading: 'Memuat bahaya kebakaran…', noWeather: 'Data cuaca belum tersedia.', legend: 'Bahaya kebakaran (FWI)',
     note: 'Dihitung dari data model Open-Meteo dengan sistem FWI dan kelas BMKG. Bukan produk resmi BMKG.', bmkg: 'Peta FWI resmi BMKG',
   },
   en: {
-    title: 'Fire danger', days: 'Day', today: 'Today', tomorrow: 'Tomorrow', after: 'In 2 days',
+    title: 'Fire danger', days: 'Day',
     loading: 'Loading fire danger…', noWeather: 'Weather data is not available yet.', legend: 'Fire danger (FWI)',
     note: 'Computed from Open-Meteo model data with the FWI system and BMKG classes. Not an official BMKG product.', bmkg: 'Official BMKG FWI map',
   },
 });
-const dayKeys = ['today', 'tomorrow', 'after'] as const;
+/** Live data: today and the two days after. */
+const LIVE_DAYS = 3;
 
 /** A swatch that looks like a grid cell on the map: the class colour at the layer's opacity, with an outline. */
 export const RiskSwatch = ({ fwiClass }: { fwiClass: FwiClass }) => (
@@ -28,26 +30,30 @@ export const RiskSwatch = ({ fwiClass }: { fwiClass: FwiClass }) => (
 );
 
 /**
- * Over the top left of the map while the layer is on: today, tomorrow or the day after for live data, the date alone
- * in the archive, or why there is nothing to show.
+ * Over the top left of the map while the layer is on: the live days, each named by its date ("Hari ini", "Besok" and
+ * "Lusa" only when it is that day), the date alone in the archive, or why there is nothing to show; then how old the
+ * forecast is once it passes 6 hours.
  */
 export function RiskDays({ risk, day, onDay }: { risk: Loaded<Risk>; day: number; onDay(day: number): void }) {
   const t = useT(text), f = useFormat();
+  const { lang } = useLang();
   const data = risk.data;
-  const count = Math.min(dayKeys.length, data?.cells[0]?.days.length ?? 0);
+  const days = data?.cells[0]?.days.slice(0, LIVE_DAYS) ?? [];
+  const age = data ? riskAge(data, lang) : null;
   let body: ReactNode;
   if (data && !data.fetchedAt) body = <span>{t('noWeather')}</span>;
-  else if (data && (data.archive || count < 2)) body = <span>{f.calendar(data.asOf)}</span>;
+  else if (data && (data.archive || days.length < 2)) body = <span>{f.calendar(data.archive ? data.asOf : days[0]?.date ?? data.asOf)}</span>;
   else if (data) {
+    const today = todayWib();
     body = (
       <div className="risk-seg" role="group" aria-label={t('days')}>
-        {dayKeys.slice(0, count).map((key, index) => (
-          <button key={key} type="button" className={day === index ? 'on' : ''} aria-pressed={day === index} onClick={() => onDay(index)}>{t(key)}</button>
+        {days.map((entry, index) => (
+          <button key={entry.date} type="button" className={day === index ? 'on' : ''} aria-pressed={day === index} onClick={() => onDay(index)}>{riskDayLabel(entry.date, lang, today)}</button>
         ))}
       </div>
     );
   } else body = <span>{risk.error ?? t('loading')}</span>;
-  return <div className="risk-days"><b>{t('title')}</b>{body}</div>;
+  return <div className="risk-days"><b>{t('title')}</b>{body}{age && <span>{age}</span>}</div>;
 }
 
 /** The legend section: BMKG's four classes, what the numbers are, and the official map. */

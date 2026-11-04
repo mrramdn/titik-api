@@ -7,6 +7,7 @@ import type { FwiClass, RegencyRiskDay, Risk, RiskDay } from '../api';
 import { dict, fill, type Lang } from '../i18n';
 import { formatter } from '../format';
 import { windName } from '../geo';
+import { shiftDate, todayWib } from '../components/bpbd/data';
 
 export const fwiClasses: FwiClass[] = ['rendah', 'sedang', 'tinggi', 'sangat_tinggi'];
 /**
@@ -31,19 +32,58 @@ export const riskText = dict({
     windValue: 'dari {dir}, {speed} km/jam', rain: 'Hujan 24 jam sampai 12.00', dry: 'Hari tanpa hujan', dryDays: '{n} hari',
     dcNote: 'DC di atas 400: kabut asap dari gambut jauh lebih sering (de Groot dkk. 2007)',
     partial: '{class} atau lebih di {p} wilayah', partialTop: '{class} di {p} wilayah',
+    today: 'Hari ini', tomorrow: 'Besok', after: 'Lusa',
+    ageHours: 'Dihitung {n} jam lalu', ageDay: 'Dihitung 1 hari lalu', ageDays: 'Dihitung {n} hari lalu',
   },
   en: {
     forecast: 'forecast', dc: 'Drought Code (DC)', temp: 'Temperature at 12:00', rh: 'Humidity at 12:00', wind: 'Wind at 12:00',
     windValue: 'from the {dir}, {speed} km/h', rain: 'Rain, 24 h to 12:00', dry: 'Days without rain', dryDays: '{n} days',
     dcNote: 'DC above 400: haze from peat is far more frequent (de Groot et al. 2007)',
     partial: '{class} or above in {p} of the area', partialTop: '{class} in {p} of the area',
+    today: 'Today', tomorrow: 'Tomorrow', after: 'In 2 days',
+    ageHours: 'Computed {n} hours ago', ageDay: 'Computed 1 day ago', ageDays: 'Computed {n} days ago',
   },
 });
+
+/**
+ * A fire danger day by its date (WIB, YYYY-MM-DD) against today's WIB date: "Hari ini", "Besok" or "Lusa" only when it
+ * really is that day, any other day by its short date ("2 Nov"). The service worker can answer GET /risk from a copy
+ * up to three days old, whose first day is no longer today.
+ */
+export function riskDayLabel(date: string, lang: Lang, today = todayWib()) {
+  const w = riskText[lang];
+  if (date === today) return w.today;
+  if (date === shiftDate(today, 1)) return w.tomorrow;
+  if (date === shiftDate(today, 2)) return w.after;
+  return formatter(lang).day(`${date}T12:00:00+07:00`);
+}
+
+/** Where a date sits among the grid's days, the order of the map's day switch (riskFeatures, RiskLink); -1 when it is not there. */
+export const riskDayIndex = (risk: Risk, date: string) => risk.cells[0]?.days.findIndex(day => day.date === date) ?? -1;
+
+/** The weather job runs every 3 hours, so a forecast over 6 hours old means missed runs, or a copy the service worker kept. */
+const STALE_MS = 6 * 3_600_000;
+
+/**
+ * "Dihitung 8 jam lalu" once the live forecast (fetchedAt) is more than 6 hours old; null while it is fresher, for an
+ * archive day (past days come from model analysis, whenever it was fetched), and before anything was computed.
+ */
+export function riskAge(risk: Pick<Risk, 'archive' | 'fetchedAt'>, lang: Lang, now = Date.now()) {
+  if (risk.archive || !risk.fetchedAt) return null;
+  const age = now - Date.parse(risk.fetchedAt);
+  if (!(age > STALE_MS)) return null;
+  const w = riskText[lang], hours = Math.floor(age / 3_600_000), days = Math.floor(hours / 24);
+  if (hours < 24) return fill(w.ageHours, { n: formatter(lang).num(hours) });
+  return days === 1 ? w.ageDay : fill(w.ageDays, { n: formatter(lang).num(days) });
+}
 
 /** GET /risk for live data (today and the next two days) or for one archive day. */
 export const riskPath = (tanggal: string) => (tanggal ? `/risk?tanggal=${tanggal}` : '/risk');
 
-/** Router state of a link that opens the map on live data with the fire danger layer on a given day (0 today). */
+/**
+ * Router state of a link that opens the map on live data with the fire danger layer on a given day: its place among
+ * the grid's days (riskDayIndex), 0 the first.
+ */
 export interface RiskLink { riskDay: number }
 export function riskLinkDay(state: unknown): number | null {
   const day = (state as Partial<RiskLink> | null)?.riskDay;
@@ -95,14 +135,15 @@ const HIGH_MIN = 100;
 export interface HighDanger { name: string; province: string; fwiClass: FwiClass; share: number; meanFwi: number }
 
 /**
- * Regencies where tinggi or sangat tinggi covers at least 10% of the area on a day (1 = tomorrow live), the largest
- * share first, then the highest mean FWI; `province` narrows to one province.
+ * Regencies where tinggi or sangat tinggi covers at least 10% of the area on the day dated `date` (WIB, YYYY-MM-DD),
+ * the largest share first, then the highest mean FWI; `province` narrows to one province. By date, not by position:
+ * a copy of GET /risk from an earlier day starts on that day, and a regency can lack a day its neighbours have.
  */
-export function highDanger(risk: Risk, dayIndex: number, province = ''): HighDanger[] {
+export function highDanger(risk: Risk, date: string, province = ''): HighDanger[] {
   return risk.regencies
     .filter(regency => !province || regency.province === province)
     .flatMap(regency => {
-      const day = regency.days[dayIndex];
+      const day = regency.days.find(entry => entry.date === date);
       const units = day ? Math.round((day.shares.tinggi + day.shares.sangat_tinggi) * 1000) : 0;
       return day && units >= HIGH_MIN ? [{ name: regency.name, province: regency.province, fwiClass: day.fwiClass, share: units / 1000, meanFwi: day.meanFwi }] : [];
     })
@@ -123,12 +164,12 @@ export function partialText(partial: NonNullable<RegencyRiskDay['partial']>, lan
   return fill(partial.fwiClass === 'sangat_tinggi' ? w.partialTop : w.partial, { class: fwiLabel[lang][partial.fwiClass].toLowerCase(), p: formatter(lang).percent(partial.share) });
 }
 
-/** Each regency's day (0 = the first day) by "province/name", for tables. Empty when nothing was computed. */
-export function regencyDays(risk: Risk | null | undefined, dayIndex = 0) {
+/** Each regency's day dated `date` (WIB, YYYY-MM-DD) by "province/name", for tables. Empty when nothing was computed for it. */
+export function regencyDays(risk: Risk | null | undefined, date: string) {
   const days = new Map<string, RegencyRiskDay>();
   if (!risk?.fetchedAt) return days;
   for (const regency of risk.regencies) {
-    const day = regency.days[dayIndex];
+    const day = regency.days.find(entry => entry.date === date);
     if (day) days.set(`${regency.province}/${regency.name}`, day);
   }
   return days;

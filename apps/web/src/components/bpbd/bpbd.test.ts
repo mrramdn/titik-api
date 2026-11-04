@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { Incident, Recap } from '../../api';
+import type { Incident, Recap, RegencyRiskDay, Risk, RiskDay } from '../../api';
 import type { HighDanger } from '../../map/risk';
 import { LANE_LIMIT, isDate, laneCount, laneOf, minutesBetween, regionOpenHigh, shiftDate, splitLanes, todayWib } from './data';
-import { dangerSummary } from './DangerCard';
+import { dangerCard, dangerSummary } from './DangerCard';
 import { longDate, recapText } from './recapText';
 import { villagesFor } from './VillageTable';
 
@@ -146,5 +146,38 @@ describe('tomorrow\'s fire danger card', () => {
   it('says so when high or above covers less than 10% of every regency', () => {
     expect(dangerSummary([], 'id')).toBe('Tidak ada kabupaten dengan bahaya tinggi atau lebih di sedikitnya 10% wilayahnya.');
     expect(dangerSummary([], 'en')).toBe('No regency has high or above danger in at least 10% of its area.');
+  });
+
+  // GET /risk on 3 Nov: Pulang Pisau high on 80% of its area on 4 Nov and on 60% on 5 Nov.
+  const shares = (high: number) => ({ rendah: 1 - high, sedang: 0, tinggi: high, sangat_tinggi: 0 });
+  const regencyDay = (date: string, high: number): RegencyRiskDay => ({ date, forecast: true, fwiClass: high >= 0.5 ? 'tinggi' : 'rendah', shares: shares(high), partial: null, meanFwi: 9 });
+  const cellDay = (date: string) => ({ date, forecast: true, fwiClass: 'tinggi', codes: { ffmc: 88, dmc: 60, dc: 500, isi: 6, bui: 95, fwi: 9 },
+    noon: { tempC: 33, rhPct: 50, windKmh: 12, windFromDeg: 90, rain24hMm: 0 }, dryDays: 10 }) as RiskDay;
+  const dates = ['2026-11-03', '2026-11-04', '2026-11-05'];
+  const risk: Risk = {
+    asOf: '2026-11-03', archive: false, fetchedAt: '2026-11-03T04:10:00Z', cellSize: 0.5,
+    cells: [{ lon: 114, lat: -2.5, days: dates.map(cellDay) }],
+    regencies: [{ name: 'Pulang Pisau', province: 'Kalimantan Tengah', center: [114, -2.5], peatShare: 0.6, days: dates.map((date, index) => regencyDay(date, [0, 0.8, 0.6][index]!)) }],
+  };
+  const soon = Date.parse('2026-11-03T06:00:00Z');
+
+  it('reads the day dated tomorrow and links the map to it', () => {
+    expect(dangerCard(risk, '', 'id', '2026-11-03', soon)).toEqual({
+      summary: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Pulang Pisau 80%.', age: null, link: { riskDay: 1 },
+    });
+    expect(dangerCard(risk, 'Sumatera Selatan', 'en', '2026-11-03', soon).summary).toBe('No regency has high or above danger in at least 10% of its area.');
+  });
+
+  it('reads tomorrow from a copy kept a day ago by its date, and says how old it is', () => {
+    // The 3 Nov answer read on 4 Nov 10.00 WIB: tomorrow is 5 Nov, the third day, not the second.
+    const card = dangerCard(risk, '', 'id', '2026-11-04', Date.parse('2026-11-04T03:00:00Z'));
+    expect(card).toEqual({ summary: 'Tinggi atau lebih di 1 kabupaten, menurut bagian wilayahnya: Pulang Pisau 60%.', age: 'Dihitung 22 jam lalu', link: { riskDay: 2 } });
+  });
+
+  it('says plainly when there is no forecast for tomorrow, without a link to the map', () => {
+    const late = Date.parse('2026-11-05T03:00:00Z');
+    expect(dangerCard(risk, '', 'id', '2026-11-05', late)).toEqual({ summary: 'Prakiraan untuk besok belum ada.', age: 'Dihitung 1 hari lalu', link: null });
+    expect(dangerCard(risk, '', 'en', '2026-11-05', late).summary).toBe('There is no forecast for tomorrow yet.');
+    expect(dangerCard({ ...risk, fetchedAt: null, cells: [], regencies: [] }, '', 'id', '2026-11-03', soon)).toEqual({ summary: 'Data cuaca belum tersedia.', age: null, link: null });
   });
 });

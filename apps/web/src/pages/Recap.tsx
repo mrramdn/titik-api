@@ -74,9 +74,10 @@ function RecapView() {
   const setDate = (value: string) => setParams(isDate(value) && value < today ? { date: value } : {}, { replace: true });
   const recap = useLoad<Recap>(`/recap?date=${date}${query}`, version);
   // That date's fire danger per regency: today's forecast, or the archive day. Without it (an older server, a date the
-  // weather archive does not hold, nothing computed yet) the column stays away.
+  // weather archive does not hold, nothing computed yet) the column stays away. The day is found by its date: a copy
+  // of the live answer that the service worker kept from an earlier day starts on that day, not on today.
   const risk = useLoad<Risk>(riskPath(date === today ? '' : date), version);
-  const danger = useMemo(() => regencyDays(risk.data, 0), [risk.data]);
+  const danger = useMemo(() => regencyDays(risk.data, date), [risk.data, date]);
   const place = province || t('both');
   const data = recap.data;
   const totals = data?.totals;
@@ -87,7 +88,7 @@ function RecapView() {
   const dangerShown = danger.size > 0 && (data?.regencies ?? []).some(row => danger.has(`${row.province}/${row.name}`));
   const share = () => {
     if (!data) return;
-    const high = risk.data?.fetchedAt ? highDanger(risk.data, 0, province) : [];
+    const high = risk.data?.fetchedAt ? highDanger(risk.data, date, province) : [];
     void shareText(recapText({ ...data, date }, lang, place, `${location.origin}/rekap?date=${date}`, high));
   };
 
