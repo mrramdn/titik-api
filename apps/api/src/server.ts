@@ -10,7 +10,7 @@ await app.listen({ port: Number(process.env.PORT ?? 3000), host: process.env.HOS
 // An empty database gets its week of satellite history and the demo accounts after the server is up, so the
 // health check passes while FIRMS downloads. Production seeds only when SEED_DEMO=true.
 const seedDemo = process.env.SEED_DEMO === 'true' || (!process.env.SEED_DEMO && process.env.NODE_ENV !== 'production');
-let stop = () => {};
+let stop = async () => {};
 let stopWeather = async () => {};
 (async () => {
   if (seedDemo) {
@@ -30,10 +30,10 @@ let stopWeather = async () => {};
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, async () => {
-    stop();
-    // app.close() waits for every database client. A weather run under way lets go of its own at its next request,
-    // pause or save: up to 5 s for that, well inside the 10 s Docker gives before it kills the process.
-    await Promise.race([stopWeather(), new Promise(resolve => setTimeout(resolve, 5_000))]);
+    // app.close() waits for every database client. A FIRMS ingest under way lets go of its own once its download is cut
+    // off or its transaction rolled back, a weather run at its next request, pause or save: up to 5 s for both together,
+    // well inside the 10 s Docker gives before it kills the process. The server answers meanwhile.
+    await Promise.race([Promise.all([stop(), stopWeather()]), new Promise(resolve => setTimeout(resolve, 5_000))]);
     await app.close();
     process.exit(0);
   });

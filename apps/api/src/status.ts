@@ -92,6 +92,13 @@ async function satelliteStats(pool: pg.Pool): Promise<Stats> {
 export const DATA_STALE_MINUTES = 90;
 
 /**
+ * The error of an ingest run that a stop (a deploy or restart) cut short. It saved nothing, so it is no success, and it
+ * did not finish its check of FIRMS, so it is no failed check either: the status leaves it out, as it left out a run
+ * that never finished.
+ */
+export const STOPPED_RUN = 'Dihentikan karena server berhenti sebelum selesai. Pengambilan berikutnya mengulanginya.';
+
+/**
  * When the last successful live ingest run finished, and how many whole minutes ago by the database clock; both null
  * before the first one. Snapshot and fixture runs do not count, as their data is not current. Runs never overlap (an
  * advisory lock), so the highest id is the latest.
@@ -115,7 +122,7 @@ export function installStatus(app: FastifyInstance, pool: pg.Pool) {
   app.get('/api/v1/ingest/status', async () => {
     const now = new Date();
     const runs = await pool.query(`SELECT id, started_at, finished_at, source, feeds, fetched, in_area, inserted, incidents_touched, error
-      FROM ingest_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 5`);
+      FROM ingest_runs WHERE finished_at IS NOT NULL AND error IS DISTINCT FROM $1 ORDER BY id DESC LIMIT 5`, [STOPPED_RUN]);
     const success = (await pool.query('SELECT max(id) AS id FROM ingest_runs WHERE finished_at IS NOT NULL AND error IS NULL')).rows[0]?.id;
     const { lastSuccessAt } = await lastSuccess(pool);
     const stats = await satelliteStats(pool);

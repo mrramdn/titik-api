@@ -10,7 +10,7 @@ import { clearTileCache, footprintSql, refreshVerificationSummary } from './inci
 import { migrate } from './migrate.js';
 import { loadPeatMask, type PeatMask } from './peat.js';
 import { dataDir, loadReference } from './reference.js';
-import { clearStatusCache } from './status.js';
+import { clearStatusCache, STOPPED_RUN } from './status.js';
 
 export type Source = 'live' | 'snapshot' | 'fixture';
 /** One line per satellite and run. `latest` is the newest detection inside the area, `latestAll` the newest in the whole file. */
@@ -20,11 +20,20 @@ export interface NewAlert { id: string; userId: string; incidentId: string; fres
 export interface IngestResult {
   /** `incidents` gained or lost detections in this run; `alerts` are the ones worth a notification (see ingest). */
   runId: number | null; skipped: boolean; fetched: number; inArea: number; inserted: number; incidents: string[]; alerts: NewAlert[]; feeds: FeedReport[];
+  /** A stop cut the run short: it saved nothing, and its row says so (STOPPED_RUN). */
+  stopped: boolean;
   /** Milliseconds per step, for the logs. */
   timings?: Record<string, number>;
 }
 /** `texts` (fixture source) holds one CSV per feed id: N21, N20, N, MODIS. */
-export interface IngestOptions { source: Source; range?: '24h' | '7d'; texts?: Record<string, string>; peat: PeatMask; fetchImpl?: typeof fetch; now?: Date }
+export interface IngestOptions {
+  source: Source; range?: '24h' | '7d'; texts?: Record<string, string>; peat: PeatMask; fetchImpl?: typeof fetch; now?: Date;
+  /**
+   * Stops the run, as a deploy does: a download under way is cut off and the feeds after it are not asked for, and a run
+   * already saving rolls back. Either way the lock and the database client are let go and the run returns `stopped`.
+   */
+  signal?: AbortSignal;
+}
 
 const LOCK = 4157_2026;
 const codeAlphabet = '23456789abcdefghjkmnpqrstuvwxyz';
@@ -47,9 +56,10 @@ async function readFeeds(options: IngestOptions) {
   let fetched = 0;
   for (const feed of feeds) {
     if (!feedActive(feed, now)) continue;
+    if (options.signal?.aborted) break;
     try {
       const text = options.source === 'fixture' ? options.texts?.[feed.id] ?? ''
-        : options.source === 'snapshot' ? await snapshotFeed(feed, range, dataDir()) : await fetchFeed(feed, range, options.fetchImpl);
+        : options.source === 'snapshot' ? await snapshotFeed(feed, range, dataDir()) : await fetchFeed(feed, range, options.fetchImpl, options.signal);
       const parsed = text ? parseFirmsCsv(text) : { rows: [], total: 0, totals: {}, latest: {} } as ReturnType<typeof parseFirmsCsv>;
       fetched += parsed.total;
       for (const satellite of feed.satellites) {
@@ -60,6 +70,8 @@ async function readFeeds(options: IngestOptions) {
           latestAll: parsed.latest[satellite]?.toISOString() ?? null, error: null });
       }
     } catch (error) {
+      // A download cut off by a stop is no failure of FIRMS: the run ends here.
+      if (options.signal?.aborted) break;
       for (const satellite of feed.satellites) reports.push({ satellite, rows: 0, inArea: 0, latest: null, latestAll: null, error: (error as Error).message });
     }
   }
@@ -397,12 +409,21 @@ export async function alertSubscribers(client: pg.PoolClient | pg.Pool, ids: str
 const highOnes = async (client: pg.PoolClient, ids: string[]) =>
   new Set((await client.query(`SELECT id FROM incidents WHERE id = ANY($1::uuid[]) AND level = 'tinggi'`, [ids])).rows.map(row => row.id as string));
 
+/** Ends an ingest whose signal asked it to stop. */
+class Stopped extends Error {}
+
 export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<IngestResult> {
+  const { signal } = options;
+  const none: IngestResult = { runId: null, skipped: false, stopped: false, fetched: 0, inArea: 0, inserted: 0, incidents: [], alerts: [], feeds: [] };
+  if (signal?.aborted) return { ...none, stopped: true };
   const client = await pool.connect();
   try {
-    if (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])).rows[0].ok) {
-      return { runId: null, skipped: true, fetched: 0, inArea: 0, inserted: 0, incidents: [], alerts: [], feeds: [] };
-    }
+    const lock = (await client.query('SELECT pg_try_advisory_lock($1) AS ok, pg_backend_pid() AS pid', [LOCK])).rows[0];
+    if (!lock.ok) return { ...none, skipped: true };
+    // A run is under way only while it holds the lock, so a row still open now was left by a process that was killed
+    // before it could close it (by Docker after a slow stop, or out of memory): it is closed as stopped, at the time it
+    // is found.
+    await client.query('UPDATE ingest_runs SET finished_at = now(), error = $1 WHERE finished_at IS NULL', [STOPPED_RUN]);
     const run = await client.query('INSERT INTO ingest_runs (source) VALUES ($1) RETURNING id', [options.source]);
     const runId = Number(run.rows[0].id);
     const timings: Record<string, number> = {};
@@ -410,10 +431,28 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
     const lap = (step: string) => { const now = performance.now(); timings[step] = Math.round(now - mark); mark = now; };
     const { rows, reports, fetched } = await readFeeds(options);
     lap('fetch');
+    // A stopped run saves nothing, and its row is closed as stopped rather than left looking as if it still ran.
+    const stopped = async (): Promise<IngestResult> => {
+      await client.query('UPDATE ingest_runs SET finished_at = now(), feeds = $2, error = $3 WHERE id = $1', [runId, JSON.stringify(reports), STOPPED_RUN]);
+      return { ...none, runId, stopped: true, fetched, inArea: rows.length, feeds: reports, timings };
+    };
+    if (signal?.aborted) return await stopped();
+    // From here a stop cancels the statement under way, and any that starts before the run notices, then the run rolls
+    // back: in a fire season a run inserts thousands of detections and one statement can take 10 s, longer than a deploy
+    // waits. The run waits for every cancel to reach the server before it rolls back, so none can cut short a statement
+    // after that, nor one of whoever has the client next.
+    let cancels = Promise.resolve();
+    let again: NodeJS.Timeout | undefined;
+    const cancel = () => { cancels = cancels.then(() => pool.query('SELECT pg_cancel_backend($1)', [lock.pid])).then(() => {}, () => {}); };
+    const onStop = () => { cancel(); again = setInterval(cancel, 250); };
+    const quiet = async () => { signal?.removeEventListener('abort', onStop); clearInterval(again); await cancels; };
+    const check = () => { if (signal?.aborted) throw new Stopped(); };
+    signal?.addEventListener('abort', onStop, { once: true });
     try {
       await client.query('BEGIN');
       const insertedIds: string[] = [];
       for (let start = 0; start < rows.length; start += 2000) {
+        check();
         const batch = rows.slice(start, start + 2000);
         const inserted = await client.query(`INSERT INTO detections (satellite, acq_at, latitude, longitude, geom, geom_m, geom_3857, confidence, confidence_pct, frp,
               bright_ti4, bright_ti5, scan, track, daynight, on_peat)
@@ -429,6 +468,7 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
         insertedIds.push(...inserted.rows.map(row => String(row.id)));
       }
       lap('insert');
+      check();
       const state: RunState = { claimed: new Set(), deleted: new Set(), touched: new Set() };
       let days: string[] = [];
       // Fresh statistics, or the planner may scan instead of using the spatial index for every detection below.
@@ -441,9 +481,11 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
             WHERE ST_DWithin(s.geom, d.geom, $2::float8) AND (s.expires_at IS NULL OR s.expires_at > d.acq_at)
               AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))`, [insertedIds, reach]);
         lap('villages');
+        check();
         // Only detections inside the covered villages become incidents; the rest stay on the map as context.
         days = await clusterDays(client, insertedIds, state);
         lap('cluster');
+        check();
       }
       const incidents = [...state.touched].filter(id => !state.deleted.has(id));
       // A 7-day pull rescores every incident of the days it touched, so a change of rules reaches all of them.
@@ -451,6 +493,7 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
       const wasHigh = await highOnes(client, incidents);
       await refreshIncidents(client, rescore);
       lap('refresh');
+      check();
       // Every incident that gained detections moves up its watchers' inboxes. A notification goes out only for a new
       // alert or for an incident that has just become high priority, so a fire seen on every pass does not ring each time.
       const nowHigh = await highOnes(client, incidents);
@@ -459,12 +502,18 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
       await client.query(`UPDATE ingest_runs SET finished_at = now(), feeds = $2, fetched = $3, in_area = $4, inserted = $5, incidents_touched = $6,
         error = $7 WHERE id = $1`, [runId, JSON.stringify(reports), fetched, rows.length, insertedIds.length, rescore.length,
         reports.length && reports.every(report => report.error) ? 'Semua sumber FIRMS gagal diambil. Data terakhir tetap tampil.' : null]);
+      // Once COMMIT is on its way the run finishes; a stop after this waits for it.
+      await quiet();
+      check();
       await client.query('COMMIT');
       if (insertedIds.length) clearTileCache();
       clearStatusCache();
-      return { runId, skipped: false, fetched, inArea: rows.length, inserted: insertedIds.length, incidents, alerts, feeds: reports, timings };
+      return { runId, skipped: false, stopped: false, fetched, inArea: rows.length, inserted: insertedIds.length, incidents, alerts, feeds: reports, timings };
     } catch (error) {
+      const wasStopped = error instanceof Stopped || Boolean(signal?.aborted);
+      await quiet();
       await client.query('ROLLBACK');
+      if (wasStopped) return await stopped();
       await client.query('UPDATE ingest_runs SET finished_at = now(), feeds = $2, error = $3 WHERE id = $1', [runId, JSON.stringify(reports), (error as Error).message]);
       clearStatusCache();
       throw error;
@@ -476,11 +525,11 @@ export async function ingest(pool: pg.Pool, options: IngestOptions): Promise<Ing
 }
 
 /** A live pull; when FIRMS cannot be reached and the database is still empty, the committed snapshot instead. */
-export async function ingestWithFallback(pool: pg.Pool, peat: PeatMask, range: '24h' | '7d' = '24h') {
-  const live = await ingest(pool, { source: 'live', range, peat });
-  if (live.skipped || live.feeds.some(feed => !feed.error)) return live;
+export async function ingestWithFallback(pool: pg.Pool, peat: PeatMask, range: '24h' | '7d' = '24h', options: Pick<IngestOptions, 'signal' | 'fetchImpl'> = {}) {
+  const live = await ingest(pool, { source: 'live', range, peat, ...options });
+  if (live.skipped || live.stopped || live.feeds.some(feed => !feed.error)) return live;
   const empty = !(await pool.query('SELECT 1 FROM detections LIMIT 1')).rowCount;
-  return empty ? ingest(pool, { source: 'snapshot', range: '7d', peat }) : live;
+  return empty ? ingest(pool, { source: 'snapshot', range: '7d', peat, signal: options.signal }) : live;
 }
 
 // pnpm ingest [live|snapshot] [24h|7d] pulls FIRMS; pnpm ingest refresh [days] rescores recent incidents;

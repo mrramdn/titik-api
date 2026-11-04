@@ -91,8 +91,11 @@ export function parseFirmsCsv(text: string, boxes: readonly Box[] = areaBoxes) {
   return { rows, total, totals, latest };
 }
 
-export async function fetchFeed(feed: Feed, range: '24h' | '7d', fetchImpl: typeof fetch = fetch) {
-  const response = await fetchImpl(feedUrl(feed, range), { signal: AbortSignal.timeout(60_000), headers: { 'user-agent': 'titik-api (hackathon prototype)' } });
+/** One FIRMS file, given up after 60 s; `signal` (a stop) cuts the download short as well. */
+export async function fetchFeed(feed: Feed, range: '24h' | '7d', fetchImpl: typeof fetch = fetch, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(60_000);
+  const response = await fetchImpl(feedUrl(feed, range), { signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+    headers: { 'user-agent': 'titik-api (hackathon prototype)' } });
   if (!response.ok) throw new Error(`FIRMS ${feed.id} ${range}: HTTP ${response.status}`);
   return response.text();
 }
