@@ -116,8 +116,11 @@ describe('the About page', () => {
     }
   });
 
-  it('says in its privacy section what the web server logs, why, and that it deletes it after 14 days', () => {
-    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Server web mencatat alamat IP dan alamat yang diakses pada setiap permintaan, untuk keamanan dan untuk membatasi beban, lalu menghapus catatan itu secara otomatis setelah 14 hari.');
-    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The web server records the IP address and the requested address of each request, for security and load limits, and deletes these records automatically after 14 days.');
+  it('says in its privacy section what the web server\'s log keeps, why, that it goes after 14 days, and that Cloudflare also sees addresses', () => {
+    // What nginx's combined log format keeps: address, time, request, referrer and user agent.
+    expect(textOf(render(createElement(AboutDoc), 'id'))).toContain('Server web mencatat alamat IP, waktu, halaman yang dibuka, perujuk, dan jenis peramban pada setiap permintaan, '
+      + 'untuk keamanan dan pemecahan masalah, lalu menghapus catatan itu otomatis setelah 14 hari. Situs ini dilayani lewat Cloudflare, yang juga memproses alamat IP untuk mengantar dan melindungi situs.');
+    expect(textOf(render(createElement(AboutDoc), 'en'))).toContain('The web server records the IP address, time, requested page, referring page and browser of each request, '
+      + 'for security and troubleshooting, and deletes these records automatically after 14 days. The site is served through Cloudflare, which also processes IP addresses to deliver and protect it.');
   });
 });
