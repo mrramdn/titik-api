@@ -100,7 +100,7 @@ test('the daily recap and the CSV export leave the indicated areas out: added up
   assert.doesNotMatch(header, /luas|area|ha\b/, 'the export follows the groundcheck form; an area there would read as burned area');
 });
 
-test('a rescore of recent days (the backfill after a deploy) waits for a running ingest and holds the ingest lock while it works', async () => {
+test('a rescore of recent days (the backfill after a deploy) waits for a running ingest or another rescore, and holds the ingest lock while it works', async () => {
   const INGEST_LOCK = 41572026;
   // The ingest lock in this database: how many sessions hold it and how many wait for it.
   const lock = async () => (await pool.query(`SELECT count(*) FILTER (WHERE granted)::int AS held, count(*) FILTER (WHERE NOT granted)::int AS waiting
@@ -109,13 +109,16 @@ test('a rescore of recent days (the backfill after a deploy) waits for a running
     for (let tries = 0; !(await ok()); tries++) { assert.ok(tries < 250, what); await new Promise(resolve => setTimeout(resolve, 20)); }
   };
   const peat = { isPeat: () => false };
+  // What the command line shows while it waits: true whichever of them holds the lock.
+  const waitLine = 'An ingest or another rescore is running. Rescoring starts when it has finished.';
   const ingestRun = await pool.connect(), rowHolder = await pool.connect();
   try {
     await ingestRun.query('SELECT pg_advisory_lock($1)', [INGEST_LOCK]);
-    let waited = false, done = false;
-    const rescoring = refreshRecent(pool, 8, () => { waited = true; }).then(count => { done = true; return count; });
+    const said: string[] = [];
+    let done = false;
+    const rescoring = refreshRecent(pool, 8, message => { said.push(message); }).then(count => { done = true; return count; });
     await until('the rescore waits for the ingest lock', async () => (await lock()).waiting === 1);
-    assert.deepEqual([waited, done], [true, false], 'it waits instead of giving up');
+    assert.deepEqual([said, done], [[waitLine], false], 'it waits instead of giving up');
     // A row lock on one of its incidents holds the rescore at its first update once it has the lock.
     await rowHolder.query('BEGIN');
     await rowHolder.query('SELECT id FROM incidents WHERE id = $1 FOR UPDATE', [incidents.A]);
@@ -123,8 +126,14 @@ test('a rescore of recent days (the backfill after a deploy) waits for a running
     await until('the rescore takes the ingest lock', async () => { const now = await lock(); return now.held === 1 && now.waiting === 0; });
     assert.equal((await ingest(pool, { source: 'fixture', texts: {}, peat })).skipped, true, 'an ingest that starts meanwhile is skipped');
     assert.equal(done, false);
+    // A second rescore started now waits for the first, and says the same.
+    const saidToo: string[] = [];
+    const second = refreshRecent(pool, 8, message => { saidToo.push(message); });
+    await until('the second rescore waits for the first', async () => { const now = await lock(); return now.held === 1 && now.waiting === 1; });
+    assert.deepEqual(saidToo, [waitLine]);
     await rowHolder.query('ROLLBACK');
     assert.equal(await rescoring, 8, 'A to H: detected within the last 8 days');
+    assert.equal(await second, 8);
     assert.deepEqual(await lock(), { held: 0, waiting: 0 }, 'and lets go of the lock');
   } finally {
     ingestRun.release();

@@ -328,14 +328,16 @@ async function refreshIndicatedArea(client: pg.PoolClient | pg.Pool, ids: string
 
 /**
  * Rescores every incident detected in the last `days` WIB days and recomputes its indicated area, for example after
- * the scoring rules change. It holds the ingest lock while it works: it waits for an ingest that is running (`onWait`
- * hears of it) rather than give up, and an ingest that starts meanwhile is skipped, as when two ingests meet.
+ * the scoring rules change. It holds the ingest lock while it works: it waits for an ingest or another rescore that holds
+ * it (`onWait` hears of it, in a line to show) rather than give up, and an ingest that starts meanwhile is skipped, as
+ * when two ingests meet.
  */
-export async function refreshRecent(pool: pg.Pool, days = 8, onWait?: () => void) {
+export async function refreshRecent(pool: pg.Pool, days = 8, onWait?: (message: string) => void) {
   const client = await pool.connect();
   try {
     if (!(await client.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])).rows[0].ok) {
-      onWait?.();
+      // An ingest, a recluster or another refresh: each holds the same lock.
+      onWait?.('An ingest or another rescore is running. Rescoring starts when it has finished.');
       await client.query('SELECT pg_advisory_lock($1)', [LOCK]);
     }
     try {
@@ -540,7 +542,7 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     await migrate(pool);
     await loadReference(pool);
     if (process.argv[2] === 'refresh') {
-      const rescored = await refreshRecent(pool, Number(process.argv[3] ?? 8), () => console.log('An ingest is running. Rescoring starts when it has finished.'));
+      const rescored = await refreshRecent(pool, Number(process.argv[3] ?? 8), message => console.log(message));
       console.log(`Rescored ${rescored} incidents.`);
     } else if (process.argv[2] === 'recluster') {
       const result = await recluster(pool, Number(process.argv[3] ?? 8));
