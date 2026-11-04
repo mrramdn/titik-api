@@ -6,9 +6,9 @@ import { LevelBadge, RouteButton, ScoreRows, StatusLine, shareText, useApi, useD
 import { useWind, WindFacts } from '../components/incident/Wind';
 import { smokeSentence } from '../components/incident/wind';
 import { areaText, indicatedArea } from '../components/incident/area';
-import { dict, useLang, useT, type Vars } from '../i18n';
+import { dict, fill, useLang, useT, type Lang, type Vars } from '../i18n';
 import { satelliteName, sensorOf } from '../i18n/common';
-import { useFormat, type Format } from '../format';
+import { formatter, useFormat, type Format } from '../format';
 import { panelActions } from '../map/archive';
 import { MAP_PATH } from '../routes';
 import { useSession } from '../session';
@@ -22,7 +22,7 @@ const text = dict({
     check: 'Cek lapangan', share: 'Bagikan ke WhatsApp', villagePage: 'Halaman desa', history: 'Riwayat', detections: 'Titik panas ({n})',
     detected: 'Terdeteksi {satellite}, {n} titik panas', detectedNoCount: 'Terdeteksi {satellite}', assigned: 'Ditugaskan ke {who}', assignedNoWho: 'Ditugaskan ke regu MPA',
     enroute: '{who} menuju lokasi', enrouteNoWho: 'Regu MPA menuju lokasi', checked: 'Dicek di lapangan.', checkedBy: 'Dicek oleh {who}.', placeDir: '{dir} {name}',
-    cancelled: 'Tugas dibatalkan', demo: 'akun demo', distance: '{km} dari titik panas', photo: 'Foto cek lapangan',
+    cancelled: 'Tugas dibatalkan', demo: 'akun demo', distance: '{km} dari titik panas', distanceDemo: 'sekitar {km} dari titik panas', photo: 'Foto cek lapangan',
     privateNote: 'Catatan, foto, dan nama pelapor terlihat setelah masuk.',
     demoPrivateNote: 'Catatan, foto, dan nama pelapor dari akun nyata tidak tampil untuk akun demo.', colTime: 'WIB', colSatellite: 'Satelit', colSensor: 'Sensor',
     colConfidence: 'Keyakinan', colFrp: 'FRP (MW)', moreRows: '{n} titik panas lainnya tidak ditampilkan.', last: 'Titik panas terakhir {ago}.',
@@ -37,7 +37,7 @@ const text = dict({
     check: 'Field check', share: 'Share to WhatsApp', villagePage: 'Village page', history: 'History', detections: 'Hotspots ({n})',
     detected: 'Detected by {satellite}, {n} hotspots', detectedNoCount: 'Detected by {satellite}', assigned: 'Assigned to {who}', assignedNoWho: 'Assigned to an MPA team',
     enroute: '{who} on the way', enrouteNoWho: 'MPA team on the way', checked: 'Checked in the field.', checkedBy: 'Checked by {who}.', placeDir: '{dir} of {name}',
-    cancelled: 'Task cancelled', demo: 'demo account', distance: '{km} from the hotspot', photo: 'Field check photo',
+    cancelled: 'Task cancelled', demo: 'demo account', distance: '{km} from the hotspot', distanceDemo: 'about {km} from the hotspot', photo: 'Field check photo',
     privateNote: 'Notes, photos and reporter names are visible after signing in.',
     demoPrivateNote: 'Notes, photos and reporter names from real accounts are not shown to demo accounts.', colTime: 'WIB', colSatellite: 'Satellite', colSensor: 'Sensor',
     colConfidence: 'Confidence', colFrp: 'FRP (MW)', moreRows: '{n} more hotspots not shown.', last: 'Last hotspot {ago}.',
@@ -104,6 +104,16 @@ function settlementFact(d: IncidentDetail, t: T, f: Format) {
   if (meters === null) return <b>{t('unknown')}</b>;
   const sameSpot = place && Math.abs(place.distanceM - meters) < 50;
   return <><b>{f.km(meters)}</b>{place && <small>{sameSpot ? t('placeDir', { dir: f.wind(place.bearingDeg), name: place.name }) : f.place(place)}</small>}</>;
+}
+
+/**
+ * "1,2 km dari titik panas" for a field check. A demo check's distance is approximate ("sekitar 100 km"): the server
+ * keeps the incident's centre instead of a demo visitor's position and rounds the distance to one significant figure,
+ * never finer than 100 m, so that a few checks cannot place the visitor.
+ */
+export function checkDistance(check: Pick<Verification, 'distanceMeters' | 'demo'>, lang: Lang) {
+  if (check.distanceMeters === null || check.distanceMeters === undefined) return null;
+  return fill(text[lang][check.demo ? 'distanceDemo' : 'distance'], { km: formatter(lang).km(check.distanceMeters) });
 }
 
 export function IncidentPanel() {
@@ -186,7 +196,7 @@ export function IncidentPanel() {
                 <time dateTime={event.at}>{stamp(event.at)}</time>
                 <div>
                   <span>{eventText(event, t, f)}{event.demo ? ` (${t('demo')})` : ''}</span>
-                  {check?.distanceMeters !== null && check?.distanceMeters !== undefined && <small>{t('distance', { km: f.km(check.distanceMeters) })}</small>}
+                  {check?.distanceMeters !== null && check?.distanceMeters !== undefined && <small>{checkDistance(check, lang)}</small>}
                   {check?.note && <small>{check.note}</small>}
                   {check?.photoThumbUrl && <img src={check.photoThumbUrl} alt={t('photo')} loading="lazy" />}
                 </div>

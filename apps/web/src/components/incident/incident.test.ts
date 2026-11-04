@@ -71,6 +71,16 @@ describe('wind in the incident panel', () => {
     expect(smokeSentence(wind({ mode: 'detected' }), 'id', now)).toBe('Asap mengarah ke Desa Sungai Pasir, Desa Cengal (angin pada 23 Okt 13.00 WIB).');
   });
 
+  it('gives a demo check\'s distance as approximate, the server keeping only a rounded one', async () => {
+    const { checkDistance } = await import('../../pages/IncidentPanel');
+    expect(checkDistance({ distanceMeters: 1234, demo: false }, 'id')).toBe('1,2 km dari titik panas');
+    expect(checkDistance({ distanceMeters: 1234, demo: false }, 'en')).toBe('1.2 km from the hotspot');
+    expect(checkDistance({ distanceMeters: 100_000, demo: true }, 'id')).toBe('sekitar 100 km dari titik panas');
+    expect(checkDistance({ distanceMeters: 100_000, demo: true }, 'en')).toBe('about 100 km from the hotspot');
+    expect(checkDistance({ distanceMeters: 900, demo: true }, 'id')).toBe('sekitar 900 m dari titik panas');
+    expect(checkDistance({ distanceMeters: null, demo: true }, 'id')).toBeNull();
+  });
+
   it('puts the smoke line into the WhatsApp message, before the links', async () => {
     Object.assign(globalThis, { location: { origin: 'https://titikapi.test' } });
     const { waText } = await import('../ui');
