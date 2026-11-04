@@ -152,7 +152,7 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
     const b = bounds ?? ALL_BOUNDS;
     const instance = new maplibregl.Map({
       container: container.current!, style: 'https://tiles.openfreemap.org/styles/positron', bounds: [[b[0], b[1]], [b[2], b[3]]], fitBoundsOptions: { padding: 24 },
-      maxZoom: 18, attributionControl: { compact: true, customAttribution: 'NASA FIRMS · BPS/HDX · Global Nature Watch · EOX' },
+      maxZoom: 18, attributionControl: { compact: true, customAttribution: 'NASA FIRMS · BPS/HDX · Global Nature Watch' },
     });
     map.current = instance;
     // The compact attribution opens as soon as it is added and would cover a phone-sized map; it stays one tap away,
