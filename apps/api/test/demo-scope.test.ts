@@ -451,19 +451,52 @@ test('rows the judged version wrote after a rollback go back to the demo scope a
   await pool.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, observed_at) VALUES ($1, $2, $3, 'bakar_terkendali', $4)`,
     [incidents.Q, real.mpa.id, randomUUID(), observed]);
   await pool.query(`UPDATE incidents SET first_verified_at = $2, latest_status = 'bakar_terkendali' WHERE id = $1`, [incidents.Q, observed]);
+  // R and S carry detections; S's lies 270 m from R's centre.
+  points.R = { lon: centre.lon + 0.012, lat };
+  points.S = { lon: centre.lon + 0.0150, lat };
+  for (const [name, offsets] of [['R', [0, 0.0012]], ['S', [0]]] as const) {
+    incidents[name] = await insertIncident(pool, { villageId: village.id, first, last: first, ...points[name]!, level: 'tinggi', score: 70 });
+    for (const dx of offsets) await insertDetection(pool, { lon: points[name]!.lon + dx, lat, acqAt: first, confidence: 'high', villageId: village.id, incidentId: incidents[name] });
+  }
+  await refreshIncidents(pool, [incidents.R!, incidents.S!]);
+  const untaught = { R: await triage('R'), S: await triage('S') };
+  // R: a demo visitor's false alarm teaches the judged version's triage as a real one would: the check as it is stored
+  // there, the public summary, a fixed heat source of 375 m for 30 days, near_static on the incident and its detections,
+  // and a rescore. S's detection came in later within the radius, and its ingest flagged it.
+  const falseAlarm = (await pool.query(`INSERT INTO verifications (incident_id, user_id, client_uuid, status, false_alarm_kind, latitude, longitude, accuracy_m, distance_m,
+      observed_at, is_demo) VALUES ($1, $2, $3, 'alarm_palsu', 'lainnya', $4, $5, 6, 1112, $6, true) RETURNING id`,
+  [incidents.R, demoMpaId, randomUUID(), lat + 0.01, points.R.lon, observed])).rows[0].id;
+  await pool.query(`UPDATE incidents SET first_verified_at = $2, latest_status = 'alarm_palsu' WHERE id = $1`, [incidents.R, observed]);
+  await pool.query(`INSERT INTO static_sources (kind, label, geom, radius_m, verification_id, expires_at)
+    SELECT 'alarm_palsu', 'Alarm palsu dari cek lapangan (Lainnya)', centroid, 375, $2, now() + interval '30 days' FROM incidents WHERE id = $1`, [incidents.R, falseAlarm]);
+  await pool.query('UPDATE incidents SET near_static = true WHERE id = $1', [incidents.R]);
+  await pool.query('UPDATE detections SET near_static = true WHERE incident_id = ANY($1::uuid[])', [[incidents.R, incidents.S]]);
+  await refreshIncidents(pool, [incidents.R!, incidents.S!]);
+  const sources = async () => (await pool.query(`SELECT count(*) FILTER (WHERE v.is_demo)::int AS demo, count(*) FILTER (WHERE NOT v.is_demo)::int AS real
+    FROM static_sources s JOIN verifications v ON v.id = s.verification_id`)).rows[0] as { demo: number; real: number };
+  const sourcesBefore = await sources();
+  assert.equal(sourcesBefore.demo, 1);
+  const publicR = await data(`/incidents/${incidents.R}`);
+  assert.deepEqual([publicR.nearStatic, publicR.latestStatus], [true, 'alarm_palsu']);
+  assert.ok(publicR.score < untaught.R.score && (await triage('S')).score < untaught.S.score, 'visitors see both lowered');
   clearTileCache();
   const visitorIds = async (status: string) => (await data(`/incidents?hours=24&status=${status}`) as any[]).map(row => row.id as string);
   assert.ok((await visitorIds('assigned')).includes(incidents.M!) && (await visitorIds('checked')).includes(incidents.N!), 'visitors take them for real');
   const verified = (await data('/summary?hours=24')).verified;
 
-  assert.deepEqual(await reconcileDemoScope(pool), { tasks: 2, checks: 1, incidents: 3 });
-  assert.deepEqual(await reconcileDemoScope(pool), { tasks: 0, checks: 0, incidents: 0 }, 'nothing is left to put right');
+  // Incidents: the summaries of N, P, Q and R, and the scores of R and S.
+  assert.deepEqual(await reconcileDemoScope(pool), { tasks: 2, checks: 2, incidents: 5, sources: 1 });
+  assert.deepEqual(await reconcileDemoScope(pool), { tasks: 0, checks: 0, incidents: 0, sources: 0 }, 'nothing is left to put right');
+  assert.deepEqual([await triage('R'), await triage('S')], [untaught.R, untaught.S], 'what the demo false alarm taught is taken back');
+  const restored = await data(`/incidents/${incidents.R}`);
+  assert.deepEqual([restored.score, restored.level, restored.nearStatic, restored.latestStatus], [untaught.R.score, untaught.R.level, false, null]);
+  assert.deepEqual(await sources(), { demo: 0, real: sourcesBefore.real }, 'its fixed heat source goes, the real ones stay');
   const visitorAssigned = await visitorIds('assigned');
   assert.ok(!visitorAssigned.includes(incidents.M!) && !visitorAssigned.includes(incidents.P!) && !(await visitorIds('checked')).includes(incidents.N!));
   const task = async (id: string) => (await pool.query('SELECT status, is_demo FROM assignments WHERE id = $1', [id])).rows[0];
   assert.deepEqual([await task(old), await task(fresh)], [{ status: 'dibatalkan', is_demo: true }, { status: 'ditugaskan', is_demo: true }],
     'one open demo task per incident: the old one is cancelled');
-  assert.equal((await data('/summary?hours=24')).verified, verified - 1);
+  assert.equal((await data('/summary?hours=24')).verified, verified - 2, 'the demo checks of N and R');
   assert.equal((await data(`/incidents/${incidents.M}`, demo.bpbd)).assignment.assignee.id, squad, 'demo sessions still see the task');
   const summary = async (name: string) => (await pool.query(`SELECT first_verified_at, latest_status, first_verified_any_at, latest_status_any FROM incidents
     WHERE id = $1`, [incidents[name]])).rows[0];

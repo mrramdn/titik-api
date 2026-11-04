@@ -21,7 +21,7 @@ let stopWeather = async () => {};
   // schedulers start. Silent when there is nothing to put right.
   try {
     const fixed = await reconcileDemoScope(pool);
-    if (fixed.tasks || fixed.checks || fixed.incidents) app.log.warn(fixed, 'Demo rows written the old way put right');
+    if (fixed.tasks || fixed.checks || fixed.incidents || fixed.sources) app.log.warn(fixed, 'Demo rows written the old way put right');
   } catch (error) { app.log.error({ err: error }, 'Demo scope check failed'); }
   stop = startScheduler(pool, app.log);
   // Fire weather from Open-Meteo every few hours, the first time 30 seconds after this; it never holds up the server.

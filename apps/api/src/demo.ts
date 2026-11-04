@@ -29,6 +29,33 @@ export const demoSquads = [
   { id: user(5), name: 'Regu MPA Cengal (demo)', email: 'regu-cengal@titikapi.test', role: 'mpa', organization: squadOrganization, district: 'Cengal' },
 ] as const;
 const [mpa, kades, bpbd] = demoAccounts;
+const demoIds = [...demoAccounts, ...demoSquads].map(account => account.id);
+
+/**
+ * Takes back what demo false alarms taught the triage. Before demo checks stopped teaching it, and on the judged version
+ * after a rollback (see reconcile.ts), a demo false alarm left a fixed heat source and flagged every detection of its
+ * incident, and later ones within its radius. Those detections are found before the sources go, then lose the flag,
+ * unless a source that is left still covers them or a real false alarm flagged their incident. Nothing else is worked
+ * out again: a real false alarm flags every detection of its incident however far, so measuring distances afresh on the
+ * incidents of demo checks would take back real triage. A check of a demo account counts as demo even if it was not
+ * marked. Returns how many sources went and the incidents whose detections changed, to be scored again once the
+ * transaction is committed.
+ */
+export async function takeBackDemoFalseAlarms(client: pg.PoolClient) {
+  const demo = (alias: string) => `(${alias}.is_demo OR ${alias}.user_id = ANY($1::uuid[]))`;
+  const flagged = (await client.query(`WITH s AS (SELECT s.geom, s.radius_m, c.incident_id FROM static_sources s JOIN verifications c ON c.id = s.verification_id
+      WHERE ${demo('c')})
+    SELECT d.id FROM s JOIN detections d ON d.incident_id = s.incident_id WHERE d.near_static
+    UNION SELECT d.id FROM s JOIN detections d ON ST_DWithin(s.geom, d.geom, s.radius_m / 90000.0::float8) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)
+      WHERE d.near_static`, [demoIds])).rows.map(row => String(row.id));
+  const sources = (await client.query(`DELETE FROM static_sources s USING verifications c WHERE c.id = s.verification_id AND ${demo('c')}`, [demoIds])).rowCount ?? 0;
+  if (!flagged.length) return { sources, rescore: [] as string[] };
+  const unflagged = (await client.query(`UPDATE detections d SET near_static = false WHERE d.id = ANY($2::bigint[])
+      AND NOT EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))
+      AND NOT EXISTS (SELECT 1 FROM verifications v WHERE v.incident_id = d.incident_id AND v.status = 'alarm_palsu' AND NOT ${demo('v')})
+    RETURNING d.incident_id`, [demoIds, flagged])).rows;
+  return { sources, rescore: [...new Set(unflagged.map(row => row.incident_id as string | null).filter((id): id is string => Boolean(id)))] };
+}
 
 // Example field reports, written only on incidents that are already a day old and marked as demo everywhere.
 const examples = [
@@ -67,28 +94,14 @@ export async function resetDemo(pool: pg.Pool, uploadsDir = uploadsDirectory()) 
     // Demo field checks and tasks: those of these accounts and any other row marked as demo.
     const demoChecks = 'is_demo OR user_id = ANY($1::uuid[])';
     const checks = (await client.query(`SELECT photo_url, photo_thumb_url FROM verifications WHERE ${demoChecks}`, [ids])).rows;
-    // Demo false alarms filed before demo checks stopped teaching the triage left a fixed heat source. The detections it
-    // may have flagged (every detection of its incident, and later ones within its radius) are found before it goes.
-    // Nothing else is worked out again: a real false alarm flags every detection of its incident however far, so
-    // measuring distances afresh on the incidents of demo checks would take back real triage.
-    const flagged = (await client.query(`WITH s AS (SELECT s.geom, s.radius_m, c.incident_id FROM static_sources s JOIN verifications c ON c.id = s.verification_id
-        WHERE c.is_demo OR c.user_id = ANY($1::uuid[]))
-      SELECT d.id FROM s JOIN detections d ON d.incident_id = s.incident_id WHERE d.near_static
-      UNION SELECT d.id FROM s JOIN detections d ON ST_DWithin(s.geom, d.geom, s.radius_m / 90000.0::float8) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m)
-        WHERE d.near_static`, [ids])).rows.map(row => String(row.id));
-    await client.query(`DELETE FROM static_sources WHERE verification_id IN (SELECT id FROM verifications WHERE ${demoChecks})`, [ids]);
+    // What old demo false alarms taught the triage goes first, while their checks still say whose they were. Only
+    // incidents whose detections changed are scored again.
+    const { rescore } = await takeBackDemoFalseAlarms(client);
     await client.query(`DELETE FROM verifications WHERE ${demoChecks}`, [ids]);
     await client.query('DELETE FROM assignments WHERE is_demo OR assignee_id = ANY($1::uuid[]) OR assigned_by = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM alerts WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM subscriptions WHERE user_id = ANY($1::uuid[])', [ids]);
     await client.query('DELETE FROM push_subscriptions WHERE user_id = ANY($1::uuid[]) OR user_id IN (SELECT id FROM users WHERE email LIKE $2)', [ids, `%${demoDomain}`]);
-    // Those detections lose the flag, unless a source that is left still covers them or a real false alarm flagged their
-    // incident. Only incidents whose detections changed are scored again.
-    const unflagged = (await client.query(`UPDATE detections d SET near_static = false WHERE d.id = ANY($1::bigint[])
-        AND NOT EXISTS (SELECT 1 FROM static_sources s WHERE (s.expires_at IS NULL OR s.expires_at > d.acq_at) AND ST_DWithin(s.geom::geography, d.geom::geography, s.radius_m))
-        AND NOT EXISTS (SELECT 1 FROM verifications v WHERE v.incident_id = d.incident_id AND v.status = 'alarm_palsu' AND NOT v.is_demo)
-      RETURNING d.incident_id`, [flagged])).rows;
-    const rescore = [...new Set(unflagged.map(row => row.incident_id as string | null).filter((id): id is string => Boolean(id)))];
     // The summaries of every incident whose checks they no longer follow are worked out again: those whose demo checks
     // just went, and any an older version left behind, such as the judged version's reset after a rollback, which
     // deleted demo checks but kept the demo session's summary of them (see reconcile.ts).
