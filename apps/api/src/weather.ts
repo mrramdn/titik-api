@@ -13,8 +13,8 @@
 // several calls). A request that fails keeps the last values of its cells and is reported in one log line.
 //
 // A run works through the cells in blocks of at most 50, each fetched, computed and saved in its own transaction
-// before the next. So a spin-up holds one block in memory however long it reaches back, and a run cut short keeps the
-// blocks it saved: the next one spins up only the cells left.
+// before the next, and keeps of every answer only what the codes need. So a spin-up holds one block in memory however
+// long it reaches back, and a run cut short keeps the blocks it saved: the next one spins up only the cells left.
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { createPool } from './db.js';
@@ -68,9 +68,76 @@ export interface WeatherResult { skipped: boolean; cells: number; rows: number; 
 
 interface Cell { id: number; lon: number; lat: number }
 interface Hour { temp: number; rh: number; wind: number; from: number; rain: number }
-/** Hours of one location, keyed 'YYYY-MM-DDTHH:00' in WIB; only hours with every value. */
-type Series = Map<string, Hour>;
 interface Start { day: string; moisture: Moisture; dryDays: number }
+
+const HOUR_LABEL = /^\d{4}-\d{2}-\d{2}T\d{2}:00$/;
+/** Days since 1970 of a 'YYYY-MM-DD' day; NaN for anything else. */
+const dayNumber = (day: string) => Date.parse(day) / 86_400_000;
+
+/**
+ * The hours of one location as computeDays reads them, cut down as soon as an answer is parsed: the rain of every hour
+ * and the temperature, humidity, wind and direction of 12.00 only, in arrays by the hour from 00.00 of `first` (WIB),
+ * NaN where Open-Meteo did not give an hour every value. Months of a spin-up take about 50 KB per location instead of
+ * an object per hour. get() and size answer as a Map of whole hours by label ('YYYY-MM-DDTHH:00') would, for what
+ * computeDays reads: at hours other than 12.00 only the rain is kept, and the other values read NaN.
+ */
+export class Series {
+  private readonly rain: Float64Array;
+  private readonly noon: Float64Array;
+  private readonly start: number;
+  private kept = 0;
+  constructor(readonly first: string, readonly days: number) {
+    this.rain = new Float64Array(days * 24).fill(NaN);
+    this.noon = new Float64Array(days * 4).fill(NaN);
+    this.start = dayNumber(first);
+  }
+
+  /** Where hour `time` sits in the arrays; -1 outside these days or for a label that is not an hour. */
+  private index(time: string) {
+    if (!HOUR_LABEL.test(time)) return -1;
+    const day = dayNumber(time.slice(0, 10)) - this.start, hour = Number(time.slice(11, 13));
+    return Number.isInteger(day) && day >= 0 && day < this.days && hour < 24 ? day * 24 + hour : -1;
+  }
+
+  /** Keeps an hour that has every value: its rain, and at 12.00 the rest too. */
+  set(time: string, hour: Hour) {
+    const index = this.index(time);
+    if (index < 0) return;
+    if (Number.isNaN(this.rain[index]!)) this.kept++;
+    this.rain[index] = hour.rain;
+    if (index % 24 === 12) this.noon.set([hour.temp, hour.rh, hour.wind, hour.from], (index - 12) / 6);
+  }
+
+  get(time: string): Hour | undefined {
+    const index = this.index(time);
+    const rain = index < 0 ? NaN : this.rain[index]!;
+    if (Number.isNaN(rain)) return undefined;
+    if (index % 24 !== 12) return { temp: NaN, rh: NaN, wind: NaN, from: NaN, rain };
+    const at = (index - 12) / 6;
+    return { temp: this.noon[at]!, rh: this.noon[at + 1]!, wind: this.noon[at + 2]!, from: this.noon[at + 3]!, rain };
+  }
+
+  /** Hours kept. */
+  get size() { return this.kept; }
+
+  /** The day of the last hour kept, or null. */
+  get lastDay() {
+    for (let index = this.rain.length - 1; index >= 0; index--) if (!Number.isNaN(this.rain[index]!)) return addDays(this.first, Math.floor(index / 24));
+    return null;
+  }
+
+  /** Keeps every hour `other` has that falls within these days, over what was kept for it before. */
+  copy(other: Series) {
+    const shift = (other.start - this.start) * 24;
+    other.rain.forEach((rain, k) => {
+      const index = k + shift;
+      if (Number.isNaN(rain) || index < 0 || index >= this.rain.length) return;
+      if (Number.isNaN(this.rain[index]!)) this.kept++;
+      this.rain[index] = rain;
+      if (index % 24 === 12) this.noon.set(other.noon.subarray((k - 12) / 6, (k - 12) / 6 + 4), (index - 12) / 6);
+    });
+  }
+}
 export interface WeatherRow extends FwiCodes {
   cellId: number; day: string; temp: number; rh: number; wind: number; from: number; rain24h: number; rainDay: number; dryDays: number; forecast: boolean;
 }
@@ -101,14 +168,27 @@ export async function ensureCells(db: pg.Pool | pg.PoolClient) {
 const hourKey = (day: string, hour: number) => `${day}T${String(hour).padStart(2, '0')}:00`;
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 
+/** The day of an hour label ('YYYY-MM-DDTHH:00' of a real day), or null. */
+const labelDay = (time: unknown) => (typeof time === 'string' && HOUR_LABEL.test(time) && !Number.isNaN(dayNumber(time.slice(0, 10))) ? time.slice(0, 10) : null);
+
 /** Open-Meteo answers a list for several locations and a single object for one. */
 export function parseLocations(body: unknown, count: number): Series[] {
   const list = Array.isArray(body) ? body : [body];
   if (list.length !== count) throw new Error(`Open-Meteo answered ${list.length} locations for ${count}`);
   return list.map(item => {
     const hourly = (item as { hourly?: Record<string, unknown[]> } | null)?.hourly;
-    const series: Series = new Map();
     if (!hourly || !Array.isArray(hourly.time)) throw new Error('Open-Meteo answered without hourly data');
+    // The days the hours span. They follow each other, 24 to a day: a span the labels cannot fill is refused, so a
+    // broken answer cannot make the arrays any larger than the answer itself.
+    let first = '', last = '';
+    for (const time of hourly.time) {
+      const day = labelDay(time);
+      if (day && (!first || day < first)) first = day;
+      if (day && day > last) last = day;
+    }
+    const days = first ? dayNumber(last) - dayNumber(first) + 1 : 0;
+    if (days > hourly.time.length / 24 + 1) throw new Error('Open-Meteo answered hours that do not follow each other');
+    const series = new Series(first, days);
     hourly.time.forEach((time, index) => {
       const values = HOURLY.map(name => hourly[name]?.[index]);
       if (typeof time === 'string' && values.every(value => typeof value === 'number' && Number.isFinite(value))) {
@@ -172,8 +252,11 @@ export function computeDays(cell: Cell, series: Series, start: Start, today: str
 
 /** Hour by hour: the archive (ERA5) where it has every value, else the Forecast API. */
 function merge(archive: Series | undefined, forecast: Series | undefined): Series {
-  const merged: Series = new Map(forecast ?? []);
-  for (const [time, hour] of archive ?? []) merged.set(time, hour);
+  const parts = [forecast, archive].filter((part): part is Series => Boolean(part?.days));
+  if (!parts.length) return new Series('', 0);
+  const first = parts.map(part => part.first).sort()[0]!, end = parts.map(part => addDays(part.first, part.days)).sort().at(-1)!;
+  const merged = new Series(first, dayNumber(end) - dayNumber(first));
+  for (const part of parts) merged.copy(part);
   return merged;
 }
 
@@ -265,7 +348,7 @@ export async function updateWeather(pool: pg.Pool, options: WeatherOptions = {})
               const answer = await request(archiveUrl(chunk, startDay, addDays(today, -1)), chunk.length, archivePause);
               answer?.forEach((hours, index) => {
                 archived.set(chunk[index]!.id, hours);
-                const latest = [...hours.keys()].at(-1)?.slice(0, 10);
+                const latest = hours.lastDay;
                 if (latest && (!lastDay || latest < lastDay)) lastDay = latest;
               });
             }

@@ -53,6 +53,23 @@ test('one location comes back as an object, several as a list in request order; 
   assert.throws(() => parseLocations([location(1)], 2));
 });
 
+test('an answer keeps the rain of every hour and the rest at 12.00 only; hours that do not follow each other are refused', () => {
+  const time = ['2026-10-22', '2026-10-23'].flatMap(day => Array.from({ length: 24 }, (_, hour) => hourKey(day, hour)));
+  const column = (f: (k: number) => number | null) => time.map((_, k) => f(k));
+  const [series] = parseLocations({ hourly: { time, temperature_2m: column(k => 25 + k / 10), relative_humidity_2m: column(k => 70 - k / 2),
+    wind_speed_10m: column(k => (k === 30 ? null : 5.5)), wind_direction_10m: column(k => k * 7), precipitation: column(k => k / 100) } }, 1);
+  assert.equal(series!.size, 47, 'every hour but the one without wind');
+  assert.deepEqual(series!.get('2026-10-23T12:00'), { temp: 28.6, rh: 52, wind: 5.5, from: 252, rain: 0.36 });
+  const morning = series!.get('2026-10-23T05:00')!;
+  assert.equal(morning.rain, 0.29);
+  assert.ok([morning.temp, morning.rh, morning.wind, morning.from].every(Number.isNaN), 'other hours keep their rain only');
+  assert.deepEqual([series!.get('2026-10-23T06:00'), series!.get('2026-10-24T00:00'), series!.get('2026-10-23T12:30')], [undefined, undefined, undefined]);
+  assert.equal(series!.lastDay, '2026-10-23');
+  const far = { hourly: { time: ['2026-01-01T00:00', '2026-12-31T23:00'], temperature_2m: [1, 1], relative_humidity_2m: [1, 1], wind_speed_10m: [1, 1],
+    wind_direction_10m: [1, 1], precipitation: [0, 0] } };
+  assert.throws(() => parseLocations(far, 1), /do not follow each other/);
+});
+
 const today = wibDay();
 const weather = (shift: number) => (source: 'archive' | 'forecast', lat: number, time: string) => {
   const hour = Number(time.slice(11, 13)), day = Number(time.slice(8, 10));
