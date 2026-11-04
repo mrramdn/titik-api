@@ -11,7 +11,7 @@ import { useFormat } from '../format';
 import { bearing, coordText, nearestPoint } from '../geo';
 import { dict, useT } from '../i18n';
 import { falseAlarmLabel } from '../i18n/common';
-import { compressPhoto, enqueue, flush, onOutboxChange, outboxSignedOut, queued } from '../outbox';
+import { belongsTo, compressPhoto, enqueue, flush, onOutboxChange, outboxSignedOut, queued, type QueuedReport } from '../outbox';
 import { useSession } from '../session';
 
 const text = dict({
@@ -141,8 +141,12 @@ function TargetCard({ detail, position, gpsError }: { detail: IncidentDetail; po
 
 /** `signIn`: kept like `queued`, but the server said the session ended (401), so it waits for a sign-in, not a signal. */
 type Result = { state: 'sent' | 'queued' | 'signIn' | 'rejected'; at: string; clientUuid: string; incidentId: string; reason?: string };
-/** A report still in the outbox waits for a sign-in after a 401, else for a signal. */
-const waitingState = (): Result['state'] => (outboxSignedOut() ? 'signIn' : 'queued');
+/**
+ * A report still in the outbox waits for a sign-in after a 401, or while another account or nobody is signed in (it goes
+ * out only under the account that filed it, and another tab can switch the account); else for a signal.
+ */
+const waitingState = (report: QueuedReport, viewer: string | null): Result['state'] =>
+  (outboxSignedOut() || !belongsTo(report, viewer) ? 'signIn' : 'queued');
 
 export function VerifyPage() {
   const { id } = useParams();
@@ -167,18 +171,25 @@ export function VerifyPage() {
     return () => navigator.geolocation.clearWatch(watch);
   }, []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
-  // A report saved without a signal leaves the outbox once it is sent; the result screen follows it.
+  // A report saved without a signal leaves the outbox once it is sent; the result screen follows it, and the account
+  // signed in now.
+  const viewer = user?.id ?? null;
   useEffect(() => {
     if (!result || (result.state !== 'queued' && result.state !== 'signIn')) return;
-    return onOutboxChange(() => {
+    let alive = true;
+    const follow = () => {
       void queued().then(items => {
+        if (!alive) return;
         const item = items.find(entry => entry.clientUuid === result.clientUuid);
         if (!item) setResult({ ...result, state: 'sent' });
         else if (item.rejected) setResult({ ...result, state: 'rejected', reason: item.lastError ?? '' });
-        else if (waitingState() !== result.state) setResult({ ...result, state: waitingState() });
+        else if (waitingState(item, viewer) !== result.state) setResult({ ...result, state: waitingState(item, viewer) });
       });
-    });
-  }, [result]);
+    };
+    follow();
+    const stop = onOutboxChange(follow);
+    return () => { alive = false; stop(); };
+  }, [result, viewer]);
 
   // A report filed here keeps its result on screen whoever is signed in by then. A 401 on its way out makes the session
   // ask the server again, and the answer (nobody) would otherwise send the volunteer to /masuk before they read that
@@ -231,7 +242,7 @@ export function VerifyPage() {
       rememberCheck(d.id, { at: observedAt, status });
       if (navigator.onLine !== false) await flush();
       const item = (await queued()).find(entry => entry.clientUuid === clientUuid);
-      setResult({ clientUuid, incidentId: d.id, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : waitingState(), reason: item?.lastError ?? undefined });
+      setResult({ clientUuid, incidentId: d.id, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : waitingState(item, viewer), reason: item?.lastError ?? undefined });
     } finally { setBusy(false); }
   };
 

@@ -61,6 +61,17 @@ describe('account data', () => {
     await settle(null);
     expect(events).toEqual(['now demo-mpa', 'forgot', 'now real-mpa', 'now real-mpa', 'forgot', 'now visitor', 'now visitor']);
   });
+
+  it('takes an account another tab took without forgetting again, and still forgets when this tab moves on from it', async () => {
+    const events: string[] = [];
+    const settle = accountSettler<{ id: string }>({ id: 'demo-mpa' }, (next, followed) => { events.push(`now ${next?.id ?? 'visitor'}${followed ? ' (followed)' : ''}`); },
+      async () => { events.push('forgot'); });
+    await settle({ id: 'demo-kades' }, true);
+    await settle({ id: 'demo-mpa' });
+    await settle(null, true);
+    await settle(null);
+    expect(events).toEqual(['now demo-kades (followed)', 'forgot', 'now demo-mpa', 'now visitor (followed)', 'now visitor']);
+  });
 });
 
 describe('two languages', () => {

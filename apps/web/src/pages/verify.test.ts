@@ -113,6 +113,37 @@ describe('the field check page', () => {
     expect(page().host.querySelector('.v-stack a[href="/masuk"]')?.textContent).toBe('Masuk lagi');
   });
 
+  describe('follows a switch in another tab', () => {
+    const kades: User = { ...mpa, id: '10000000-0000-4000-8000-000000000002', name: 'Kepala desa (demo)', email: 'kades@titikapi.test', role: 'kades' };
+    /** The other tab switches: the session cookie is the new account's, and that tab stores it; this tab hears of it. */
+    const otherTab = (user: User | null) => {
+      api.state.session = user;
+      if (user) localStorage.setItem('titikapi.user', JSON.stringify(user)); else localStorage.removeItem('titikapi.user');
+      window.dispatchEvent(new StorageEvent('storage', { key: 'titikapi.user', oldValue: JSON.stringify(mpa), newValue: user ? JSON.stringify(user) : null }));
+    };
+
+    it('a waiting report\'s result then says it waits for its account to sign in again', async () => {
+      await open();
+      await until(() => Boolean(status('asap_bara')));
+      api.state.signal = false;
+      await submit();
+      await until(() => page().host.querySelector('.v-result strong')?.textContent === 'Menunggu sinyal, dikirim otomatis');
+      otherTab(kades);
+      await until(() => page().host.querySelector('.v-result strong')?.textContent === 'Sesi berakhir, masuk lagi untuk mengirim');
+      expect(page().host.querySelector('.v-stack a[href="/masuk"]')?.textContent).toBe('Masuk lagi');
+    });
+
+    it('the open form gives way to the note on who files field checks, or to /masuk after a sign-out', async () => {
+      await open();
+      await until(() => Boolean(status('asap_bara')));
+      otherTab(kades);
+      await until(() => page().text().includes('Cek lapangan diisi oleh relawan MPA'));
+      expect(page().host.querySelector('form')).toBeNull();
+      otherTab(null);
+      await until(() => Boolean(page().host.querySelector('#masuk')));
+    });
+  });
+
   it('still sends a visitor without an account to /masuk', async () => {
     localStorage.removeItem('titikapi.user');
     api.state.session = null;

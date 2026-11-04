@@ -40,8 +40,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [checked, setChecked] = useState(false);
   const [offline, setOffline] = useState(false);
-  // What this browser kept for one account is forgotten before another account, or a visitor, reads anything.
-  const [settle] = useState(() => accountSettler<User>(user, next => { setUser(next); remember(next); setOutboxAccount(next?.id ?? null); }));
+  // What this browser kept for one account is forgotten before another account, or a visitor, reads anything. An
+  // account another tab stored is not stored again: that could put it back over a newer one a third tab stored.
+  const [settle] = useState(() => accountSettler<User>(user, (next, followed) => {
+    setUser(next);
+    if (!followed) remember(next);
+    setOutboxAccount(next?.id ?? null);
+  }));
   // Counts the sign-ins and sign-outs that went through: a session check answered after one of them tells of the
   // session cookie before it, and is left out.
   const changes = useRef(0);
@@ -89,18 +94,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     recheckedAt.current = Date.now();
     void check(false);
   }), [check]);
-  // Another tab signed in or out. The session cookie is the same for every tab, so this tab's waiting reports go out
-  // under that account from now on (the screen keeps what it shows until its next sign-in or reload).
+  // Another tab signed in or out, or its session check answered. The session cookie is the same for every tab, so this
+  // tab takes that account in full: the screen, the outbox banner, the task marks and the field check page follow it,
+  // and its waiting reports go out under it. What the last account kept is already gone (see accountSettler). A
+  // session check of this tab still on its way tells of the cookie before, so it is left out, and one asked again
+  // later is not needed: another tab writes an account only after the server answered, or after a sign-out.
   useEffect(() => {
     const follow = (event: StorageEvent) => {
       if (event.key !== cacheKey) return;
       let next: User | null = null;
       try { next = JSON.parse(event.newValue ?? 'null'); } catch { /* not a user */ }
-      setOutboxAccount(next?.id ?? null);
+      changes.current++;
+      setUnanswered(0);
+      void settle(next, true).then(() => setChecked(true));
     };
     window.addEventListener('storage', follow);
     return () => window.removeEventListener('storage', follow);
-  }, []);
+  }, [settle]);
   const signInDemo = useCallback(async (role: 'mpa' | 'kades' | 'bpbd') => {
     const release = holdOutbox();
     try {

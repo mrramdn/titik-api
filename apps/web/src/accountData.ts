@@ -18,12 +18,17 @@ export async function forgetAccountData() {
  * Follows the account whose data this browser holds (null for a visitor). The function it returns takes the next
  * account: when that is another one it forgets the data first, and only then applies the account, so nothing is read
  * for the new account while the old copies are still there.
+ *
+ * `followed`: another tab of this browser took the account. That tab forgot the data before it stored the account, and
+ * the data lives in stores every tab shares, so it is not forgotten again: by the time this tab hears of it (a tab in
+ * the background can hear minutes later), the new account may have filled them, with the details a volunteer needs
+ * without a signal. `apply` is told, so the account is not stored again either.
  */
-export function accountSettler<U extends { id: string }>(initial: U | null, apply: (next: U | null) => void, forget: () => Promise<void> = forgetAccountData) {
+export function accountSettler<U extends { id: string }>(initial: U | null, apply: (next: U | null, followed: boolean) => void, forget: () => Promise<void> = forgetAccountData) {
   let holder = initial?.id ?? null;
-  return async (next: U | null) => {
+  return async (next: U | null, followed = false) => {
     const id = next?.id ?? null;
-    if (id !== holder) { holder = id; await forget(); }
-    apply(next);
+    if (id !== holder) { holder = id; if (!followed) await forget(); }
+    apply(next, followed);
   };
 }
