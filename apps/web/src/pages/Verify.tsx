@@ -194,7 +194,7 @@ export function VerifyPage() {
     try {
       await enqueue({ clientUuid, incidentId: d.id, incidentLabel: `KJD-${d.code.toUpperCase()}${d.village ? ` · ${d.village.name}` : ''}`, status,
         falseAlarmKind: status === 'alarm_palsu' ? kind : undefined, note: note.trim(), latitude: here?.[1] ?? null, longitude: here?.[0] ?? null,
-        accuracyM: position?.coords.accuracy ?? null, observedAt, photo });
+        accuracyM: position?.coords.accuracy ?? null, observedAt, photo, userId: user?.id });
       rememberCheck(d.id, { at: observedAt, status });
       if (navigator.onLine !== false) await flush();
       const item = (await queued()).find(entry => entry.clientUuid === clientUuid);

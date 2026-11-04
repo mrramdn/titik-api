@@ -2,7 +2,8 @@
 // signal (cache "api", see sw.ts) and the field checks filed from this phone (see myChecks). The same address answers
 // differently for another account (a demo session also sees demo field checks and tasks, a team sees notes), so both
 // go as soon as another account, or none, takes over: nobody reads another account's copies without a signal, and a
-// task card never says "Sudah kamu cek" for a check someone else filed.
+// task card never says "Sudah kamu cek" for a check someone else filed. Field reports still waiting for a signal stay:
+// each goes out only while the account that filed it is signed in (see outbox.ts), so none is lost to a switch.
 import { forgetMyChecks } from './components/volunteer/myChecks';
 
 /** The service worker's cache of API reads; sw.ts names it the same. */

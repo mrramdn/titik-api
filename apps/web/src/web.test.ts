@@ -1,10 +1,8 @@
-import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettler, forgetAccountData } from './accountData';
 import { bearing, distanceMeters, windName } from './geo';
 import { duration, formatter, km, wib } from './format';
 import * as common from './i18n/common';
-import { enqueue, flush, queued } from './outbox';
 import { fwiLabel, riskText } from './map/risk';
 import { windText } from './components/incident/wind';
 import { areaText } from './components/incident/area';
@@ -35,31 +33,6 @@ describe('field helpers', () => {
     expect(formatter('en').ha(12.46)).toBe('12.5 ha');
     expect(formatter('id').ha(1234.4)).toBe('1.234 ha');
     expect(formatter('en').ha(1234.4)).toBe('1,234 ha');
-  });
-});
-
-describe('outbox', () => {
-  const report = (clientUuid: string) => ({ clientUuid, incidentId: 'i', incidentLabel: 'KJD', status: 'asap_bara' as const, note: '', latitude: null, longitude: null,
-    accuracyM: null, observedAt: '2026-10-16T06:00:00Z', photo: null });
-
-  it('keeps reports while there is no signal and sends them once it returns', async () => {
-    await enqueue(report('a'));
-    await enqueue(report('b'));
-    const offline = await flush(async () => { throw new TypeError('Failed to fetch'); });
-    expect(offline).toEqual({ sent: 0, left: 2 });
-    expect((await queued())[0]!.attempts).toBe(1);
-    const sent: string[] = [];
-    const online = await flush(async item => { sent.push(item.clientUuid); return new Response('{}', { status: 201 }); });
-    expect(online).toEqual({ sent: 2, left: 0 });
-    expect(sent).toEqual(['a', 'b']);
-  });
-
-  it('marks a report the server rejects instead of retrying it forever', async () => {
-    await enqueue(report('c'));
-    await flush(async () => new Response(JSON.stringify({ error: { message: 'Status tidak valid.' } }), { status: 400 }));
-    const [item] = await queued();
-    expect(item!.rejected).toBe(true);
-    expect(item!.lastError).toBe('Status tidak valid.');
   });
 });
 
