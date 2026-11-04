@@ -9,9 +9,9 @@ interface Session {
   /** The session check (GET /auth/me) has finished, answered or not. */
   ready: boolean;
   /**
-   * The server has said who is signed in here: the session check answered, or a sign-in went through. False while the
-   * check failed (no signal, a server error, too many requests): `user` is then a copy from an earlier visit or nobody,
-   * and the browser may still hold a real account's session cookie.
+   * The server has said who is signed in here: the session check answered, or a sign-in went through, in this tab or in
+   * another one. False while the check failed (no signal, a server error, too many requests, a timeout): `user` is then
+   * a copy from an earlier visit or nobody, and the browser may still hold a real account's session cookie.
    */
   checked: boolean;
   offline: boolean;
@@ -47,8 +47,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!followed) remember(next);
     setOutboxAccount(next?.id ?? null);
   }));
-  // Counts the sign-ins and sign-outs that went through: a session check answered after one of them tells of the
-  // session cookie before it, and is left out.
+  // Counts the sign-ins and sign-outs that went through, here or in another tab: a session check answered after one of
+  // them tells of the session cookie before it, and is left out.
   const changes = useRef(0);
   // Session checks in a row that got no answer; while there is one, the check is asked again (see below).
   const [unanswered, setUnanswered] = useState(0);
