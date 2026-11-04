@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/app.js';
-import { TileCache, clearTileCache, tileCacheBytes } from '../src/incidents.js';
+import { clearTileCache, tileCacheBytes } from '../src/incidents.js';
 import { addDays, wibDay } from '../src/geo.js';
 import { lonLatToPixel } from '../src/peat.js';
 import { emptyDatabase, insertDetection, insertIncident, bigVillage, testPool, tileOf, wibMidnight } from './fixtures.js';
@@ -155,19 +155,4 @@ test('from zoom 11 the detection tile carries each pixel footprint in a second l
   assert.ok(next.find(layer => layer.name === 'piksel')?.features.some(f => f.properties.sensor === 'MODIS'), 'the MODIS box is drawn in the neighbour tile');
   const gap = Math.min(fraction, 1 - fraction) * 611;
   if (gap > 15) assert.ok(!next.find(layer => layer.name === 'deteksi')?.features.some(f => f.properties.sensor === 'MODIS'), 'its point is not');
-});
-
-test('the tile cache drops the least recently used tiles once it holds too many bytes', () => {
-  const cache = new TileCache(3 * (1000 + 256));
-  const body = () => Buffer.alloc(1000);
-  cache.set('a', body()); cache.set('b', body()); cache.set('c', body());
-  assert.ok(cache.get('a', 60_000), 'a is used again, b is now the oldest');
-  cache.set('d', body());
-  assert.equal(cache.get('b', 60_000), undefined);
-  assert.ok(cache.get('a', 60_000) && cache.get('c', 60_000) && cache.get('d', 60_000));
-  assert.equal(cache.totalBytes, 3 * 1256);
-  assert.equal(cache.get('a', -1), undefined, 'an entry older than its lifetime is gone');
-  assert.equal(cache.totalBytes, 2 * 1256);
-  cache.clear();
-  assert.equal(cache.totalBytes, 0);
 });

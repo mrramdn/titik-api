@@ -88,44 +88,66 @@ export async function archiveDate(db: Database, value: unknown) {
   return date;
 }
 
+/** How often the tile cache looks through all its entries for expired ones. */
+const SWEEP_MS = 60_000;
+
 /**
- * Cut vector tiles, the least recently used dropped first once they hold more than `limit` bytes together (an
- * empty tile counts a little too, so many of them cannot grow the map without bound).
+ * Cut vector tiles, each kept until it expires, the least recently used dropped first once they hold more than `limit`
+ * bytes together (an empty tile counts a little too, so many of them cannot grow the map without bound).
+ *
+ * pg hands a bytea over as a slice of Node's shared buffer pool (64 KiB slabs on Node 24), and a cached slice keeps its
+ * whole slab alive: small tiles held about five times the limit in memory. A body that does not own all of its memory
+ * is therefore copied into memory of its own size. Expired entries go when they reach the least recently used end, and
+ * a sweep at most once a minute finds those that sit behind fresher ones.
  */
 export class TileCache {
-  private entries = new Map<string, { at: number; body: Buffer }>();
+  private entries = new Map<string, { expires: number; body: Buffer }>();
   private bytes = 0;
-  constructor(private readonly limit: number) {}
-  private size = (body: Buffer) => body.length + 256;
-  get(key: string, ttl: number) {
+  private sweptAt: number;
+  constructor(private readonly limit: number, private readonly now: () => number = Date.now) { this.sweptAt = now(); }
+  private cost = (body: Buffer) => body.length + 256;
+  private remove(key: string, entry: { body: Buffer }) {
+    this.entries.delete(key);
+    this.bytes -= this.cost(entry.body);
+  }
+  get(key: string) {
     const entry = this.entries.get(key);
     if (!entry) return undefined;
+    if (entry.expires <= this.now()) { this.remove(key, entry); return undefined; }
+    // Used again: it moves to the most recently used end.
     this.entries.delete(key);
-    if (Date.now() - entry.at > ttl) { this.bytes -= this.size(entry.body); return undefined; }
     this.entries.set(key, entry);
     return entry.body;
   }
-  set(key: string, body: Buffer) {
+  /** Keeps `body` for `ttl` milliseconds. */
+  set(key: string, body: Buffer, ttl: number) {
+    const now = this.now();
     const old = this.entries.get(key);
-    if (old) { this.entries.delete(key); this.bytes -= this.size(old.body); }
-    this.entries.set(key, { at: Date.now(), body });
-    this.bytes += this.size(body);
+    if (old) this.remove(key, old);
+    let own = body;
+    if (body.byteOffset !== 0 || body.buffer.byteLength !== body.length) {
+      // Buffer.from(body) would take from the pool again; allocUnsafeSlow never does.
+      own = Buffer.allocUnsafeSlow(body.length);
+      body.copy(own);
+    }
+    this.entries.set(key, { expires: now + ttl, body: own });
+    this.bytes += this.cost(own);
+    if (now - this.sweptAt >= SWEEP_MS) {
+      this.sweptAt = now;
+      for (const [other, entry] of this.entries) if (entry.expires <= now) this.remove(other, entry);
+    }
     for (const [oldest, entry] of this.entries) {
-      if (this.bytes <= this.limit) break;
-      this.entries.delete(oldest);
-      this.bytes -= this.size(entry.body);
+      if (this.bytes <= this.limit && entry.expires > now) break;
+      this.remove(oldest, entry);
     }
   }
   /** Drops the entries whose key matches. */
   drop(match: (key: string) => boolean) {
-    for (const [key, entry] of this.entries) {
-      if (!match(key)) continue;
-      this.entries.delete(key);
-      this.bytes -= this.size(entry.body);
-    }
+    for (const [key, entry] of this.entries) if (match(key)) this.remove(key, entry);
   }
   clear() { this.entries.clear(); this.bytes = 0; }
   get totalBytes() { return this.bytes; }
+  get count() { return this.entries.size; }
 }
 
 /**
@@ -333,13 +355,13 @@ export function installIncidents(app: FastifyInstance, pool: pg.Pool) {
     // for anyone else the parameter changes nothing. Demo tiles stay out of shared caches.
     const scope: Scope = layer === 'kejadian' && query.lihat === 'demo' && request.user?.demo ? 'demo' : 'real';
     const key = `${layer}/${z}/${x}/${y}/${hours}/${tanggal ?? ''}/${scope}`;
-    let body = tiles.get(key, ttl);
+    let body = tiles.get(key);
     if (!body) {
       const sqlParams: unknown[] = [z, x, y];
       const sql = layer === 'kejadian' ? tileSql.kejadian(timeWindow(sqlParams, hours, tanggal), scope)
         : layer === 'deteksi' ? tileSql.deteksi(timeWindow(sqlParams, hours, tanggal)) : tileSql[layer]();
       body = ((await pool.query(sql, sqlParams)).rows[0]?.mvt as Buffer | undefined) ?? Buffer.alloc(0);
-      tiles.set(key, body);
+      tiles.set(key, body, ttl);
     }
     reply.header('Content-Type', 'application/vnd.mapbox-vector-tile')
       .header('Cache-Control', scope === 'demo' ? 'private, max-age=60' : `public, max-age=${ttl / 1000}`);
