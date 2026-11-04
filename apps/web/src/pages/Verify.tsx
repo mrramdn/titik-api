@@ -11,7 +11,7 @@ import { useFormat } from '../format';
 import { bearing, coordText, nearestPoint } from '../geo';
 import { dict, useT } from '../i18n';
 import { falseAlarmLabel } from '../i18n/common';
-import { compressPhoto, enqueue, flush, onOutboxChange, queued } from '../outbox';
+import { compressPhoto, enqueue, flush, onOutboxChange, outboxSignedOut, queued } from '../outbox';
 import { useSession } from '../session';
 
 const text = dict({
@@ -34,6 +34,7 @@ const text = dict({
     send: 'Kirim laporan', save: 'Simpan, kirim saat ada sinyal', saving: 'Menyimpan…', pick: 'Pilih kondisi di lapangan untuk mengirim.',
     sent: 'Laporan terkirim', sentBody: 'Dicek pukul {time} WIB. BPBD/Daops melihatnya di dasbor.',
     queued: 'Menunggu sinyal, dikirim otomatis', queuedBody: 'Dicek pukul {time} WIB. Laporan tersimpan di ponsel ini dan terkirim saat ada sinyal, dengan waktu cek ini.',
+    signIn: 'Sesi berakhir, masuk lagi untuk mengirim', signInBody: 'Dicek pukul {time} WIB. Laporan tersimpan di ponsel ini dan terkirim setelah akun ini masuk lagi, dengan waktu cek ini.',
     rejected: 'Laporan ditolak server', rejectedBody: '{reason} Periksa isian lalu kirim ulang dari halaman kejadian.',
   },
   en: {
@@ -55,6 +56,7 @@ const text = dict({
     send: 'Send report', save: 'Save, send when there is signal', saving: 'Saving…', pick: 'Choose what you found to send.',
     sent: 'Report sent', sentBody: 'Checked at {time} WIB. BPBD/Daops see it on the dashboard.',
     queued: 'Waiting for signal, sent automatically', queuedBody: 'Checked at {time} WIB. The report is saved on this phone and goes out when there is signal, with this check time.',
+    signIn: 'Session ended: sign in again to send', signInBody: 'Checked at {time} WIB. The report is saved on this phone and goes out once this account signs in again, with this check time.',
     rejected: 'The server refused the report', rejectedBody: '{reason} Check the form and send it again from the incident page.',
   },
 });
@@ -135,7 +137,10 @@ function TargetCard({ detail, position, gpsError }: { detail: IncidentDetail; po
   );
 }
 
-type Result = { state: 'sent' | 'queued' | 'rejected'; at: string; clientUuid: string; reason?: string };
+/** `signIn`: kept like `queued`, but the server said the session ended (401), so it waits for a sign-in, not a signal. */
+type Result = { state: 'sent' | 'queued' | 'signIn' | 'rejected'; at: string; clientUuid: string; reason?: string };
+/** A report still in the outbox waits for a sign-in after a 401, else for a signal. */
+const waitingState = (): Result['state'] => (outboxSignedOut() ? 'signIn' : 'queued');
 
 export function VerifyPage() {
   const { id } = useParams();
@@ -162,12 +167,13 @@ export function VerifyPage() {
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   // A report saved without a signal leaves the outbox once it is sent; the result screen follows it.
   useEffect(() => {
-    if (!result || result.state !== 'queued') return;
+    if (!result || (result.state !== 'queued' && result.state !== 'signIn')) return;
     return onOutboxChange(() => {
       void queued().then(items => {
         const item = items.find(entry => entry.clientUuid === result.clientUuid);
         if (!item) setResult({ ...result, state: 'sent' });
         else if (item.rejected) setResult({ ...result, state: 'rejected', reason: item.lastError ?? '' });
+        else if (waitingState() !== result.state) setResult({ ...result, state: waitingState() });
       });
     });
   }, [result]);
@@ -198,7 +204,7 @@ export function VerifyPage() {
       rememberCheck(d.id, { at: observedAt, status });
       if (navigator.onLine !== false) await flush();
       const item = (await queued()).find(entry => entry.clientUuid === clientUuid);
-      setResult({ clientUuid, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : 'queued', reason: item?.lastError ?? undefined });
+      setResult({ clientUuid, at: observedAt, state: !item ? 'sent' : item.rejected ? 'rejected' : waitingState(), reason: item?.lastError ?? undefined });
     } finally { setBusy(false); }
   };
 
@@ -208,10 +214,10 @@ export function VerifyPage() {
       <Frame>
         <main className="page narrow">
           <div className={`banner banner-${tone} v-result`} role="status">
-            {result.state === 'sent' ? <CircleCheck size={22} aria-hidden="true" /> : result.state === 'queued' ? <Clock size={22} aria-hidden="true" /> : <TriangleAlert size={22} aria-hidden="true" />}
+            {result.state === 'sent' ? <CircleCheck size={22} aria-hidden="true" /> : result.state === 'rejected' ? <TriangleAlert size={22} aria-hidden="true" /> : <Clock size={22} aria-hidden="true" />}
             <div>
               <strong className="heading-16">{t(result.state)}</strong>
-              <span>{result.state === 'rejected' ? t('rejectedBody', { reason: result.reason ?? '' }) : t(result.state === 'sent' ? 'sentBody' : 'queuedBody', { time: f.time(result.at) })}</span>
+              <span>{result.state === 'rejected' ? t('rejectedBody', { reason: result.reason ?? '' }) : t(result.state === 'sent' ? 'sentBody' : result.state === 'signIn' ? 'signInBody' : 'queuedBody', { time: f.time(result.at) })}</span>
             </div>
           </div>
           <div className="v-stack">
