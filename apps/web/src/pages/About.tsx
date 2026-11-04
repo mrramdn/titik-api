@@ -1,10 +1,12 @@
 import { Fragment, useEffect, type ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import { Shell } from '../components/Shell';
+import { C3S_NOTICE } from '../components/OpenMeteo';
 import { SIPONGI_URL } from '../components/shell/freshness';
 import { dict, useLang, useT } from '../i18n';
+import { EOX_CLOUDLESS_URL, EOX_LICENCE_URL, EOX_URL } from '../map/layers';
 
-const text = dict({
+export const aboutText = dict({
   id: {
     title: 'Tentang Titik Api',
     lead: 'Peringatan titik panas tingkat desa untuk pengendalian kebakaran hutan dan lahan di Sumatera Selatan dan Kalimantan Tengah.',
@@ -62,9 +64,9 @@ const text = dict({
     source2: 'Batas desa dari Indonesia COD-AB, BPS melalui OCHA/HDX, CC BY-IGO.',
     source3: 'Lahan gambut dan peringatan gangguan hutan dari Global Nature Watch (dahulu Global Forest Watch), CC BY 4.0.',
     source4: 'Permukiman dan kawasan industri dari © kontributor OpenStreetMap, ODbL.',
-    source5: 'Peta dasar OpenFreeMap, © OpenMapTiles. Citra satelit harian dari NASA EOSDIS GIBS. Citra detail Sentinel-2 cloudless 2023 oleh EOX, CC BY-NC-SA 4.0.',
+    source5: 'Peta dasar OpenFreeMap, © OpenMapTiles. Citra satelit harian dari NASA EOSDIS GIBS. Citra detail Sentinel-2 cloudless 2023, lisensi {eoxLicence}: {eox}',
     source6: 'Citra HD dari Esri World Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community.',
-    source7: 'Data cuaca untuk bahaya kebakaran dan angin di kejadian dari Open-Meteo.com, CC BY 4.0.',
+    source7: 'Data cuaca untuk bahaya kebakaran dan angin di kejadian dari Open-Meteo.com, CC BY 4.0. Bahaya kebakaran juga memakai data reanalisis ERA5 dari Copernicus Climate Change Service: {c3s}',
     contest: 'Hackathon JOINTS UGM 2026, tema Sustainability, subtema 4. Tim Close AI, Universitas Bina Nusantara.',
   },
   en: {
@@ -124,13 +126,13 @@ const text = dict({
     source2: 'Village boundaries from Indonesia COD-AB, BPS via OCHA/HDX, CC BY-IGO.',
     source3: 'Peatland and forest disturbance alerts from Global Nature Watch (formerly Global Forest Watch), CC BY 4.0.',
     source4: 'Settlements and industrial areas from © OpenStreetMap contributors, ODbL.',
-    source5: 'Base map OpenFreeMap, © OpenMapTiles. Daily satellite imagery from NASA EOSDIS GIBS. Detailed imagery Sentinel-2 cloudless 2023 by EOX, CC BY-NC-SA 4.0.',
+    source5: 'Base map OpenFreeMap, © OpenMapTiles. Daily satellite imagery from NASA EOSDIS GIBS. Detailed imagery Sentinel-2 cloudless 2023, licensed {eoxLicence}: {eox}',
     source6: 'HD imagery from Esri World Imagery: Esri, Vantor, Earthstar Geographics, and the GIS User Community.',
-    source7: 'Weather data for fire danger and the wind at incidents from Open-Meteo.com, CC BY 4.0.',
+    source7: 'Weather data for fire danger and the wind at incidents from Open-Meteo.com, CC BY 4.0. The fire danger also uses ERA5 reanalysis data from the Copernicus Climate Change Service: {c3s}',
     contest: 'Hackathon JOINTS UGM 2026, theme Sustainability, subtheme 4. Team Close AI, Universitas Bina Nusantara.',
   },
 });
-type Key = keyof typeof text.id;
+type Key = keyof typeof aboutText.id;
 
 const steps: [Key, Key][] = [['howSatTitle', 'howSat'], ['howModisTitle', 'howModis'], ['howTriageTitle', 'howTriage'], ['howAlertTitle', 'howAlert'],
   ['howAssignTitle', 'howAssign'], ['howCheckTitle', 'howCheck'], ['howDashTitle', 'howDash']];
@@ -153,49 +155,62 @@ function linked(sentence: string, links: Record<string, ReactNode>) {
   });
 }
 
+/** EOX's credit for Sentinel-2 cloudless 2023 word for word, with its two links (the map's EOX_ATTRIBUTION says the same). */
+const eoxCredit = <q lang="en">EOxCloudless {out(EOX_CLOUDLESS_URL, 'https://cloudless.eox.at')} by {out(EOX_URL, 'EOX IT Services GmbH')} (Contains modified Copernicus Sentinel data 2023)</q>;
+
 export function AboutPage() {
-  const t = useT(text);
-  const { lang } = useLang();
+  const t = useT(aboutText);
   const { hash } = useLocation();
-  // "Selengkapnya" under the map opens /tentang#ketentuan: the router does not scroll to a fragment by itself.
+  // "Selengkapnya" under the map opens /tentang#ketentuan, the landing page's credits /tentang#sumber: the router does
+  // not scroll to a fragment by itself.
   useEffect(() => { if (hash) document.getElementById(hash.slice(1))?.scrollIntoView(); }, [hash]);
-  const links: Record<string, ReactNode> = {
-    lance: out(LANCE_DISCLAIMER_URL, t('lance')), sipongi: out(SIPONGI_URL, 'SiPongi+'), spartan: out(SPARTAN_URL, 'BMKG SPARTAN'),
-    esri: out(ESRI_TERMS_URL, t('esri')), contact: out(contactUrl[lang], t('contact')),
-  };
   return (
     <Shell>
       <main className="page narrow">
         <div className="page-head"><div><h1 className="title-24">{t('title')}</h1><p>{t('lead')}</p></div></div>
-        <article className="doc">
-          <h2>{t('whatTitle')}</h2>
-          <p>{t('what1')}</p>
-          <p>{t('what2')}</p>
-          <h2>{t('coverageTitle')}</h2>
-          <p>{t('coverage')}</p>
-          <h2>{t('howTitle')}</h2>
-          <ol>{steps.map(([title, body]) => <li key={title}><b>{t(title)}</b> {t(body)}</li>)}</ol>
-          <h2 id="akurasi">{t('accuracyTitle')}</h2>
-          <ul>{accuracy.map(key => <li key={key}>{t(key)}</li>)}</ul>
-          <h2 id="batasan">{t('limitsTitle')}</h2>
-          <ul>{limits.map(key => <li key={key}>{t(key)}</li>)}</ul>
-          <h2 id="ketentuan">{t('termsTitle')}</h2>
-          <ul>{terms.map(key => <li key={key}>{linked(t(key), links)}</li>)}</ul>
-          <h2>{t('privacyTitle')}</h2>
-          <ul>{privacy.map(key => <li key={key}>{t(key)}</li>)}</ul>
-          <h2>{t('sourcesTitle')}</h2>
-          <ul>
-            <li>{t('source1')} <q lang="en">{t('sourceFirms')}</q></li>
-            <li>{t('source2')}</li>
-            <li>{t('source3')}</li>
-            <li>{t('source4')}</li>
-            <li>{t('source5')}</li>
-            <li>{t('source6')}</li>
-            <li>{t('source7')}</li>
-          </ul>
-          <p className="note about-contest">{t('contest')}</p>
-        </article>
+        <AboutDoc />
       </main>
     </Shell>
+  );
+}
+
+/** The page's text, from what Titik Api does to the data sources and their licences. */
+export function AboutDoc() {
+  const t = useT(aboutText);
+  const { lang } = useLang();
+  const links: Record<string, ReactNode> = {
+    lance: out(LANCE_DISCLAIMER_URL, t('lance')), sipongi: out(SIPONGI_URL, 'SiPongi+'), spartan: out(SPARTAN_URL, 'BMKG SPARTAN'),
+    esri: out(ESRI_TERMS_URL, t('esri')), contact: out(contactUrl[lang], t('contact')),
+    eox: eoxCredit, eoxLicence: out(EOX_LICENCE_URL, 'CC BY-NC-SA 4.0'), c3s: <q lang="en">{C3S_NOTICE}</q>,
+  };
+  return (
+    <article className="doc">
+      <h2>{t('whatTitle')}</h2>
+      <p>{t('what1')}</p>
+      <p>{t('what2')}</p>
+      <h2>{t('coverageTitle')}</h2>
+      <p>{t('coverage')}</p>
+      <h2>{t('howTitle')}</h2>
+      <ol>{steps.map(([title, body]) => <li key={title}><b>{t(title)}</b> {t(body)}</li>)}</ol>
+      <h2 id="akurasi">{t('accuracyTitle')}</h2>
+      <ul>{accuracy.map(key => <li key={key}>{t(key)}</li>)}</ul>
+      <h2 id="batasan">{t('limitsTitle')}</h2>
+      <ul>{limits.map(key => <li key={key}>{t(key)}</li>)}</ul>
+      <h2 id="ketentuan">{t('termsTitle')}</h2>
+      <ul>{terms.map(key => <li key={key}>{linked(t(key), links)}</li>)}</ul>
+      <h2>{t('privacyTitle')}</h2>
+      <ul>{privacy.map(key => <li key={key}>{t(key)}</li>)}</ul>
+      <h2 id="sumber">{t('sourcesTitle')}</h2>
+      <ul>
+        <li>{t('source1')} <q lang="en">{t('sourceFirms')}</q></li>
+        <li>{t('source2')}</li>
+        <li>{t('source3')}</li>
+        <li>{t('source4')}</li>
+        <li>{linked(t('source5'), links)}</li>
+        <li>{t('source6')}</li>
+        <li>{linked(t('source7'), links)}</li>
+      </ul>
+      <p className="note about-contest">{t('contest')}</p>
+    </article>
   );
 }

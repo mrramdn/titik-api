@@ -19,8 +19,7 @@ import {
   sentinelUnderEsri, tileUrls,
 } from './layers';
 import { Legend } from './Legend';
-import { riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
-import { OPEN_METEO_ATTRIBUTION } from '../components/OpenMeteo';
+import { RISK_ATTRIBUTION, riskFeatures, riskFill, riskOpacity, riskPath } from './risk';
 import { RiskCell, RiskDays } from './RiskParts';
 import {
   badgeOffset, bubbleColor, bubbleLabel, bubbleNameOffset, bubbleRadius, checkedFilter, colors, detectionColor, detectionOpacity, detectionRadius,
@@ -201,8 +200,8 @@ export function MapView({ filters, version = 0, hours = 24, tanggal = '', bounds
       instance.addLayer({ id: 'gambut', type: 'raster', source: 'gambut', paint: { 'raster-opacity': 0.3 }, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('deforestasi', { type: 'raster', tileSize: 256, maxzoom: 14, tiles: ['https://tiles.globalforestwatch.org/gfw_integrated_alerts/latest/dynamic/{z}/{x}/{y}.png'], attribution: 'Integrated deforestation alerts (UMD/GLAD, WUR) · Global Nature Watch' });
       instance.addLayer({ id: 'deforestasi', type: 'raster', source: 'deforestasi', paint: { 'raster-opacity': 0.85 }, layout: { visibility: 'none' } }, firstSymbol);
-      // Fire danger cells over the imagery and under the place names; Open-Meteo's attribution shows while they do.
-      instance.addSource('risiko', { type: 'geojson', data: empty, attribution: OPEN_METEO_ATTRIBUTION });
+      // Fire danger cells over the imagery and under the place names; Open-Meteo's and Copernicus's credit shows while they do.
+      instance.addSource('risiko', { type: 'geojson', data: empty, attribution: RISK_ATTRIBUTION });
       instance.addLayer({ id: 'risiko', type: 'fill', source: 'risiko', paint: { 'fill-color': riskFill, 'fill-opacity': riskOpacity }, layout: { visibility: 'none' } }, firstSymbol);
       instance.addSource('kabupaten', { type: 'vector', tiles: [`${location.origin}/api/v1/tiles/kabupaten/{z}/{x}/{y}.mvt`], maxzoom: 12 });
       instance.addLayer({ id: 'kabupaten-line', type: 'line', source: 'kabupaten', 'source-layer': 'kabupaten', paint: { 'line-color': colors.line, 'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.5, 10, 0.35], 'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.6, 10, 1.6] } });

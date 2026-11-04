@@ -75,9 +75,20 @@ export const imageryZoom = (esri: boolean) => ({
   esri: [ESRI_ZOOM, 24] as [number, number],
 });
 
-/** Sentinel-2 cloudless 2023 by EOX, the detailed imagery from zoom 9. */
+/** Sentinel-2 cloudless 2023 by EOX (EOxCloudless), the detailed imagery from zoom 9. */
 export const EOX_TILES = 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg';
-export const EOX_ATTRIBUTION = 'Sentinel-2 cloudless 2023 by EOX (CC BY-NC-SA 4.0)';
+/** The two addresses EOX's credit links: EOxCloudless and EOX IT Services GmbH. */
+export const EOX_CLOUDLESS_URL = 'https://cloudless.eox.at';
+export const EOX_URL = 'https://eox.at';
+/** CC BY-NC-SA 4.0, the licence of the 2018–2025 layers. */
+export const EOX_LICENCE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/';
+/**
+ * EOX's credit for the 2023 layer word for word, with both links, as cloudless.eox.at/license-non-commercial gives it
+ * ("shall include the links and show the text"), then its licence.
+ */
+export const EOX_ATTRIBUTION = `EOxCloudless <a href="${EOX_CLOUDLESS_URL}" target="_blank" rel="noopener">https://cloudless.eox.at</a> by `
+  + `<a href="${EOX_URL}" target="_blank" rel="noopener">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2023) · `
+  + `<a href="${EOX_LICENCE_URL}" target="_blank" rel="noopener">CC BY-NC-SA 4.0</a>`;
 
 /**
  * Sentinel-2 under Esri from zoom 11, drawn from zoom 11 tiles only (a few per screen, stretched closer in), so a tile
