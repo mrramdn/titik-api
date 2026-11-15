@@ -21,7 +21,8 @@ env:
 jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
-    runs-on: ubuntu-latest
+    # The server is arm64 (Oracle Cloud Ampere A1 since 15 Nov 2026), so the image is built natively on an arm64 runner.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     permissions:
       contents: read
